@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-aot:
+    name: Build Native AOT (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win-x64
+            archive_name: csmesh-win-x64.zip
+            binary_name: csmesh.exe
+          - os: ubuntu-latest
+            target: linux-x64
+            archive_name: csmesh-linux-x64.tar.gz
+            binary_name: csmesh
+          - os: macos-latest
+            target: osx-arm64
+            archive_name: csmesh-osx-arm64.tar.gz
+            binary_name: csmesh
+          - os: macos-13
+            target: osx-x64
+            archive_name: csmesh-osx-x64.tar.gz
+            binary_name: csmesh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish Native AOT (${{ matrix.target }})
+        run: >
+          dotnet publish src/CsMesh/CsMesh.csproj
+          -c Release
+          -r ${{ matrix.target }}
+          -p:PublishAot=true
+          -o publish-out
+
+      - name: Archive binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x publish-out/${{ matrix.binary_name }}
+          tar -czf ${{ matrix.archive_name }} -C publish-out ${{ matrix.binary_name }}
+
+      - name: Archive binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "publish-out/${{ matrix.binary_name }}" -DestinationPath "${{ matrix.archive_name }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}
+
+  pack-nuget:
+    name: Pack NuGet Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack .NET Tool
+        run: dotnet pack src/CsMesh/CsMesh.csproj -c Release -o nupkg-out
+
+      - name: Upload NuGet artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: nupkg-out/*.nupkg
+
+      - name: Push to NuGet.org (Optional)
+        if: env.NUGET_API_KEY != ''
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push nupkg-out/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  publish-release:
+    name: Create GitHub Release
+    needs: [build-aot, pack-nuget]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: release-assets/*
+          generate_release_notes: true

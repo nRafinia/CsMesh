@@ -127,15 +127,32 @@ Tested on a production-grade multi-project .NET backend (~1,600 nodes, ~3,000 ed
 
 ## 📦 Installation
 
+### ⚡ Automatic One-Line Install (Recommended)
+
+**Linux & macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex
+```
+
+---
+
 ### 1. As a Global .NET Tool
 
 ```bash
-# Build and install locally from source
+# Install from NuGet.org
+dotnet tool install --global CsMesh.Cli
+
+# Or build and install locally from source
 dotnet pack -c Release
-dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh
+dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh.Cli
 
 # Or update an existing installation
-dotnet tool update --global --add-source ./src/CsMesh/bin/Release CsMesh
+dotnet tool update --global CsMesh.Cli
 ```
 
 ### 2. As a Standalone Native AOT Binary (Zero Runtime Dependency)
