@@ -29,10 +29,6 @@ jobs:
             target: osx-arm64
             archive_name: csmesh-osx-arm64.tar.gz
             binary_name: csmesh
-          - os: macos-13
-            target: osx-x64
-            archive_name: csmesh-osx-x64.tar.gz
-            binary_name: csmesh
 
     steps:
       - name: Checkout repository
