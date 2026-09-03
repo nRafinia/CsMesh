@@ -4,6 +4,7 @@ namespace CsMesh.Telemetry;
 
 /// <summary>
 /// Represents a single CLI invocation record for usage analysis.
+/// Serialized to .csmesh/usage.jsonl with snake_case property names.
 /// </summary>
 public sealed class Invocation
 {
@@ -15,10 +16,14 @@ public sealed class Invocation
     public long Ms { get; set; }
     public int OutTokens { get; set; }
 
-    /// <summary>
-    /// Count of source file locations referenced in the query output.
-    /// </summary>
-    public int FilesAvoided { get; set; }
+    /// <summary>Distinct source files the answer pointed the caller at.</summary>
+    public int FilesReferenced { get; set; }
+
+    /// <summary>Node count of the graph that served this query; 0 when no graph was loaded.</summary>
+    public int Nodes { get; set; }
+
+    /// <summary>Edge count of the graph that served this query; 0 when no graph was loaded.</summary>
+    public int Edges { get; set; }
 
     public string Caller { get; set; } = string.Empty;
     public string CallerVia { get; set; } = string.Empty;

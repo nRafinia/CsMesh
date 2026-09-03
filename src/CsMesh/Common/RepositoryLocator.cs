@@ -29,7 +29,7 @@ public static class RepositoryLocator
     }
 
     /// <summary>
-    /// Reads the current Git HEAD commit hash or reference name.
+    /// Reads the current Git HEAD commit hash, following a symbolic ref when present.
     /// </summary>
     public static string GitHead(string root)
     {
@@ -39,19 +39,31 @@ public static class RepositoryLocator
             if (!File.Exists(head)) return string.Empty;
 
             var line = File.ReadAllText(head).Trim();
-            if (line.StartsWith("ref:"))
+            if (!line.StartsWith("ref:", StringComparison.Ordinal)) return Abbrev(line);
+
+            var refName = line[4..].Trim();
+            var refPath = Path.Combine(root, ".git", refName.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(refPath)) return Abbrev(File.ReadAllText(refPath).Trim());
+
+            // Ref has been packed; scan packed-refs for the matching entry.
+            var packed = Path.Combine(root, ".git", "packed-refs");
+            if (!File.Exists(packed)) return string.Empty;
+
+            foreach (var entry in File.ReadLines(packed))
             {
-                var refPath = Path.Combine(root, ".git", line[4..].Trim());
-                return File.Exists(refPath)
-                    ? File.ReadAllText(refPath).Trim()[..Math.Min(8, 40)]
-                    : string.Empty;
+                if (entry.Length == 0 || entry[0] is '#' or '^') continue;
+                var space = entry.IndexOf(' ');
+                if (space <= 0) continue;
+                if (entry[(space + 1)..].Trim() == refName) return Abbrev(entry[..space]);
             }
 
-            return line[..Math.Min(8, line.Length)];
+            return string.Empty;
         }
         catch
         {
             return string.Empty;
         }
     }
+
+    private static string Abbrev(string hash) => hash.Length <= 8 ? hash : hash[..8];
 }

@@ -20,7 +20,8 @@ public static class UsageCommand
 
         if (opt.Flag("tail"))
         {
-            foreach (var i in rows.TakeLast(opt.Int("n", 20)))
+            // Reads its own flag value. It used to read --n, so --tail 5 silently returned 20 rows.
+            foreach (var i in rows.TakeLast(opt.Int("tail", 10)))
             {
                 Console.WriteLine($"{i.Ts[..Math.Min(19, i.Ts.Length)]}  {i.Caller,-18} {i.Cmd,-13} exit={i.Exit} {i.Ms,5}ms {i.OutTokens,5}tok  {i.Args}");
             }
@@ -66,12 +67,18 @@ public static class UsageCommand
         var over = rows.Count(r => r.Exit == Exit.OverBudget);
         var amb = rows.Count(r => r.Exit == Exit.Ambiguous);
         var miss = rows.Count(r => r.Exit == Exit.NotFound);
+        var crashed = rows.Count(r => r.Exit == Exit.Internal);
 
         Console.WriteLine();
         Console.WriteLine("  diagnostics");
         if (agentRows.Count == 0)
         {
             Console.WriteLine("    * zero agent calls: skill may not be installed or matched.");
+        }
+
+        if (crashed > 0)
+        {
+            Console.WriteLine($"    * {crashed} invocation(s) ended in an internal error; re-run with --debug for a stack trace.");
         }
 
         if (over > rows.Count * 0.15 && rows.Count > 5)
@@ -86,14 +93,14 @@ public static class UsageCommand
 
         if (miss > rows.Count * 0.25 && rows.Count > 5)
         {
-            Console.WriteLine($"    * {FormattingUtils.Pct(miss, rows.Count)} not found: index may need refresh (CsMesh index) or symbol name mismatch.");
+            Console.WriteLine($"    * {FormattingUtils.Pct(miss, rows.Count)} not found: index may need refresh (csmesh index) or symbol name mismatch.");
         }
 
         var answered = rows.Where(r => r.Exit == Exit.Ok).ToList();
         if (answered.Count > 0)
         {
             var tokensReturned = answered.Sum(r => r.OutTokens);
-            var filesHinted = answered.Sum(r => r.FilesAvoided);
+            var filesHinted = answered.Sum(r => r.FilesReferenced);
             Console.WriteLine($"    * {answered.Count} answered queries returned {tokensReturned} tokens total and referenced {filesHinted} file locations.");
         }
 

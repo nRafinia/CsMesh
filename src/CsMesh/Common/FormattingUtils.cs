@@ -11,7 +11,9 @@ public static class FormattingUtils
     public static double Median(IEnumerable<double> values)
     {
         var list = values.OrderBy(x => x).ToList();
-        return list.Count == 0 ? 0 : list[list.Count / 2];
+        if (list.Count == 0) return 0;
+        var mid = list.Count / 2;
+        return list.Count % 2 == 1 ? list[mid] : (list[mid - 1] + list[mid]) / 2.0;
     }
 
     public static string ExitName(int exitCode) => exitCode switch
@@ -21,6 +23,8 @@ public static class FormattingUtils
         Exit.OverBudget => "over-budget",
         Exit.Ambiguous => "ambiguous",
         Exit.NoIndex => "no-index",
-        _ => "usage-error"
+        Exit.Usage => "usage-error",
+        Exit.Internal => "internal-error",
+        _ => "unknown"
     };
 }

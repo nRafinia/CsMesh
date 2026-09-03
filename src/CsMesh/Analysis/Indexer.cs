@@ -14,7 +14,8 @@ public static class Indexer
 {
     private static readonly string[] SkipDirs =
     {
-        "/bin/", "/obj/", "/node_modules/", "/.git/", "/.vs/", "/packages/", "/TestResults/", "/.csmesh/"
+        "/bin/", "/obj/", "/node_modules/", "/.git/", "/.vs/", "/.idea/", "/.svn/",
+        "/packages/", "/TestResults/", "/artifacts/", "/.csmesh/"
     };
 
     public static IEnumerable<string> EnumerateSourceFiles(string root)
@@ -24,6 +25,7 @@ public static class Indexer
             var normalized = file.Replace('\\', '/');
             if (SkipDirs.Any(d => normalized.Contains(d, StringComparison.OrdinalIgnoreCase))) continue;
             if (normalized.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)) continue;
+            if (normalized.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase)) continue;
             if (normalized.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)) continue;
             yield return file;
         }
@@ -36,13 +38,16 @@ public static class Indexer
 
         var trees = new List<SyntaxTree>(files.Count);
         var stamps = new List<FileStamp>(files.Count);
+        var dirs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
 
         foreach (var file in files)
         {
             string text;
             try { text = File.ReadAllText(file); } catch { continue; }
 
-            trees.Add(CSharpSyntaxTree.ParseText(text, path: file));
+            trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: file));
             var fileInfo = new FileInfo(file);
             stamps.Add(new FileStamp
             {
@@ -50,23 +55,42 @@ public static class Indexer
                 Ticks = fileInfo.LastWriteTimeUtc.Ticks,
                 Size = fileInfo.Length
             });
+
+            var dir = fileInfo.DirectoryName;
+            if (dir == null) continue;
+            var relDir = Path.GetRelativePath(root, dir);
+            if (!dirs.ContainsKey(relDir))
+            {
+                try { dirs[relDir] = Directory.GetLastWriteTimeUtc(dir).Ticks; } catch { }
+            }
+        }
+
+        // The repository root itself may gain a new source file without any tracked directory changing.
+        if (!dirs.ContainsKey("."))
+        {
+            try { dirs["."] = Directory.GetLastWriteTimeUtc(root).Ticks; } catch { }
         }
 
         var references = ReferenceSet(root);
         progress?.Invoke($"compiling against {references.Count} references");
 
+        // ConsoleApplication so that top-level statements bind to a real entry point instead of
+        // being rejected outright. Diagnostics are advisory here; we never require a clean build.
         var compilation = CSharpCompilation.Create(
             "csmesh.index",
             trees,
             references,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+            new CSharpCompilationOptions(OutputKind.ConsoleApplication, allowUnsafe: true));
 
         var graph = new Graph
         {
             Root = root,
+            FormatVersion = Graph.CurrentFormatVersion,
             BuiltAt = DateTimeOffset.UtcNow,
             BuiltFromCommit = RepositoryLocator.GitHead(root),
-            Files = stamps
+            Files = stamps,
+            Dirs = dirs.Select(kv => new DirStamp { Path = kv.Key, Ticks = kv.Value }).ToList(),
+            ReferenceCount = references.Count
         };
 
         var builder = new Builder(graph, compilation);
@@ -74,6 +98,7 @@ public static class Indexer
         builder.Pass2_Bodies(progress);
         builder.Pass3_Indirection(progress);
 
+        graph.UnresolvedCallSites = builder.UnresolvedCallSites;
         return graph;
     }
 
@@ -97,11 +122,11 @@ public static class Indexer
 
         AddDir(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), 400);
 
-        foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories).Take(40))
+        foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories).Take(80))
         {
             foreach (var cfg in Directory.EnumerateDirectories(bin, "*", SearchOption.AllDirectories).Take(20))
             {
-                AddDir(cfg, 60);
+                AddDir(cfg, 200);
             }
         }
 
@@ -110,14 +135,31 @@ public static class Indexer
 
     private sealed class Builder
     {
+        private static readonly SymbolDisplayFormat KeyFormat = SymbolDisplayFormat.FullyQualifiedFormat;
+
+        private static readonly string[] HandlerInterfaces =
+        {
+            "IRequestHandler", "INotificationHandler", "ICommandHandler",
+            "IQueryHandler", "IConsumer", "IHandleMessages"
+        };
+
         private readonly Graph _g;
         private readonly CSharpCompilation _comp;
         private readonly Dictionary<string, int> _idByKey = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, List<int>> _typeImplementors = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, int> _handlerByRequest = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, string> _diBindings = new(StringComparer.Ordinal);
+
+        /// <summary>Base type node id -> node ids of types deriving from or implementing it.</summary>
+        private readonly Dictionary<int, List<int>> _implementorsByBase = new();
+
+        /// <summary>Request type short name -> every handler entry point that consumes it.</summary>
+        private readonly Dictionary<string, List<int>> _handlersByRequest = new(StringComparer.Ordinal);
+
+        /// <summary>Service/implementation node id pairs registered in a DI container.</summary>
+        private readonly HashSet<(int Service, int Implementation)> _diBoundPairs = new();
+
         private readonly HashSet<(int, int, EdgeKind)> _dedupe = new();
-        private readonly List<(INamedTypeSymbol, TypeDeclarationSyntax, int)> _pendingHandlers = new();
+        private readonly List<(INamedTypeSymbol Type, TypeDeclarationSyntax Decl, int Id)> _pendingHandlers = new();
+
+        public int UnresolvedCallSites { get; private set; }
 
         public Builder(Graph g, CSharpCompilation comp)
         {
@@ -133,17 +175,38 @@ public static class Indexer
             var l = loc ?? sym.Locations.FirstOrDefault(x => x.IsInSource);
             var file = "";
             var line = 0;
-            if (l != null && l.IsInSource)
+            if (l is { IsInSource: true })
             {
                 file = Path.GetRelativePath(_g.Root, l.SourceTree!.FilePath);
                 line = l.GetLineSpan().StartLinePosition.Line + 1;
             }
 
+            return AddNode(key, FullName(sym), ShortName(sym), kind, file, line);
+        }
+
+        /// <summary>
+        /// Creates a node for something that has no Roslyn symbol of its own: top-level statement
+        /// bodies and minimal API route lambdas.
+        /// </summary>
+        private int SyntheticNode(string key, string name, string shortName, string kind, SyntaxNode at)
+        {
+            if (_idByKey.TryGetValue(key, out var existing)) return existing;
+
+            var span = at.GetLocation().GetLineSpan();
+            var file = at.SyntaxTree.FilePath.Length > 0
+                ? Path.GetRelativePath(_g.Root, at.SyntaxTree.FilePath)
+                : "";
+
+            return AddNode(key, name, shortName, kind, file, span.StartLinePosition.Line + 1);
+        }
+
+        private int AddNode(string key, string name, string shortName, string kind, string file, int line)
+        {
             var node = new Node
             {
                 Id = _g.Nodes.Count,
-                Name = FullName(sym),
-                Short = ShortName(sym),
+                Name = name,
+                Short = shortName,
                 Kind = kind,
                 File = file,
                 Line = line
@@ -155,15 +218,27 @@ public static class Indexer
         }
 
         /// <summary>
-        /// Constructs a unique key including containing type, signature, and symbol kind.
+        /// Uniquely identifies a symbol. Parameter types are fully qualified and method arity is
+        /// included so overloads such as Handle(List&lt;int&gt;) and Handle(List&lt;string&gt;)
+        /// never collapse into one node.
         /// </summary>
         private static string Key(ISymbol s)
         {
-            var container = s.ContainingType?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            var container = s.ContainingType?.ToDisplayString(KeyFormat)
                             ?? s.ContainingNamespace?.ToDisplayString() ?? "";
-            var self = s is IMethodSymbol m
-                ? m.Name + "(" + string.Join(",", m.Parameters.Select(p => p.Type.Name)) + ")"
-                : s.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+            string self;
+            if (s is IMethodSymbol m)
+            {
+                var parameters = string.Join(",", m.Parameters.Select(p =>
+                    (p.RefKind == RefKind.None ? "" : p.RefKind.ToString().ToLowerInvariant() + " ")
+                    + p.Type.ToDisplayString(KeyFormat)));
+                self = $"{m.Name}`{m.Arity}({parameters})";
+            }
+            else
+            {
+                self = s.ToDisplayString(KeyFormat);
+            }
 
             return container + "::" + self + "|" + s.Kind;
         }
@@ -191,6 +266,8 @@ public static class Indexer
             _g.Edges.Add(new Edge { From = from, To = to, Kind = kind, Note = note });
         }
 
+        // ---------------------------------------------------------------- pass 1
+
         public void Pass1_Declarations(Action<string>? progress)
         {
             progress?.Invoke("pass 1: declarations");
@@ -198,9 +275,8 @@ public static class Indexer
             foreach (var tree in _comp.SyntaxTrees)
             {
                 var model = _comp.GetSemanticModel(tree);
-                var rootNode = tree.GetRoot();
 
-                foreach (var typeDecl in rootNode.DescendantNodes().OfType<TypeDeclarationSyntax>())
+                foreach (var typeDecl in tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
                 {
                     if (model.GetDeclaredSymbol(typeDecl) is not INamedTypeSymbol type) continue;
 
@@ -210,49 +286,71 @@ public static class Indexer
 
                     foreach (var t in TypeTags(type, typeDecl)) AddTag(typeNode, t);
 
-                    foreach (var baseName in BaseTypeNames(type, typeDecl))
-                    {
-                        if (!_typeImplementors.TryGetValue(baseName, out var list))
-                            _typeImplementors[baseName] = list = new List<int>();
-                        list.Add(typeId);
-                    }
-
+                    RegisterBaseTypes(type, typeId);
                     _pendingHandlers.Add((type, typeDecl, typeId));
 
                     foreach (var member in typeDecl.Members)
                     {
-                        if (member is MethodDeclarationSyntax md &&
-                            model.GetDeclaredSymbol(md) is IMethodSymbol ms)
+                        switch (member)
                         {
-                            var mId = NodeFor(ms, "method", md.GetLocation());
-                            Link(typeId, mId, EdgeKind.TypeUse, "member");
-                            foreach (var t in MethodTags(md)) AddTag(_g.ById(mId)!, t);
-
-                            if (typeNode.Tags.Any(t => t.StartsWith("controller")))
-                                AddTag(_g.ById(mId)!, "action");
-                        }
-                        else if (member is ConstructorDeclarationSyntax cd &&
-                                 model.GetDeclaredSymbol(cd) is IMethodSymbol cs)
-                        {
-                            var mId = NodeFor(cs, "method", cd.GetLocation());
-                            Link(typeId, mId, EdgeKind.TypeUse, "ctor");
-                        }
-                        else if (member is PropertyDeclarationSyntax pd &&
-                                 model.GetDeclaredSymbol(pd) is IPropertySymbol ps)
-                        {
-                            var pId = NodeFor(ps, "property", pd.GetLocation());
-                            Link(typeId, pId, EdgeKind.TypeUse, "member");
+                            case MethodDeclarationSyntax md when model.GetDeclaredSymbol(md) is { } ms:
+                            {
+                                var mId = NodeFor(ms, "method", md.GetLocation());
+                                Link(typeId, mId, EdgeKind.TypeUse, "member");
+                                var mNode = _g.ById(mId)!;
+                                foreach (var t in MethodTags(md)) AddTag(mNode, t);
+                                if (typeNode.Tags.Contains("controller")) AddTag(mNode, "action");
+                                break;
+                            }
+                            case ConstructorDeclarationSyntax cd when model.GetDeclaredSymbol(cd) is { } cs:
+                                Link(typeId, NodeFor(cs, "method", cd.GetLocation()), EdgeKind.TypeUse, "ctor");
+                                break;
+                            case PropertyDeclarationSyntax pd when model.GetDeclaredSymbol(pd) is { } ps:
+                                Link(typeId, NodeFor(ps, "property", pd.GetLocation()), EdgeKind.TypeUse, "member");
+                                break;
                         }
                     }
                 }
             }
 
+            var methodsByOwner = MethodsByOwner();
             foreach (var (type, decl, id) in _pendingHandlers)
             {
-                RegisterMediatrHandler(type, decl, id);
+                RegisterMessageHandler(type, decl, id, methodsByOwner);
             }
 
-            Dbg.Log($"pass 1: {_g.Nodes.Count} nodes, {_handlerByRequest.Count} message handlers mapped");
+            Dbg.Log($"pass 1: {_g.Nodes.Count} nodes, {_handlersByRequest.Count} message type(s) mapped, " +
+                    $"{_implementorsByBase.Count} base type(s) with implementors");
+        }
+
+        /// <summary>
+        /// Records inheritance using symbols rather than short type names, so Domain.Order and
+        /// Data.Order are never treated as the same base type.
+        /// </summary>
+        private void RegisterBaseTypes(INamedTypeSymbol type, int typeId)
+        {
+            foreach (var iface in type.AllInterfaces)
+            {
+                AddImplementor(iface, typeId);
+            }
+
+            for (var b = type.BaseType; b != null && b.SpecialType != SpecialType.System_Object; b = b.BaseType)
+            {
+                AddImplementor(b, typeId);
+            }
+        }
+
+        private void AddImplementor(INamedTypeSymbol baseType, int implId)
+        {
+            var definition = baseType.OriginalDefinition;
+            if (!definition.Locations.Any(l => l.IsInSource)) return;
+
+            var baseId = NodeFor(definition, definition.TypeKind == TypeKind.Interface ? "interface" : "type");
+            if (baseId == implId) return;
+
+            if (!_implementorsByBase.TryGetValue(baseId, out var list))
+                _implementorsByBase[baseId] = list = new List<int>();
+            if (!list.Contains(implId)) list.Add(implId);
         }
 
         private static void AddTag(Node n, string tag)
@@ -263,20 +361,29 @@ public static class Indexer
         private static IEnumerable<string> TypeTags(INamedTypeSymbol type, TypeDeclarationSyntax decl)
         {
             var bases = BaseTypeNames(type, decl).ToList();
-            if (type.Name.EndsWith("Controller") || bases.Any(b => b.Contains("ControllerBase") || b == "Controller"))
+
+            if (type.Name.EndsWith("Controller", StringComparison.Ordinal) ||
+                bases.Any(b => b.Contains("ControllerBase") || b == "Controller"))
                 yield return "controller";
+
             if (bases.Any(b => b.StartsWith("IRequestHandler") || b.StartsWith("INotificationHandler") ||
                                b.StartsWith("ICommandHandler") || b.StartsWith("IQueryHandler")))
                 yield return "handler";
+
             if (bases.Any(b => b.StartsWith("IRequest") || b.StartsWith("INotification") ||
                                b.StartsWith("ICommand") || b.StartsWith("IQuery")))
                 yield return "message";
+
             if (bases.Any(b => b.Contains("DbContext"))) yield return "dbcontext";
+
             if (bases.Any(b => b.StartsWith("IConsumer") || b.StartsWith("IHandleMessages")))
                 yield return "consumer";
+
             if (bases.Any(b => b.Contains("BackgroundService") || b.StartsWith("IHostedService")))
                 yield return "hosted";
-            if (type.Name.EndsWith("Repository")) yield return "repository";
+
+            if (type.Name.EndsWith("Repository", StringComparison.Ordinal)) yield return "repository";
+            if (type.IsAbstract && type.TypeKind == TypeKind.Class) yield return "abstract";
 
             var route = AttrArg(decl.AttributeLists, "Route");
             if (route != null) yield return "route:" + route;
@@ -291,11 +398,9 @@ public static class Indexer
                     foreach (var a in al.Attributes)
                     {
                         var n = a.Name.ToString();
-                        if (n == verb || n == verb + "Attribute")
-                        {
-                            var arg = a.ArgumentList?.Arguments.FirstOrDefault()?.ToString().Trim('"');
-                            yield return $"http:{verb[4..].ToUpperInvariant()} {arg ?? "/"}";
-                        }
+                        if (n != verb && n != verb + "Attribute") continue;
+                        var arg = a.ArgumentList?.Arguments.FirstOrDefault()?.ToString().Trim('"');
+                        yield return $"http:{verb[4..].ToUpperInvariant()} {arg ?? "/"}";
                     }
                 }
             }
@@ -337,29 +442,73 @@ public static class Indexer
         private static string Simplify(INamedTypeSymbol s) =>
             s.IsGenericType ? $"{s.Name}<{string.Join(",", s.TypeArguments.Select(a => a.Name))}>" : s.Name;
 
-        private void RegisterMediatrHandler(INamedTypeSymbol type, TypeDeclarationSyntax decl, int typeId)
+        private Dictionary<string, List<Node>> MethodsByOwner()
         {
+            var map = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
+            foreach (var n in _g.Nodes)
+            {
+                if (n.Kind != "method") continue;
+                var dot = n.Short.LastIndexOf('.');
+                if (dot <= 0) continue;
+                var owner = n.Short[..dot];
+                if (!map.TryGetValue(owner, out var list)) map[owner] = list = new List<Node>();
+                list.Add(n);
+            }
+            return map;
+        }
+
+        /// <summary>
+        /// Maps a message or request type to the handler entry point that will run for it.
+        /// Several handlers may subscribe to the same notification, so all of them are recorded.
+        /// </summary>
+        private void RegisterMessageHandler(
+            INamedTypeSymbol type,
+            TypeDeclarationSyntax decl,
+            int typeId,
+            Dictionary<string, List<Node>> methodsByOwner)
+        {
+            var requests = new HashSet<string>(StringComparer.Ordinal);
+
+            // Symbol path: works when the MediatR/MassTransit assembly resolved.
+            foreach (var i in type.AllInterfaces)
+            {
+                if (!HandlerInterfaces.Contains(i.Name, StringComparer.Ordinal)) continue;
+                if (i.TypeArguments.Length == 0) continue;
+                var name = i.TypeArguments[0].Name;
+                if (name.Length > 0) requests.Add(name);
+            }
+
+            // Syntax path: the common case, since the abstraction package is often not referenced.
             foreach (var b in BaseTypeNames(type, decl))
             {
                 var open = b.IndexOf('<');
                 if (open < 0) continue;
-                var head = b[..open];
-                if (head is not ("IRequestHandler" or "INotificationHandler" or "ICommandHandler"
-                                 or "IQueryHandler" or "IConsumer" or "IHandleMessages")) continue;
+                if (!HandlerInterfaces.Contains(b[..open], StringComparer.Ordinal)) continue;
 
                 var args = b[(open + 1)..].TrimEnd('>').Split(',', StringSplitOptions.TrimEntries);
                 if (args.Length == 0) continue;
-                var request = args[0].Split('.').Last();
-                if (request.Length == 0) continue;
+                var request = args[0].Split('.').Last().Split('<').First();
+                if (request.Length > 0) requests.Add(request);
+            }
 
-                var handle = _g.Nodes.FirstOrDefault(n =>
-                    n.Kind == "method" &&
-                    n.Short.StartsWith(_g.ById(typeId)!.Short + ".", StringComparison.Ordinal) &&
-                    (n.Short.EndsWith(".Handle") || n.Short.EndsWith(".HandleAsync") || n.Short.EndsWith(".Consume")));
+            if (requests.Count == 0) return;
 
-                _handlerByRequest[request] = handle?.Id ?? typeId;
+            var typeShort = _g.ById(typeId)!.Short;
+            var entry = methodsByOwner.GetValueOrDefault(typeShort)?
+                .FirstOrDefault(n => n.Short.EndsWith(".Handle", StringComparison.Ordinal)
+                                     || n.Short.EndsWith(".HandleAsync", StringComparison.Ordinal)
+                                     || n.Short.EndsWith(".Consume", StringComparison.Ordinal));
+
+            var target = entry?.Id ?? typeId;
+            foreach (var request in requests)
+            {
+                if (!_handlersByRequest.TryGetValue(request, out var list))
+                    _handlersByRequest[request] = list = new List<int>();
+                if (!list.Contains(target)) list.Add(target);
             }
         }
+
+        // ---------------------------------------------------------------- pass 2
 
         public void Pass2_Bodies(Action<string>? progress)
         {
@@ -368,142 +517,339 @@ public static class Indexer
             foreach (var tree in _comp.SyntaxTrees)
             {
                 var model = _comp.GetSemanticModel(tree);
-                foreach (var body in tree.GetRoot().DescendantNodes().OfType<MemberDeclarationSyntax>())
+                var root = tree.GetRoot();
+
+                // Top-level statements have no containing method declaration. Without this branch
+                // every Program.cs written in the modern style is invisible, which silently drops
+                // all DI registrations and minimal API routes.
+                var globals = root.ChildNodes().OfType<GlobalStatementSyntax>().ToList();
+                if (globals.Count > 0)
                 {
-                    if (body is not (MethodDeclarationSyntax or ConstructorDeclarationSyntax or PropertyDeclarationSyntax))
-                        continue;
-                    if (model.GetDeclaredSymbol(body) is not IMethodSymbol owner) continue;
-                    if (!_idByKey.TryGetValue(Key(owner), out var fromId)) continue;
+                    var stem = Path.GetFileNameWithoutExtension(tree.FilePath);
+                    if (stem.Length == 0) stem = "Program";
 
-                    foreach (var inv in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                    var entryId = SyntheticNode(
+                        $"toplevel::{tree.FilePath}",
+                        $"{stem}.<top-level statements>",
+                        $"{stem}.<top-level>",
+                        "method",
+                        globals[0]);
+
+                    AddTag(_g.ById(entryId)!, "startup");
+                    foreach (var gs in globals) ScanBody(gs, model, entryId);
+                }
+
+                foreach (var member in root.DescendantNodes().OfType<MemberDeclarationSyntax>())
+                {
+                    int ownerId;
+                    switch (member)
                     {
-                        var target = model.GetSymbolInfo(inv).Symbol as IMethodSymbol
-                                     ?? model.GetSymbolInfo(inv).CandidateSymbols.FirstOrDefault() as IMethodSymbol;
-
-                        if (target != null && target.Locations.Any(l => l.IsInSource))
+                        case MethodDeclarationSyntax or ConstructorDeclarationSyntax:
                         {
-                            var toId = NodeFor(target.OriginalDefinition, "method");
-                            Link(fromId, toId, EdgeKind.Call);
+                            if (model.GetDeclaredSymbol(member) is not IMethodSymbol m) continue;
+                            if (!_idByKey.TryGetValue(Key(m), out ownerId)) continue;
+                            break;
                         }
-
-                        TryMediator(inv, model, fromId);
-                        TryDiRegistration(inv, model, fromId);
+                        // Property accessor bodies used to be skipped entirely: GetDeclaredSymbol
+                        // returns an IPropertySymbol here, never an IMethodSymbol.
+                        case PropertyDeclarationSyntax pd:
+                        {
+                            if (model.GetDeclaredSymbol(pd) is not { } p) continue;
+                            if (!_idByKey.TryGetValue(Key(p), out ownerId)) continue;
+                            break;
+                        }
+                        default:
+                            continue;
                     }
 
-                    foreach (var ma in body.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
-                    {
-                        if (model.GetSymbolInfo(ma).Symbol is IPropertySymbol prop &&
-                            prop.Locations.Any(l => l.IsInSource))
-                        {
-                            var toId = NodeFor(prop.OriginalDefinition, "property");
-                            Link(fromId, toId, EdgeKind.Call, "prop");
-                        }
-                    }
+                    ScanBody(member, model, ownerId);
+                }
+            }
 
-                    foreach (var init in body.DescendantNodes().OfType<AssignmentExpressionSyntax>())
-                    {
-                        if (init.Left is IdentifierNameSyntax idn &&
-                            model.GetSymbolInfo(idn).Symbol is IPropertySymbol p2 &&
-                            p2.Locations.Any(l => l.IsInSource))
-                        {
-                            var toId = NodeFor(p2.OriginalDefinition, "property");
-                            Link(fromId, toId, EdgeKind.Call, "prop");
-                        }
-                    }
+            Dbg.Log($"pass 2: {_g.Edges.Count} edges, {UnresolvedCallSites} unresolved call site(s)");
+        }
 
-                    foreach (var oc in body.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
-                    {
-                        if (model.GetSymbolInfo(oc.Type).Symbol is INamedTypeSymbol t &&
-                            t.Locations.Any(l => l.IsInSource))
-                        {
-                            var toId = NodeFor(t, t.TypeKind == TypeKind.Interface ? "interface" : "type");
-                            Link(fromId, toId, EdgeKind.Construct);
-                        }
-                    }
+        private void ScanBody(SyntaxNode body, SemanticModel model, int defaultOwner)
+        {
+            // Route lambdas are attributed to their own node so that a trace through a minimal API
+            // endpoint shows the endpoint, not the whole of Program.cs.
+            Dictionary<SyntaxNode, int>? claims = null;
+            foreach (var inv in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                TryMinimalApiRoute(inv, model, defaultOwner, ref claims);
+            }
+
+            int OwnerOf(SyntaxNode node)
+            {
+                if (claims == null) return defaultOwner;
+                for (var cur = node; cur != null && cur != body; cur = cur.Parent)
+                {
+                    if (claims.TryGetValue(cur, out var id)) return id;
+                }
+                return defaultOwner;
+            }
+
+            foreach (var inv in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                var owner = OwnerOf(inv);
+                var info = model.GetSymbolInfo(inv);
+                var target = info.Symbol as IMethodSymbol ?? info.CandidateSymbols.FirstOrDefault() as IMethodSymbol;
+
+                if (target == null && info.CandidateSymbols.Length == 0) UnresolvedCallSites++;
+
+                if (target != null && target.Locations.Any(l => l.IsInSource))
+                {
+                    Link(owner, NodeFor(target.OriginalDefinition, "method"), EdgeKind.Call);
+                }
+
+                TryMediator(inv, model, owner);
+                TryDiRegistration(inv, model);
+            }
+
+            foreach (var ma in body.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
+            {
+                if (model.GetSymbolInfo(ma).Symbol is IPropertySymbol prop && prop.Locations.Any(l => l.IsInSource))
+                {
+                    Link(OwnerOf(ma), NodeFor(prop.OriginalDefinition, "property"), EdgeKind.Call, "prop");
+                }
+            }
+
+            foreach (var assign in body.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+            {
+                if (assign.Left is IdentifierNameSyntax id &&
+                    model.GetSymbolInfo(id).Symbol is IPropertySymbol prop &&
+                    prop.Locations.Any(l => l.IsInSource))
+                {
+                    Link(OwnerOf(assign), NodeFor(prop.OriginalDefinition, "property"), EdgeKind.Call, "prop");
+                }
+            }
+
+            foreach (var oc in body.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
+            {
+                if (model.GetSymbolInfo(oc.Type).Symbol is INamedTypeSymbol t && t.Locations.Any(l => l.IsInSource))
+                {
+                    var kind = t.TypeKind == TypeKind.Interface ? "interface" : "type";
+                    Link(OwnerOf(oc), NodeFor(t.OriginalDefinition, kind), EdgeKind.Construct);
                 }
             }
         }
 
+        private static readonly Dictionary<string, string> MapVerbs = new(StringComparer.Ordinal)
+        {
+            ["MapGet"] = "GET",
+            ["MapPost"] = "POST",
+            ["MapPut"] = "PUT",
+            ["MapDelete"] = "DELETE",
+            ["MapPatch"] = "PATCH",
+            ["Map"] = "ANY"
+        };
+
         /// <summary>
-        /// Resolves mediator request types from Send/Publish invocations to their corresponding handlers.
+        /// Recognises minimal API endpoint registrations such as app.MapGet("/orders", Handler).
+        /// A lambda handler gets its own synthetic node; a method group is tagged in place.
+        /// </summary>
+        private void TryMinimalApiRoute(
+            InvocationExpressionSyntax inv,
+            SemanticModel model,
+            int owner,
+            ref Dictionary<SyntaxNode, int>? claims)
+        {
+            if (inv.Expression is not MemberAccessExpressionSyntax ma) return;
+            if (!MapVerbs.TryGetValue(ma.Name.Identifier.Text, out var verb)) return;
+
+            var args = inv.ArgumentList.Arguments;
+            if (args.Count < 2) return;
+            if (args[0].Expression is not LiteralExpressionSyntax lit) return;
+
+            var pattern = lit.Token.ValueText;
+            if (pattern.Length == 0) return;
+            var tag = $"http:{verb} {pattern}";
+
+            var handler = args[1].Expression;
+
+            if (handler is AnonymousFunctionExpressionSyntax lambda)
+            {
+                var stem = Path.GetFileNameWithoutExtension(inv.SyntaxTree.FilePath);
+                if (stem.Length == 0) stem = "Endpoints";
+
+                var span = inv.GetLocation().SourceSpan;
+                var routeId = SyntheticNode(
+                    $"route::{inv.SyntaxTree.FilePath}:{span.Start}",
+                    $"{stem}.{verb} {pattern}",
+                    $"{stem}.{verb} {pattern}",
+                    "method",
+                    inv);
+
+                AddTag(_g.ById(routeId)!, tag);
+                Link(owner, routeId, EdgeKind.Route, $"{verb} {pattern}");
+
+                claims ??= new Dictionary<SyntaxNode, int>();
+                claims[lambda] = routeId;
+                return;
+            }
+
+            var info = model.GetSymbolInfo(handler);
+            var method = info.Symbol as IMethodSymbol ?? info.CandidateSymbols.FirstOrDefault() as IMethodSymbol;
+            if (method == null || !method.Locations.Any(l => l.IsInSource)) return;
+
+            var targetId = NodeFor(method.OriginalDefinition, "method");
+            AddTag(_g.ById(targetId)!, tag);
+            Link(owner, targetId, EdgeKind.Route, $"{verb} {pattern}");
+        }
+
+        /// <summary>
+        /// Resolves mediator request types from Send/Publish invocations to their handlers.
+        /// Publish fans out, so every registered handler is linked.
         /// </summary>
         private void TryMediator(InvocationExpressionSyntax inv, SemanticModel model, int fromId)
         {
             if (inv.Expression is not MemberAccessExpressionSyntax ma) return;
             var name = ma.Name.Identifier.Text;
             if (name is not ("Send" or "Publish" or "SendAsync" or "PublishAsync")) return;
+
             var arg = inv.ArgumentList.Arguments.FirstOrDefault();
             if (arg == null) return;
 
             string? requestType = null;
             if (arg.Expression is ObjectCreationExpressionSyntax oc)
                 requestType = oc.Type.ToString().Split('.').Last().Split('<').First();
-            else if (model.GetTypeInfo(arg.Expression).Type is { } t && t.Name.Length > 0)
+            else if (model.GetTypeInfo(arg.Expression).Type is { Name.Length: > 0 } t)
                 requestType = t.Name;
 
             if (requestType == null) return;
-            if (!_handlerByRequest.TryGetValue(requestType, out var handlerId)) return;
-            Link(fromId, handlerId, EdgeKind.Mediatr, $"via {name}({requestType})");
+            if (!_handlersByRequest.TryGetValue(requestType, out var handlers)) return;
+
+            foreach (var handlerId in handlers)
+            {
+                Link(fromId, handlerId, EdgeKind.Mediatr, $"via {name}({requestType})");
+            }
         }
 
         /// <summary>
-        /// Tracks dependency injection service registrations (AddScoped, AddSingleton, AddTransient).
+        /// Tracks dependency injection service registrations, resolving the type arguments through
+        /// the semantic model so that same-named types in different namespaces stay distinct.
         /// </summary>
-        private void TryDiRegistration(InvocationExpressionSyntax inv, SemanticModel model, int fromId)
+        private void TryDiRegistration(InvocationExpressionSyntax inv, SemanticModel model)
         {
             if (inv.Expression is not MemberAccessExpressionSyntax ma) return;
-            var name = ma.Name.Identifier.Text;
-            if (!name.StartsWith("Add")) return;
             if (ma.Name is not GenericNameSyntax gen) return;
-            var args = gen.TypeArgumentList.Arguments;
-            if (args.Count != 2) return;
 
-            var svc = args[0].ToString().Split('.').Last();
-            var impl = args[1].ToString().Split('.').Last();
-            var lifetime = name switch
+            var lifetime = gen.Identifier.Text switch
             {
                 "AddScoped" => "scoped",
                 "AddSingleton" => "singleton",
                 "AddTransient" => "transient",
-                _ => "di"
+                "AddHostedService" => "hosted",
+                _ => null
             };
-            _diBindings[svc] = impl;
+            if (lifetime == null) return;
 
-            var svcNode = _g.Nodes.FirstOrDefault(n => n.Short == svc && n.Kind is "interface" or "type");
-            var implNode = _g.Nodes.FirstOrDefault(n => n.Short == impl && n.Kind == "type");
-            if (svcNode != null && implNode != null)
+            var args = gen.TypeArgumentList.Arguments;
+
+            if (lifetime == "hosted")
             {
-                Link(svcNode.Id, implNode.Id, EdgeKind.DiBinding, lifetime);
-                AddTag(implNode, "di:" + lifetime);
+                if (args.Count != 1) return;
+                if (ResolveTypeNode(args[0], model) is { } hostedId) AddTag(_g.ById(hostedId)!, "hosted");
+                return;
             }
+
+            // Self-registration: services.AddScoped<PaymentService>();
+            if (args.Count == 1)
+            {
+                if (ResolveTypeNode(args[0], model) is { } selfId) AddTag(_g.ById(selfId)!, "di:" + lifetime);
+                return;
+            }
+
+            if (args.Count != 2) return;
+
+            var serviceId = ResolveTypeNode(args[0], model);
+            var implId = ResolveTypeNode(args[1], model);
+            if (implId is not { } impl) return;
+
+            AddTag(_g.ById(impl)!, "di:" + lifetime);
+            if (serviceId is not { } service || service == impl) return;
+
+            Link(service, impl, EdgeKind.DiBinding, lifetime);
+            _diBoundPairs.Add((service, impl));
         }
+
+        /// <summary>
+        /// Maps a type argument to a graph node, preferring semantic resolution and falling back to
+        /// an unambiguous short name match when the type could not be bound.
+        /// </summary>
+        private int? ResolveTypeNode(TypeSyntax syntax, SemanticModel model)
+        {
+            if (model.GetSymbolInfo(syntax).Symbol is INamedTypeSymbol sym &&
+                sym.OriginalDefinition.Locations.Any(l => l.IsInSource))
+            {
+                var definition = sym.OriginalDefinition;
+                return NodeFor(definition, definition.TypeKind == TypeKind.Interface ? "interface" : "type");
+            }
+
+            var shortName = syntax.ToString().Split('.').Last().Split('<').First();
+            Node? match = null;
+            foreach (var n in _g.Nodes)
+            {
+                if (n.Kind is not ("interface" or "type")) continue;
+                if (!string.Equals(n.Short, shortName, StringComparison.Ordinal)) continue;
+                if (match != null)
+                {
+                    Dbg.Log($"di: '{shortName}' is ambiguous across namespaces; registration skipped");
+                    return null;
+                }
+                match = n;
+            }
+
+            return match?.Id;
+        }
+
+        // ---------------------------------------------------------------- pass 3
 
         public void Pass3_Indirection(Action<string>? progress)
         {
             progress?.Invoke("pass 3: interface and override edges");
 
-            foreach (var ifaceNode in _g.Nodes.Where(n => n.Kind == "interface").ToList())
-            {
-                if (!_typeImplementors.TryGetValue(ifaceNode.Short, out var impls)) continue;
-                var members = _g.Nodes.Where(n => n.Kind == "method" &&
-                    n.Short.StartsWith(ifaceNode.Short + ".", StringComparison.Ordinal)).ToList();
+            // One lookup instead of a linear scan per member per implementor.
+            var methodByShort = new Dictionary<string, Node>(StringComparer.Ordinal);
+            var methodsByOwner = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
 
-                foreach (var implId in impls.Distinct())
+            foreach (var n in _g.Nodes)
+            {
+                if (n.Kind != "method") continue;
+                methodByShort.TryAdd(n.Short, n);
+
+                var dot = n.Short.LastIndexOf('.');
+                if (dot <= 0) continue;
+                var owner = n.Short[..dot];
+                if (!methodsByOwner.TryGetValue(owner, out var list)) methodsByOwner[owner] = list = new List<Node>();
+                list.Add(n);
+            }
+
+            foreach (var (baseId, implementors) in _implementorsByBase)
+            {
+                var baseNode = _g.ById(baseId);
+                if (baseNode == null) continue;
+
+                // Interfaces dispatch; base classes are overridden. Both answer "what actually runs".
+                var edgeKind = baseNode.Kind == "interface" ? EdgeKind.Interface : EdgeKind.Override;
+                var members = methodsByOwner.GetValueOrDefault(baseNode.Short) ?? [];
+
+                foreach (var implId in implementors)
                 {
                     var implNode = _g.ById(implId);
                     if (implNode == null) continue;
-                    var preferred = _diBindings.TryGetValue(ifaceNode.Short, out var bound) && bound == implNode.Short;
+
+                    var preferred = _diBoundPairs.Contains((baseId, implId));
+                    var note = preferred ? "di-bound" : null;
 
                     foreach (var m in members)
                     {
-                        var memberName = m.Short[(ifaceNode.Short.Length + 1)..];
-                        var target = _g.Nodes.FirstOrDefault(n => n.Kind == "method" &&
-                            n.Short == implNode.Short + "." + memberName);
-                        if (target == null) continue;
-                        Link(m.Id, target.Id, EdgeKind.Interface, preferred ? "di-bound" : null);
+                        var memberName = m.Short[(baseNode.Short.Length + 1)..];
+                        if (!methodByShort.TryGetValue(implNode.Short + "." + memberName, out var target)) continue;
+                        Link(m.Id, target.Id, edgeKind, note);
                     }
 
-                    Link(ifaceNode.Id, implId, EdgeKind.Interface, preferred ? "di-bound" : null);
+                    Link(baseId, implId, edgeKind, note);
                 }
             }
         }

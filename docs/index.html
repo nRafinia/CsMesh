@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>csmesh — structural code intelligence for C# and .NET</title>
+<meta name="description" content="csmesh traces what a C# codebase actually runs — through dependency injection, MediatR and interface dispatch — in one command, under a hard token budget.">
+<meta property="og:title" content="csmesh — structural code intelligence for C# and .NET">
+<meta property="og:description" content="One command instead of four file reads. Roslyn symbol graph, hard token budget, deterministic exit codes.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230C1117'/%3E%3Cg stroke='%23E0A33E' stroke-width='2' fill='none'%3E%3Cpath d='M9 7v18'/%3E%3Cpath d='M9 12h7M9 19h11'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+:root{
+  --paper:#EDEFF2;
+  --paper-2:#FFFFFF;
+  --ink:#0C1117;
+  --line-dk:#22303E;
+  --ink2:#535F6C;
+  --ink3:#8892A0;
+  --rule:#CBD2DA;
+  --rule-soft:#DEE3E9;
+  --term:#080C11;
+  --term-ink:#C6D0DC;
+  --term-dim:#66768A;
+  --bound:#E0A33E;
+  --med:#A79AFF;
+  --route:#4FC7AE;
+  --stale:#EE7A62;
+  --impl:#7FB6EB;
+  --bound-d:#8A5C05;
+  --med-d:#5140D2;
+  --route-d:#0A6F62;
+  --stale-d:#A93B26;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --serif:"Newsreader",Georgia,serif;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif);font-size:17px;line-height:1.62;-webkit-font-smoothing:antialiased}
+::selection{background:var(--bound);color:var(--ink)}
+a{color:inherit}
+a:focus-visible,button:focus-visible{outline:2px solid var(--bound);outline-offset:3px;border-radius:2px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 30px}
+@media (max-width:640px){.wrap{padding:0 18px}}
+
+/* ============ nav ============ */
+.nav{position:fixed;top:0;left:0;right:0;z-index:60;transition:background .25s,border-color .25s,color .25s;border-bottom:1px solid transparent;color:#DCE3EB}
+.nav.stuck{background:rgba(237,239,242,.9);backdrop-filter:blur(12px);border-bottom-color:var(--rule);color:var(--ink)}
+.nav .wrap{display:flex;align-items:center;height:62px;gap:26px}
+.brand{font-family:var(--mono);font-weight:800;font-size:16.5px;letter-spacing:-.05em;text-decoration:none;display:flex;align-items:center;gap:9px;color:inherit}
+.brand i{width:9px;height:9px;background:var(--bound);border-radius:1px;flex:none}
+.nav nav{margin-left:auto;display:flex;gap:24px;align-items:center}
+.nav nav a{font-family:var(--mono);font-size:13px;text-decoration:none;opacity:.72;color:inherit}
+.nav nav a:hover{opacity:1}
+.nav .gh{opacity:1;border:1px solid currentColor;padding:5px 13px}
+.nav .gh:hover{background:#DCE3EB}
+.nav .gh:hover span{color:var(--ink)}
+.nav.stuck .gh:hover{background:var(--ink)}
+.nav.stuck .gh:hover span{color:var(--paper)}
+@media (max-width:760px){.nav nav a.hs{display:none}}
+
+/* ============ hero ============ */
+.hero{position:relative;background:var(--ink);color:#E7ECF2;padding:150px 0 0;overflow:hidden}
+.mesh{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.hero .wrap{position:relative;z-index:2}
+.hero h1{font-family:var(--mono);font-weight:800;font-size:clamp(32px,6vw,66px);line-height:1.0;letter-spacing:-.055em;margin:0 0 28px;max-width:15ch;color:#fff}
+.lede{font-size:19.5px;line-height:1.62;color:#9FADBC;max-width:60ch;margin:0 0 34px;font-weight:300}
+.lede b{color:#E7ECF2;font-weight:400}
+.lede code{font-family:var(--mono);font-size:.84em;color:var(--bound)}
+.hero-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.chips{display:flex;gap:10px;flex-wrap:wrap;font-family:var(--mono);font-size:11.5px;color:#7A8899;margin-top:30px}
+.chips span{border:1px solid var(--line-dk);padding:4px 10px;border-radius:20px}
+
+/* copy boxes */
+.cmdbox{display:flex;align-items:stretch;font-family:var(--mono);font-size:13.5px;border:1px solid var(--rule);background:var(--paper-2)}
+.cmdbox code{padding:11px 15px;white-space:nowrap;overflow-x:auto;scrollbar-width:none}
+.cmdbox code::-webkit-scrollbar{display:none}
+.cmdbox button{border:0;border-left:1px solid var(--rule);background:transparent;font:inherit;font-size:12px;padding:0 15px;cursor:pointer;color:var(--ink2);min-width:84px}
+.cmdbox button:hover{background:var(--ink);color:var(--paper)}
+.cmdbox.dark{border-color:var(--line-dk);background:rgba(255,255,255,.03);color:#DDE5EE}
+.cmdbox.dark button{border-left-color:var(--line-dk);color:#8A99AA}
+.cmdbox.dark button:hover{background:var(--bound);color:var(--ink)}
+.btn{display:inline-flex;align-items:center;background:var(--bound);color:var(--ink);text-decoration:none;font-family:var(--mono);font-weight:500;font-size:13.5px;padding:12px 20px;border:1px solid var(--bound)}
+.btn:hover{background:transparent;color:var(--bound)}
+
+/* ============ terminal ============ */
+.term{background:var(--term);color:var(--term-ink);font-family:var(--mono);font-size:13px;line-height:1.74;overflow:hidden;border:1px solid var(--line-dk)}
+.term-bar{display:flex;align-items:center;gap:14px;padding:11px 16px;border-bottom:1px solid var(--line-dk);font-size:12px;color:var(--term-dim);background:rgba(255,255,255,.02)}
+.term-bar .prompt{color:#7E90A4}
+.term-bar .prompt em{color:#E7ECF2;font-style:normal}
+.term-bar .meta{margin-left:auto;display:flex;gap:18px;white-space:nowrap}
+.term-bar .ok{color:var(--route)}
+.term-body{padding:18px 18px 22px;overflow-x:auto}
+.term-body pre{margin:0;font:inherit;white-space:pre}
+.ln{display:block}
+.t-arrow{color:#3E4C5C}.t-file{color:var(--term-dim)}.t-bound{color:var(--bound)}
+.t-med{color:var(--med)}.t-impl{color:var(--impl)}.t-route{color:var(--route)}
+.t-stale{color:var(--stale)}
+.reveal .ln{opacity:0;animation:fade .4s ease forwards}
+@keyframes fade{to{opacity:1}}
+.hero-term{margin-top:66px;position:relative;z-index:2;box-shadow:0 40px 80px -30px rgba(0,0,0,.9)}
+.hero-cap{position:relative;z-index:2;font-size:15px;color:#7A8899;font-weight:300;max-width:58ch;margin:18px 0 0;padding-bottom:88px}
+@media (max-width:640px){.term{font-size:11px}.term-bar .meta span:not(.ok){display:none}}
+@media (prefers-reduced-motion:reduce){.reveal .ln{opacity:1;animation:none}.pulse{display:none}}
+
+/* ============ sections ============ */
+.sect{padding:84px 0;border-top:1px solid var(--rule)}
+.sect.first{border-top:0}
+.sect.dark{background:var(--ink);color:#E7ECF2;border-top:0}
+.head{margin:0 0 40px;max-width:70ch}
+.head h2{font-family:var(--mono);font-weight:700;font-size:clamp(21px,2.7vw,29px);letter-spacing:-.04em;margin:0 0 10px;line-height:1.15}
+.head p{margin:0;color:var(--ink2);font-weight:300;max-width:62ch}
+.sect.dark .head p{color:#8A99AA}
+.head code{font-family:var(--mono);font-size:.85em}
+
+/* ============ the loop ============ */
+.loop{display:grid;gap:34px;align-items:start}
+@media (min-width:900px){.loop{grid-template-columns:1fr 1fr;gap:56px}}
+.loop h3{font-family:var(--mono);font-size:13px;font-weight:700;margin:0 0 18px;color:var(--ink2)}
+.steps{list-style:none;margin:0;padding:0}
+.steps li{position:relative;padding:0 0 0 30px;font-family:var(--mono);font-size:13px;color:var(--ink2);line-height:1.5}
+.steps li em{font-style:normal;display:block;color:var(--ink3);font-size:11.5px;margin-top:3px}
+.steps li:before{content:"";position:absolute;left:5px;top:6px;width:7px;height:7px;border:1px solid var(--rule);background:var(--paper);border-radius:50%}
+.steps li:after{content:"";position:absolute;left:8px;top:15px;bottom:-18px;width:1px;background:var(--rule)}
+.steps li:last-child:after{display:none}
+.steps li+li{margin-top:18px}
+.loop-total{font-family:var(--mono);font-size:12.5px;color:var(--stale-d);margin:22px 0 0;padding-top:14px;border-top:1px solid var(--rule)}
+.loop-win{border-left:3px solid var(--bound);padding-left:24px}
+.loop-win .cmdbox{margin-bottom:16px}
+.loop-win p{margin:0;font-size:15.5px;color:var(--ink2);font-weight:300}
+.loop-win .loop-total{color:var(--route-d);border-top-color:var(--rule-soft)}
+
+/* ============ blind spots ============ */
+.blind{display:grid;gap:20px}
+@media (min-width:840px){.blind{grid-template-columns:repeat(3,1fr)}}
+.blind article{border:1px solid var(--rule);background:var(--paper-2)}
+.blind .code{background:var(--term);color:var(--term-ink);font-family:var(--mono);font-size:12.5px;padding:14px 16px;overflow-x:auto;white-space:nowrap}
+.blind .body{padding:18px 20px 22px}
+.blind h3{font-family:var(--mono);font-size:13.5px;font-weight:700;margin:0 0 8px}
+.blind p{margin:0;font-size:15.5px;line-height:1.55;color:var(--ink2);font-weight:300}
+.blind p code,.mono-i{font-family:var(--mono);font-size:.84em}
+
+/* ============ command explorer ============ */
+.cmdgrid{display:grid;gap:26px}
+@media (min-width:880px){.cmdgrid{grid-template-columns:236px 1fr;gap:38px}}
+.cmdlist{display:flex;flex-direction:column}
+.cmdlist button{text-align:left;font-family:var(--mono);font-size:13.5px;background:none;border:0;border-left:2px solid var(--rule-soft);padding:11px 0 11px 16px;cursor:pointer;color:var(--ink2)}
+.cmdlist button:hover{color:var(--ink);border-left-color:var(--ink3)}
+.cmdlist button[aria-selected="true"]{color:var(--ink);font-weight:700;border-left-color:var(--bound-d)}
+.cmddesc{font-size:15.5px;color:var(--ink2);font-weight:300;margin:0 0 16px;min-height:3.1em;max-width:70ch}
+@media (max-width:879px){.cmdlist{flex-direction:row;flex-wrap:wrap;gap:8px}
+ .cmdlist button{border:1px solid var(--rule);padding:7px 12px}
+ .cmdlist button[aria-selected="true"]{border-color:var(--ink)}
+ .cmddesc{min-height:0}}
+
+/* ============ numbers ============ */
+.figs{display:grid;border-top:1px solid var(--line-dk)}
+@media (min-width:760px){.figs{grid-template-columns:repeat(3,1fr)}}
+.figs div{padding:32px 0 28px;border-bottom:1px solid var(--line-dk)}
+@media (min-width:760px){.figs div{border-bottom:0;border-right:1px solid var(--line-dk);padding:36px 34px}
+ .figs div:first-child{padding-left:0}.figs div:last-child{border-right:0}}
+.figs b{display:block;font-family:var(--mono);font-weight:800;font-size:clamp(40px,6vw,62px);letter-spacing:-.06em;line-height:1;color:#fff}
+.figs b i{font-style:normal;font-size:.42em;letter-spacing:-.02em;color:var(--bound);margin-left:4px}
+.figs span{display:block;font-family:var(--mono);font-size:12px;color:var(--bound);margin:14px 0 6px}
+.figs p{margin:0;font-size:15px;color:#8A99AA;font-weight:300;line-height:1.5}
+.tbl{width:100%;border-collapse:collapse;font-size:15px;margin-top:52px}
+.tbl th{text-align:left;font-family:var(--mono);font-size:11px;font-weight:500;color:#6E7D8E;padding:0 16px 10px 0;border-bottom:1px solid var(--line-dk)}
+.tbl td{padding:14px 16px 14px 0;border-bottom:1px solid rgba(255,255,255,.06);vertical-align:top;font-weight:300;color:#8A99AA}
+.tbl td:first-child{color:#E7ECF2;font-family:var(--mono);font-size:13.5px;font-weight:500;white-space:nowrap}
+.tbl .old{font-family:var(--mono);font-size:13px;color:#5D6B7C;white-space:nowrap}
+.tbl .win{font-family:var(--mono);font-size:13.5px;color:var(--route);font-weight:500;white-space:nowrap}
+@media (max-width:680px){.tbl,.tbl tbody,.tbl tr,.tbl td{display:block;width:100%}
+ .tbl thead{display:none}.tbl tr{border-bottom:1px solid var(--line-dk);padding:14px 0}.tbl td{border:0;padding:2px 0}}
+
+/* ============ exit codes ============ */
+.codes{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule)}
+@media (min-width:720px){.codes{grid-template-columns:repeat(3,1fr)}}
+.codes div{background:var(--paper-2);padding:20px 22px;position:relative}
+.codes kbd{font-family:var(--mono);font-weight:800;font-size:30px;letter-spacing:-.05em;background:none;color:var(--rule);position:absolute;right:18px;top:14px;line-height:1}
+.codes strong{font-family:var(--mono);font-size:13px;font-weight:700;display:block;margin-bottom:8px}
+.codes p{margin:0;font-size:14.5px;color:var(--ink2);font-weight:300;line-height:1.5;padding-right:40px}
+.codes code{font-family:var(--mono);font-size:.85em}
+.codes .c0 strong{color:var(--route-d)}.codes .c2 strong{color:var(--bound-d)}.codes .c4 strong{color:var(--med-d)}
+
+/* ============ agents ============ */
+.agents{display:grid;border-top:1px solid var(--rule)}
+@media (min-width:620px){.agents{grid-template-columns:repeat(2,1fr)}}
+@media (min-width:940px){.agents{grid-template-columns:repeat(3,1fr)}}
+.agents div{padding:16px 20px 16px 0;border-bottom:1px solid var(--rule-soft)}
+.agents span{display:block;font-family:var(--mono);font-size:14px;font-weight:500;margin-bottom:4px}
+.agents em{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--ink3);word-break:break-all}
+
+/* ============ install ============ */
+.install{display:grid;gap:34px}
+@media (min-width:860px){.install{grid-template-columns:1fr 1fr;gap:48px}}
+.install h3{font-family:var(--mono);font-size:14px;font-weight:700;margin:0 0 16px}
+.tabs{display:flex;margin-bottom:14px;border-bottom:1px solid var(--rule)}
+.tabs button{font-family:var(--mono);font-size:12.5px;background:none;border:0;border-bottom:2px solid transparent;padding:7px 0 8px;margin-right:22px;cursor:pointer;color:var(--ink3)}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--bound-d)}
+.note{font-size:14.5px;color:var(--ink2);font-weight:300;margin:14px 0 0}
+.note code{font-family:var(--mono);font-size:12.5px;background:var(--paper-2);padding:1px 5px;border:1px solid var(--rule-soft)}
+
+/* ============ footer ============ */
+footer{background:var(--ink);color:#7A8899;padding:44px 0 56px;font-family:var(--mono);font-size:12.5px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:14px 30px;align-items:baseline}
+footer a{color:#B7C2CE;text-decoration:none;border-bottom:1px solid var(--line-dk)}
+footer a:hover{color:var(--bound);border-bottom-color:var(--bound)}
+footer .right{margin-left:auto}
+</style>
+</head>
+<body>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><i></i>csmesh</a>
+    <nav>
+      <a href="#loop" class="hs">Why</a>
+      <a href="#commands">Commands</a>
+      <a href="#numbers" class="hs">Numbers</a>
+      <a href="#install">Install</a>
+      <a class="gh" href="https://github.com/nRafinia/CsMesh"><span>GitHub</span></a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<div class="hero">
+  <svg class="mesh" viewBox="0 0 1200 760" preserveAspectRatio="xMidYMin slice" aria-hidden="true">
+    <defs>
+      <radialGradient id="fade" cx="50%" cy="12%" r="80%">
+        <stop offset="0%" stop-color="#fff" stop-opacity=".9"/>
+        <stop offset="58%" stop-color="#fff" stop-opacity=".24"/>
+        <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+      </radialGradient>
+      <mask id="m"><rect width="1200" height="760" fill="url(#fade)"/></mask>
+      <path id="e1" d="M170 120 C 320 120, 300 250, 455 250"/>
+      <path id="e2" d="M455 250 C 610 250, 590 128, 745 128"/>
+      <path id="e3" d="M455 250 C 600 250, 620 392, 760 392"/>
+      <path id="e4" d="M760 392 C 900 392, 900 520, 1035 520"/>
+      <path id="e5" d="M170 120 C 250 120, 230 400, 330 400"/>
+      <path id="e6" d="M330 400 C 470 400, 470 560, 610 560"/>
+      <path id="e7" d="M745 128 C 880 128, 880 250, 1010 250"/>
+      <path id="e8" d="M610 560 C 730 560, 740 640, 880 640"/>
+    </defs>
+    <g mask="url(#m)">
+      <g fill="none" stroke="#2A3B4D" stroke-width="1.25">
+        <use href="#e1"/><use href="#e2"/><use href="#e3"/><use href="#e4"/>
+        <use href="#e5"/><use href="#e6"/><use href="#e7"/><use href="#e8"/>
+      </g>
+      <g fill="#0C1117" stroke="#33465B" stroke-width="1.25">
+        <circle cx="170" cy="120" r="5"/><circle cx="455" cy="250" r="5"/>
+        <circle cx="745" cy="128" r="5"/><circle cx="760" cy="392" r="5"/>
+        <circle cx="1035" cy="520" r="5"/><circle cx="330" cy="400" r="5"/>
+        <circle cx="610" cy="560" r="5"/><circle cx="1010" cy="250" r="5"/>
+        <circle cx="880" cy="640" r="5"/>
+      </g>
+      <g class="pulse">
+        <circle r="3.4" fill="#E0A33E"><animateMotion dur="4.2s" repeatCount="indefinite"><mpath href="#e1"/></animateMotion></circle>
+        <circle r="3.4" fill="#E0A33E" opacity=".85"><animateMotion dur="4.2s" begin="4.2s" repeatCount="indefinite"><mpath href="#e3"/></animateMotion></circle>
+        <circle r="3" fill="#A79AFF" opacity=".8"><animateMotion dur="5.6s" begin="1.4s" repeatCount="indefinite"><mpath href="#e5"/></animateMotion></circle>
+        <circle r="3" fill="#4FC7AE" opacity=".75"><animateMotion dur="6s" begin="2.6s" repeatCount="indefinite"><mpath href="#e7"/></animateMotion></circle>
+      </g>
+    </g>
+  </svg>
+
+  <div class="wrap">
+    <h1>Trace what a C# codebase actually runs.</h1>
+    <p class="lede">Text search stops at the interface. csmesh compiles your solution with Roslyn into a frozen symbol graph and prints the resolved path — <b>which implementation the container injects, which handler a <code>Send()</code> reaches, which endpoints break if you touch a property</b> — with a hard cap on how many tokens come back.</p>
+    <div class="hero-actions">
+      <div class="cmdbox dark">
+        <code>curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | sh</code>
+        <button data-copy="curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | sh">Copy</button>
+      </div>
+      <a class="btn" href="https://github.com/nRafinia/CsMesh">Read the source</a>
+    </div>
+    <div class="chips">
+      <span>.NET 10</span><span>Native AOT</span><span>Roslyn</span><span>zero idle context</span><span>MIT</span>
+    </div>
+
+    <div class="term reveal hero-term">
+      <div class="term-bar">
+        <span class="prompt">$ <em>csmesh trace PaymentController.Post --budget 600</em></span>
+        <span class="meta"><span class="ok">exit 0</span><span>118 tokens</span><span>96 ms</span></span>
+      </div>
+      <div class="term-body"><pre id="hero-out"></pre></div>
+    </div>
+    <p class="hero-cap">Colour is information here, not decoration: amber is the implementation the container registered, violet is a mediator dispatch, teal is an HTTP entrypoint.</p>
+  </div>
+</div>
+
+<section class="sect first" id="loop">
+  <div class="wrap">
+    <div class="head">
+      <h2>The loop this replaces</h2>
+      <p>Ask an agent where a payment ends up in a layered .NET solution and it starts hopping files. Every hop costs a turn, and the context window pays for all of them.</p>
+    </div>
+    <div class="loop">
+      <div>
+        <h3>grep, then read, then grep again</h3>
+        <ol class="steps">
+          <li>grep for the interface<em>12 hits: mocks, fakes, an XML doc comment — ~600 tokens</em></li>
+          <li>open PaymentService.cs<em>finds interface dispatch, not the body — ~800 tokens</em></li>
+          <li>grep Program.cs for the registration<em>sifts through test fixtures — ~1,200 tokens</em></li>
+          <li>open the handler, hit another Send()<em>and the chain starts over — ~1,500 tokens</em></li>
+        </ol>
+        <p class="loop-total">4 turns spent, roughly 4,100 tokens burned, still no answer</p>
+      </div>
+      <div class="loop-win">
+        <h3>or ask the graph once</h3>
+        <div class="cmdbox"><code>csmesh trace PaymentController.Post --budget 600</code><button data-copy="csmesh trace PaymentController.Post --budget 600">Copy</button></div>
+        <p>The container binding, the mediator hop, the concrete repository and the DbContext underneath it — resolved from compiler symbols, ordered so the code that actually runs comes first.</p>
+        <p class="loop-total">1 turn, 118 tokens, exit 0</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sect">
+  <div class="wrap">
+    <div class="head">
+      <h2>Three things ripgrep will never resolve</h2>
+      <p>Every layered .NET app is held together by indirection that exists only at compile time or at container-build time. Lexical search cannot follow any of it.</p>
+    </div>
+    <div class="blind">
+      <article>
+        <div class="code">services.AddScoped&lt;IStore, SqlStore&gt;();</div>
+        <div class="body">
+          <h3>The binding</h3>
+          <p>Grep finds twelve types implementing <code>IStore</code> — mocks, fakes, a legacy adapter. Exactly one is registered. csmesh tags it <span class="mono-i" style="color:var(--bound-d)">[di-bound]</span> and ranks it first.</p>
+        </div>
+      </article>
+      <article>
+        <div class="code">await _mediator.Send(cmd);</div>
+        <div class="body">
+          <h3>The dispatch</h3>
+          <p>The handler sits in another project with no textual link back to the caller. csmesh matches the request type to its <code>IRequestHandler</code> and draws the edge across the boundary.</p>
+        </div>
+      </article>
+      <article>
+        <div class="code">[HttpPost("/payments")]</div>
+        <div class="body">
+          <h3>The entrypoint</h3>
+          <p>Attribute routes, MassTransit consumers, hosted services. Tagged as entrypoints, so a blast radius tells you which HTTP calls actually break — not which files mention the word.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="sect" id="commands">
+  <div class="wrap">
+    <div class="head">
+      <h2>Six commands, real output</h2>
+      <p>Pick one. Every answer is capped by <code>--budget</code>; when the answer is genuinely bigger than the cap, the process exits 2 with a hint instead of flooding the window.</p>
+    </div>
+    <div class="cmdgrid">
+      <div class="cmdlist" role="tablist" aria-label="csmesh commands"></div>
+      <div>
+        <p class="cmddesc" id="cmd-desc"></p>
+        <div class="term">
+          <div class="term-bar"><span class="prompt">$ <em id="cmd-line"></em></span><span class="meta"><span class="ok" id="cmd-exit"></span></span></div>
+          <div class="term-body"><pre id="cmd-out"></pre></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sect dark" id="numbers">
+  <div class="wrap">
+    <div class="head">
+      <h2>Measured on a production backend</h2>
+      <p>A multi-project .NET solution, roughly 1,600 nodes and 3,000 edges. The same questions asked two ways, recorded by the tool's own <code>usage</code> telemetry.</p>
+    </div>
+    <div class="figs">
+      <div><b>96<i>ms</i></b><span>median query</span><p>Against three to five seconds of grep, file reads and model round trips.</p></div>
+      <div><b>85<i>%</i></b><span>less context</span><p>Around a hundred tokens returned where the file-hopping loop spent four thousand.</p></div>
+      <div><b>1</b><span>shell command</span><p>Chainable with <span class="mono-i" style="color:#8A99AA">&amp;&amp;</span>, so two questions still cost one turn.</p></div>
+    </div>
+    <table class="tbl">
+      <thead><tr><th style="width:30%">Metric</th><th style="width:26%">grep and file reads</th><th style="width:22%">csmesh</th><th>Difference</th></tr></thead>
+      <tbody>
+        <tr><td>Query latency</td><td class="old">3,000–5,200 ms</td><td class="win">94–111 ms</td><td>35–50× faster</td></tr>
+        <tr><td>Agent turns</td><td class="old">2–4 turns</td><td class="win">1 command</td><td>up to 75% fewer</td></tr>
+        <tr><td>Context spent</td><td class="old">3,500–4,800 tokens</td><td class="win">73–125 tokens</td><td>~85% reduction</td></tr>
+        <tr><td>DI resolution</td><td class="old">guesswork</td><td class="win">deterministic</td><td>reads the registration</td></tr>
+        <tr><td>False positives</td><td class="old">mocks, comments, logs</td><td class="win">none</td><td>compiler symbols only</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="sect">
+  <div class="wrap">
+    <div class="head">
+      <h2>Exit codes an agent can branch on</h2>
+      <p>No text parsing, no heuristics. The process says what happened and what to do next.</p>
+    </div>
+    <div class="codes">
+      <div class="c0"><kbd>0</kbd><strong>ok</strong><p>Complete answer, within budget. Use it.</p></div>
+      <div><kbd>1</kbd><strong>not-found</strong><p>No such symbol here. Check the spelling or the namespace.</p></div>
+      <div class="c2"><kbd>2</kbd><strong>over-budget</strong><p>The answer exists but is bigger than the cap. Narrow <code>--depth</code> rather than raising the budget.</p></div>
+      <div><kbd>3</kbd><strong>ambiguous</strong><p>Several symbols match. Re-run with <code>Type.Member</code>.</p></div>
+      <div class="c4"><kbd>4</kbd><strong>no-index</strong><p>No graph on disk yet. Run <code>csmesh index</code>.</p></div>
+      <div><kbd>64</kbd><strong>usage-error</strong><p>Bad flags or arguments. Run the command with <code>--help</code>.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="sect" id="agents">
+  <div class="wrap">
+    <div class="head">
+      <h2>Teaches your assistant to use it</h2>
+      <p>One command writes the skill and rule files each tool expects, in the repository or machine-wide with <code>--global</code>. Shared files like <code>AGENTS.md</code> get a tagged block, so rules you wrote yourself survive the install.</p>
+    </div>
+    <div style="max-width:520px;margin-bottom:36px">
+      <div class="cmdbox"><code>csmesh skill --install</code><button data-copy="csmesh skill --install">Copy</button></div>
+    </div>
+    <div class="agents">
+      <div><span>Claude Code</span><em>.claude/skills/csmesh/SKILL.md</em></div>
+      <div><span>Cursor</span><em>.cursor/rules/csmesh.mdc</em></div>
+      <div><span>Google Antigravity</span><em>.agents/skills + .agents/rules</em></div>
+      <div><span>Windsurf</span><em>.windsurfrules</em></div>
+      <div><span>Cline and Roo Code</span><em>.clinerules/csmesh.md</em></div>
+      <div><span>GitHub Copilot</span><em>.github/copilot-instructions.md</em></div>
+      <div><span>Kilo Code</span><em>.kilocode/rules/csmesh.md</em></div>
+      <div><span>MiMo Code</span><em>.mimocode/skills + AGENTS.md</em></div>
+      <div><span>Codex CLI and Kimi</span><em>AGENTS.md</em></div>
+      <div><span>Gemini CLI</span><em>GEMINI.md</em></div>
+      <div><span>Anything reading AGENTS.md</span><em>open agent standard block</em></div>
+      <div><span>A human in a terminal</span><em>csmesh --help</em></div>
+    </div>
+  </div>
+</section>
+
+<section class="sect" id="install">
+  <div class="wrap">
+    <div class="head">
+      <h2>Install</h2>
+      <p>Two paths. The prebuilt Native AOT binary needs nothing installed and starts in under 100 ms; the global tool needs the .NET SDK and updates through NuGet.</p>
+    </div>
+    <div class="install">
+      <div>
+        <h3>Standalone binary</h3>
+        <div class="tabs" role="tablist" aria-label="Platform">
+          <button role="tab" aria-selected="true" data-tab="unix">macOS and Linux</button>
+          <button role="tab" aria-selected="false" data-tab="win">Windows</button>
+        </div>
+        <div class="cmdbox" data-pane="unix">
+          <code>curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | sh</code>
+          <button data-copy="curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | sh">Copy</button>
+        </div>
+        <div class="cmdbox" data-pane="win" hidden>
+          <code>irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex</code>
+          <button data-copy="irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex">Copy</button>
+        </div>
+        <p class="note">Falls back to <code>dotnet tool</code> automatically when no release asset matches your architecture.</p>
+      </div>
+      <div>
+        <h3>.NET global tool</h3>
+        <div class="cmdbox" style="margin-bottom:10px"><code>dotnet tool install --global CsMesh.Cli</code><button data-copy="dotnet tool install --global CsMesh.Cli">Copy</button></div>
+        <div class="cmdbox"><code>dotnet tool update --global CsMesh.Cli</code><button data-copy="dotnet tool update --global CsMesh.Cli">Copy</button></div>
+        <p class="note">Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: run <code>csmesh index</code> once, and <code>csmesh doctor</code> whenever an answer looks wrong.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>csmesh — MIT licensed</span>
+    <span>Vali (naser) Rafinia</span>
+    <span class="right"><a href="https://github.com/nRafinia/CsMesh">github.com/nRafinia/CsMesh</a></span>
+    <span><a href="https://www.nuget.org/packages/CsMesh">nuget</a></span>
+  </div>
+</footer>
+
+<script>
+function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function paint(line){
+  let s = esc(line);
+  s = s.replace(/\[[^\]]*\]/g, m => {
+    const t = m.toLowerCase();
+    let c = "t-impl";
+    if (t.includes("stale")) c = "t-stale";
+    else if (t.includes("mediatr")) c = "t-med";
+    else if (t.includes("di-bound") || t.includes("di:")) c = "t-bound";
+    return '<span class="'+c+'">'+m+'</span>';
+  });
+  s = s.replace(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, m => '<span class="t-route">'+m+'</span>');
+  s = s.replace(/([\w./\\-]+\.cs:\d+)/g, '<span class="t-file">$1</span>');
+  s = s.replace(/-&gt;/g, '<span class="t-arrow">-&gt;</span>');
+  return s;
+}
+function render(el, lines, stagger){
+  el.innerHTML = lines.map((l,i)=>{
+    const d = stagger ? ' style="animation-delay:'+(i*60)+'ms"' : '';
+    return '<span class="ln"'+d+'>'+paint(l)+'</span>';
+  }).join("\n");
+}
+
+const heroLines = [
+"PaymentController.Post  {http:POST /charge}  Api/PaymentController.cs:14",
+"  -> CreatePaymentCommandHandler.Handle  [mediatr via Send(CreatePaymentCommand)]  App/CreatePaymentCommand.cs:18",
+"    -> IPaymentGateway.Authorize  Infra/Repositories.cs:11",
+"      -> StripeGateway.Authorize  [impl, di-bound]  Infra/Repositories.cs:29",
+"    -> IPaymentRepository.Add  Infra/Repositories.cs:7",
+"      -> PaymentRepository.Add  [impl, di-bound]  Infra/Repositories.cs:17",
+"        -> AppDbContext.SavePayment  Infra/Repositories.cs:34",
+"      -> InMemoryPaymentRepository.Add  [impl]  Infra/Repositories.cs:23"
+];
+render(document.getElementById("hero-out"), heroLines, true);
+
+const commands = [
+ {label:"trace", line:"csmesh trace PaymentController.Post --budget 600", exit:"exit 0",
+  desc:"Follows a member forward through calls, constructor use, interface dispatch and mediator sends, until the depth limit or the budget runs out.",
+  out: heroLines},
+ {label:"impl", line:"csmesh impl IPaymentGateway --budget 300", exit:"exit 0",
+  desc:"Lists every implementation of an interface, with the container-registered one ranked first and tagged by lifetime.",
+  out:[
+  "IPaymentGateway  Domain/IPaymentGateway.cs:5  -- 3 implementation(s)",
+  "  StripeGateway  [di:scoped]  Infra/StripeGateway.cs:12",
+  "  SandboxGateway  Infra/SandboxGateway.cs:9",
+  "  FakePaymentGateway  Tests/Fakes/FakePaymentGateway.cs:7"]},
+ {label:"blast-radius", line:"csmesh blast-radius Order.Status --budget 800 --depth 2", exit:"exit 0",
+  desc:"Walks the call graph backwards from a member and surfaces the entrypoints it reaches: routes, message handlers, consumers, background workers.",
+  out:[
+  "Order.Status  Domain/Order.cs:22",
+  "reached by 34 member(s), 4 entrypoint(s)",
+  "entrypoints:",
+  "  OrdersController.Get  {http:GET /orders/{id}}  Api/OrdersController.cs:31",
+  "  OrdersController.Cancel  {http:POST /orders/{id}/cancel}  Api/OrdersController.cs:58",
+  "  OrderStatusChangedConsumer.Consume  {consumer}  Messaging/StatusConsumer.cs:14",
+  "  ReconcileOrdersWorker.ExecuteAsync  {hosted}  Jobs/ReconcileWorker.cs:19",
+  "direct callers:",
+  "  OrderService.Submit  App/OrderService.cs:44",
+  "  OrderService.Cancel  App/OrderService.cs:71",
+  "  OrderProjection.Apply  Read/OrderProjection.cs:26  [STALE]",
+  "indirect (types): OrdersController, CheckoutSaga, OrderMapper, InvoiceService"]},
+ {label:"entrypoints", line:"csmesh entrypoints orders", exit:"exit 0",
+  desc:"Finds where the outside world gets in — attribute-routed actions, MediatR handlers, MassTransit consumers, hosted services — optionally filtered by a substring.",
+  out:[
+  "5 entrypoint(s)",
+  "  OrdersController.Get  {http:GET /orders/{id}}  Api/OrdersController.cs:31",
+  "  OrdersController.Create  {http:POST /orders}  Api/OrdersController.cs:42",
+  "  OrdersController.Cancel  {http:POST /orders/{id}/cancel}  Api/OrdersController.cs:58",
+  "  CreateOrderCommandHandler.Handle  {handler}  App/CreateOrder.cs:16",
+  "  ReconcileOrdersWorker.ExecuteAsync  {hosted}  Jobs/ReconcileWorker.cs:19"]},
+ {label:"index", line:"csmesh index", exit:"exit 0",
+  desc:"Parses the whole solution with Roslyn and writes the frozen graph to .csmesh/graph.json. Run it once per session, or when doctor reports drift.",
+  out:["indexed 412 files -> 1604 nodes, 3011 edges in 2.4s"]},
+ {label:"doctor", line:"csmesh doctor", exit:"exit 0",
+  desc:"Reports index age and drift, the edge mix it managed to resolve, which assistants are wired up, and who has actually been calling the tool.",
+  out:[
+  "repo            /work/acme-payments",
+  "index           1604 nodes, 3011 edges, built 0.4h ago (commit 9f2c1ab3)",
+  "freshness       2 file(s) changed since index -> answers will be marked [STALE]",
+  "  edges Call       1842",
+  "  edges TypeUse     712",
+  "  edges Interface   301",
+  "  edges Construct   104",
+  "  edges Mediatr      38",
+  "  edges DiBinding    14",
+  "skill (local)   installed (.claude/skills/csmesh/SKILL.md, .cursor/rules/csmesh.mdc)",
+  "caller now      human (via tty:interactive); tty=True",
+  "telemetry       417 invocation(s) logged, 392 agent-attributed"]}
+];
+
+const list = document.querySelector(".cmdlist");
+const descEl = document.getElementById("cmd-desc");
+const lineEl = document.getElementById("cmd-line");
+const exitEl = document.getElementById("cmd-exit");
+const outEl  = document.getElementById("cmd-out");
+commands.forEach((c,i)=>{
+  const b = document.createElement("button");
+  b.type="button"; b.setAttribute("role","tab");
+  b.setAttribute("aria-selected", i===0 ? "true":"false");
+  b.textContent = c.label;
+  b.addEventListener("click", ()=>select(i));
+  list.appendChild(b);
+});
+function select(i){
+  const c = commands[i];
+  list.querySelectorAll("button").forEach((b,j)=>b.setAttribute("aria-selected", j===i?"true":"false"));
+  descEl.textContent=c.desc; lineEl.textContent=c.line; exitEl.textContent=c.exit;
+  render(outEl, c.out, false);
+}
+select(0);
+
+document.querySelectorAll("[data-copy]").forEach(b=>{
+  b.addEventListener("click", async ()=>{
+    try{ await navigator.clipboard.writeText(b.dataset.copy); }catch(e){}
+    const prev=b.textContent; b.textContent="Copied";
+    setTimeout(()=>{ b.textContent=prev; },1500);
+  });
+});
+
+document.querySelectorAll(".tabs button").forEach(t=>{
+  t.addEventListener("click", ()=>{
+    document.querySelectorAll(".tabs button").forEach(x=>x.setAttribute("aria-selected", x===t?"true":"false"));
+    document.querySelectorAll("[data-pane]").forEach(p=>{ p.hidden = p.dataset.pane !== t.dataset.tab; });
+  });
+});
+
+const nav = document.getElementById("nav");
+new IntersectionObserver(([e])=>{
+  nav.classList.toggle("stuck", e.intersectionRatio < 0.06);
+},{threshold:[0,0.06,1]}).observe(document.querySelector(".hero"));
+</script>
+</body>
+</html>
