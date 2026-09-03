@@ -49,6 +49,7 @@ jobs:
           -c Release
           -r ${{ matrix.target }}
           -p:PublishAot=true
+          -p:AssemblyName=csmesh
           -o publish-out
 
       - name: Archive binary (Unix)
