@@ -11,7 +11,7 @@
 set -e
 
 REPO="nRafinia/CsMesh"
-TOOL_ID="CsMesh.Cli"
+TOOL_ID="CsMesh"
 BINARY_NAME="csmesh"
 
 # Formatting & Colors
@@ -172,7 +172,7 @@ if [ "$HTTP_CODE" != "200" ]; then
     if install_via_dotnet; then
         exit 0
     else
-        error "Failed to download binary from ${DOWNLOAD_URL} and .NET SDK is not available.\nFor manual installation: dotnet tool install --global CsMesh.Cli"
+        error "Failed to download binary from ${DOWNLOAD_URL} and .NET SDK is not available.\nFor manual installation: dotnet tool install --global CsMesh"
     fi
 fi
 

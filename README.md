@@ -145,14 +145,14 @@ irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex
 
 ```bash
 # Install from NuGet.org
-dotnet tool install --global CsMesh.Cli
+dotnet tool install --global CsMesh
 
 # Or build and install locally from source
 dotnet pack -c Release
-dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh.Cli
+dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh
 
 # Or update an existing installation
-dotnet tool update --global CsMesh.Cli
+dotnet tool update --global CsMesh
 ```
 
 ### 2. As a Standalone Native AOT Binary (Zero Runtime Dependency)

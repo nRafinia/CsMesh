@@ -10,6 +10,7 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>csmesh</ToolCommandName>
+    <AssemblyName>csmesh</AssemblyName>
     <PackageId>CsMesh</PackageId>
     <Version>0.0.1</Version>
     <Authors>Vali (naser) Rafinia</Authors>

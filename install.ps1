@@ -10,7 +10,7 @@
 $ErrorActionPreference = "Stop"
 
 $Repo = "nRafinia/CsMesh"
-$ToolId = "CsMesh.Cli"
+$ToolId = "CsMesh"
 $BinaryName = "csmesh.exe"
 
 function Write-Info($msg) {
@@ -119,7 +119,7 @@ try {
         if (Install-ViaDotnet) {
             return
         } else {
-            Write-Err "Download failed and .NET SDK was not found on this system.`nYou can install via: dotnet tool install --global CsMesh.Cli"
+            Write-Err "Download failed and .NET SDK was not found on this system.`nYou can install via: dotnet tool install --global CsMesh"
             return
         }
     }
