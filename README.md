@@ -9,8 +9,8 @@ Built for AI coding agents and developers who are tired of multi-turn "file-hopp
 
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Native AOT](https://img.shields.io/badge/Native-AOT%20Ready-success?logo=speedtest&logoColor=white)](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)
-[![Token Reduction](https://img.shields.io/badge/Context%20Spend--85%25-brightgreen)](https://github.com/rtk-ai/rtk)
-[![Latency](https://img.shields.io/badge/Query%20Latency-~100ms-blue)](https://github.com/rtk-ai/rtk)
+[![Token Reduction](https://img.shields.io/badge/Context%20Spend--85%25-brightgreen)](https://github.com/nRafinia/CsMesh)
+[![Latency](https://img.shields.io/badge/Query%20Latency-~100ms-blue)](https://github.com/nRafinia/CsMesh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -144,13 +144,13 @@ You can compile a single, standalone binary with zero dependencies on the .NET S
 
 ```bash
 # Windows (win-x64)
-dotnet publish src/CsMesh/csmesh.csproj -c Release -r win-x64 -p:PublishAot=true
+dotnet publish src/CsMesh/CsMesh.csproj -c Release -r win-x64 -p:PublishAot=true
 
 # Linux (linux-x64) - run via Linux or WSL
-dotnet publish src/CsMesh/csmesh.csproj -c Release -r linux-x64 -p:PublishAot=true
+dotnet publish src/CsMesh/CsMesh.csproj -c Release -r linux-x64 -p:PublishAot=true
 
 # macOS (osx-arm64)
-dotnet publish src/CsMesh/csmesh.csproj -c Release -r osx-arm64 -p:PublishAot=true
+dotnet publish src/CsMesh/CsMesh.csproj -c Release -r osx-arm64 -p:PublishAot=true
 ```
 
 The resulting binary in `bin/Release/net10.0/<rid>/publish/` has **sub-100ms startup** and runs on machines without .NET installed.

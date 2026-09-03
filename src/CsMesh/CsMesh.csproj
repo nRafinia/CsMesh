@@ -11,8 +11,14 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>csmesh</ToolCommandName>
     <PackageId>CsMesh.Cli</PackageId>
-    <Version>0.1.4</Version>
+    <Version>0.0.1</Version>
+    <Authors>Vali (naser) Rafinia</Authors>
     <Description>Structural answer engine for C# codebases. Answers agent questions about call paths, interface implementations and change blast radius under a hard token budget.</Description>
+    <PackageProjectUrl>https://github.com/nRafinia/CsMesh</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nRafinia/CsMesh</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>csharp;dotnet;roslyn;call-graph;code-analysis;agent;ai;static-analysis;cli;tool</PackageTags>
     <NoWarn>$(NoWarn);IL3000;IL2104</NoWarn>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
