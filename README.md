@@ -14,6 +14,7 @@ Built for AI coding agents and developers who are tired of multi-turn "file-hopp
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
+</div>
 
 ```bash
 $ csmesh trace PaymentController.Post --budget 600
@@ -28,7 +29,6 @@ PaymentController.Post  {http:POST /charge}  Api/PaymentController.cs:14
       -> InMemoryPaymentRepository.Add  [impl]  Infra/Repositories.cs:23
 ```
 
-</div>
 
 ---
 
