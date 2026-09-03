@@ -120,7 +120,7 @@ Tested on a production-grade multi-project .NET backend (~1,600 nodes, ~3,000 ed
 - **💉 DI & IoC Container Intelligence:** Automatically parses service registrations (`AddScoped`, `AddSingleton`, `AddTransient`) and ranks active runtime classes ahead of test mocks.
 - **📨 MediatR & CQRS Linking:** Resolves `_mediator.Send(...)` and `Publish(...)` calls to their concrete request handlers across decoupled project boundaries.
 - **💥 Blast Radius & Impact Analysis:** Computes the reverse call graph to surface all direct/indirect callers, affected controllers, and background consumers before modifying a symbol.
-- **🌐 Universal AI Agent Integration:** Installs native prompt rules and skills for **11+ AI tools** (Claude Code, Cursor, Antigravity, Windsurf, Cline, Copilot, MiMo Code, etc.) with both local and `--global` machine-wide support.
+- **🌐 Universal AI Agent Integration:** Installs native prompt rules and skills for **12+ AI tools** (Claude Code, Cursor, Antigravity, OpenCode, Windsurf, Cline, Copilot, MiMo Code, etc.) with both local and `--global` machine-wide support.
 - **🔄 Staleness Detection:** Tracks file system timestamps against index metadata. When files change, outputs are transparently tagged with `[STALE]` and suggest running `csmesh index`.
 
 ---
@@ -226,6 +226,7 @@ csmesh entrypoints orders
 | **Kilo Code** | `.kilocode/rules/csmesh.md` | `~/.kilocode/rules/csmesh.md` | Native Rule File |
 | **Codex CLI & Kimi AI**| `AGENTS.md` | `~/.codex/AGENTS.md` | Open Agent Standard Block |
 | **Gemini CLI** | `GEMINI.md` | `~/.gemini/GEMINI.md` | Open Agent Standard Block |
+| **OpenCode** | `AGENTS.md` + `.opencode/rules/csmesh.md` | `~/.config/opencode/AGENTS.md` + `~/.opencode/rules/` | Open Agent Standard Block & Rules |
 
 > [!TIP]
 > Shared configuration files (`AGENTS.md`, `GEMINI.md`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`) use safe tagged blocks (`<!-- csmesh-instructions -->`). Existing developer rules are **never overwritten**.

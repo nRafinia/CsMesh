@@ -13,7 +13,7 @@ public static class SkillText
           end up calling, which class implements this interface, what breaks if I change this member,
           where does this HTTP route go, which handler runs for this command or message. csmesh resolves
           the indirection that text search cannot see: dependency injection registrations, MediatR
-          Send/Publish, interface dispatch, attribute routing, MassTransit consumers.
+          Send/Publish, interface dispatch, attribute routing, minimal API endpoints, MassTransit consumers.
         ---
 
         # csmesh
@@ -33,8 +33,9 @@ public static class SkillText
 
         1. Before opening a **second** file to follow a call path, run `csmesh trace`.
         2. Before changing any `public` member, run `csmesh blast-radius`.
-        3. When you meet an interface and need to know what actually runs, run `csmesh impl` --
-           do not guess from naming convention, and do not assume there is only one implementation.
+        3. When you meet an interface or abstract base and need to know what actually runs, run
+           `csmesh impl` -- do not guess from naming convention, and do not assume there is only
+           one implementation.
         4. When you see `_mediator.Send(...)`, `Publish(...)`, or a message bus call, run `csmesh trace`
            on the calling method. grep will not find the handler; csmesh links it.
         5. To find where an HTTP path or a background job is served, run `csmesh entrypoints <filter>`.
@@ -57,10 +58,14 @@ public static class SkillText
         Each row is `Symbol  [edge marker]  {tags}  file:line`.
 
         - `[impl, di-bound]` -- this is the implementation registered in DI, so it is the one that runs.
+        - `[override]` -- a base class member overridden by a derived type.
         - `[mediatr via Send(CreatePaymentCommand)]` -- the call is dispatched, not direct.
+        - `[route GET /orders]` -- a minimal API endpoint registration.
         - `{http:POST /payments}` -- this member is an HTTP entrypoint.
         - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Re-run
           `csmesh index`, or open that one file directly to confirm.
+
+        Pass `--json` when you want to branch on structure instead of parsing the text layout.
 
         ## Exit codes -- branch on these, do not parse the text
 
@@ -70,7 +75,9 @@ public static class SkillText
         | 1 | symbol not found | check spelling, or the symbol is not in this repo |
         | 2 | answer exists but exceeds the budget | re-run with `--depth 2`, or trace a narrower symbol. Do **not** just raise `--budget` to a huge number |
         | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
-        | 4 | no index | run `csmesh index` |
+        | 4 | no index, or an index written by an older csmesh | run `csmesh index` |
+        | 64 | bad command line | run `csmesh <cmd> --help` |
+        | 70 | csmesh itself failed | re-run with `--debug`; this is a bug, not your query |
 
         ## Rules
 
@@ -93,13 +100,17 @@ public static class SkillText
 
         1. **Before opening a second file to trace execution**: run `csmesh trace <Type.Member> --budget 600`.
         2. **Before modifying any public member**: run `csmesh blast-radius <Type.Member> --budget 800`.
-        3. **To find implementations of an interface & DI binding**: run `csmesh impl <IInterface> --budget 300`.
+        3. **To find implementations of an interface or base class & DI binding**: run `csmesh impl <IInterface> --budget 300`.
         4. **To locate endpoints, handlers, or hosted services**: run `csmesh entrypoints [filter]`.
         5. **If output contains `[STALE]` or after making significant code modifications**: run `csmesh index` to refresh the graph.
+
+        ## Exit codes
+        `0` ok, `1` not found, `2` over budget, `3` ambiguous, `4` no index, `64` bad command line, `70` internal error.
 
         ## Best Practices
         - Always supply `--budget` (defaults: `trace` 600, `impl` 300, `blast-radius` 800).
         - Prefer qualified names (`Type.Member`) over bare member names to avoid ambiguous matches.
+        - Use `--json` when branching on the result programmatically.
         - Keep using `grep` only for string literals, error messages, config keys, and non-C# files.
         """;
 
@@ -120,14 +131,17 @@ public static class SkillText
 
         1. **Before opening a second file to trace execution**: run `csmesh trace <Type.Member> --budget 600`.
         2. **Before modifying any public member**: run `csmesh blast-radius <Type.Member> --budget 800`.
-        3. **To find implementations of an interface & DI binding**: run `csmesh impl <IInterface> --budget 300`.
+        3. **To find implementations of an interface or base class & DI binding**: run `csmesh impl <IInterface> --budget 300`.
         4. **To locate endpoints, handlers, or hosted services**: run `csmesh entrypoints [filter]`.
         5. **If output contains `[STALE]` or after making significant code modifications**: run `csmesh index` to refresh the graph.
+
+        ## Exit codes
+        `0` ok, `1` not found, `2` over budget, `3` ambiguous, `4` no index, `64` bad command line, `70` internal error.
 
         ## Best Practices
         - Always supply `--budget` (defaults: `trace` 600, `impl` 300, `blast-radius` 800).
         - Prefer qualified names (`Type.Member`) over bare member names to avoid ambiguous matches.
+        - Use `--json` when branching on the result programmatically.
         - Keep using `grep` only for string literals, error messages, config keys, and non-C# files.
         """;
 }
-

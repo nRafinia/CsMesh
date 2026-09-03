@@ -8,13 +8,37 @@ namespace CsMesh.Models;
 /// </summary>
 public sealed class Graph
 {
+    /// <summary>
+    /// Bumped whenever node keying, edge semantics or on-disk shape change.
+    /// A graph written by an older version is rejected on load so the user is told to re-index
+    /// instead of silently querying a graph built with different rules.
+    /// </summary>
+    public const int CurrentFormatVersion = 2;
+
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }
     public string BuiltFromCommit { get; set; } = string.Empty;
-    public int FormatVersion { get; set; } = 1;
+    public int FormatVersion { get; set; } = CurrentFormatVersion;
+
+    /// <summary>
+    /// Metadata assemblies the indexer managed to load. Low numbers mean poor symbol resolution.
+    /// </summary>
+    public int ReferenceCount { get; set; }
+
+    /// <summary>
+    /// Call sites Roslyn could not bind to any symbol, usually caused by missing assembly
+    /// references. Every one of these is a call edge that never made it into the graph.
+    /// </summary>
+    public int UnresolvedCallSites { get; set; }
+
     public List<Node> Nodes { get; set; } = [];
     public List<Edge> Edges { get; set; } = [];
     public List<FileStamp> Files { get; set; } = [];
+
+    /// <summary>
+    /// Directory stamps used as a cheap gate before rescanning the tree for newly added files.
+    /// </summary>
+    public List<DirStamp> Dirs { get; set; } = [];
 
     [JsonIgnore] private FrozenDictionary<int, Edge[]>? _out;
     [JsonIgnore] private FrozenDictionary<int, Edge[]>? _in;

@@ -8,39 +8,19 @@ public static class HelpCommand
     {
         var normalized = command?.ToLowerInvariant().Trim();
 
-        switch (normalized)
+        Console.WriteLine(normalized switch
         {
-            case "index":
-                Console.WriteLine(IndexHelp);
-                break;
-            case "trace":
-                Console.WriteLine(TraceHelp);
-                break;
-            case "impl":
-                Console.WriteLine(ImplHelp);
-                break;
-            case "blast-radius" or "blast":
-                Console.WriteLine(BlastRadiusHelp);
-                break;
-            case "entrypoints":
-                Console.WriteLine(EntrypointsHelp);
-                break;
-            case "usage":
-                Console.WriteLine(UsageHelp);
-                break;
-            case "doctor":
-                Console.WriteLine(DoctorHelp);
-                break;
-            case "skill":
-                Console.WriteLine(SkillHelp);
-                break;
-            case "version":
-                Console.WriteLine(VersionHelp);
-                break;
-            default:
-                Console.WriteLine(MainHelp);
-                break;
-        }
+            "index" => IndexHelp,
+            "trace" => TraceHelp,
+            "impl" => ImplHelp,
+            "blast-radius" or "blast" => BlastRadiusHelp,
+            "entrypoints" => EntrypointsHelp,
+            "usage" => UsageHelp,
+            "doctor" => DoctorHelp,
+            "skill" => SkillHelp,
+            "version" => VersionHelp,
+            _ => MainHelp
+        });
 
         return Exit.Ok;
     }
@@ -55,7 +35,7 @@ public static class HelpCommand
         COMMANDS:
             index          Build or refresh the symbol graph for the repository
             trace          Trace execution paths through DI, MediatR, and interfaces
-            impl           Find implementations of an interface, ranking DI-bound first
+            impl           Find implementations of an interface or base class, DI-bound first
             blast-radius   Discover callers and entrypoints affected by changing a symbol
             entrypoints    Find HTTP endpoints, message handlers, consumers, and jobs
             usage          Display local invocation metrics and caller attribution
@@ -66,12 +46,16 @@ public static class HelpCommand
 
         GLOBAL OPTIONS:
             --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
-            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (trace 600, impl 300, blast-radius 800)
             --depth <N>        Traversal depth limit (trace: 6, blast-radius: 3)
-            --json             Output results in JSON format where supported
+            --json             Output results as a structured JSON envelope
             --debug            Enable verbose diagnostics on stderr
             --no-telemetry     Do not record this invocation in usage telemetry
             -h, --help         Print help information
+
+        EXIT CODES:
+            0 ok   1 not-found   2 over-budget   3 ambiguous   4 no-index
+            64 usage-error   70 internal-error
 
         Run 'csmesh help <COMMAND>' or 'csmesh <COMMAND> --help' for command-specific options.
         """;
@@ -89,7 +73,7 @@ public static class HelpCommand
                                instead of local project files
             --agent <TARGET>   Target agent to install for:
                                all (default), claude, cursor, windsurf, cline, antigravity,
-                               copilot, kilocode, mimo, codex, gemini
+                               copilot, kilocode, mimo, codex, gemini, opencode
             --repo <PATH>      Target repository root (default: nearest repository above cwd)
             -h, --help         Print help information
 
@@ -114,6 +98,10 @@ public static class HelpCommand
             --no-telemetry     Do not record this invocation
             -h, --help         Print help information
 
+        NOTES:
+            Build the solution first. Without bin/ assemblies many call sites cannot be bound
+            and the resulting graph will be missing edges; 'index' reports the count.
+
         EXAMPLES:
             csmesh index
             csmesh index --repo ./src
@@ -121,7 +109,7 @@ public static class HelpCommand
 
     public const string TraceHelp =
         """
-        csmesh trace - Trace execution paths through DI, MediatR, and interfaces
+        csmesh trace - Trace execution paths through DI, MediatR, interfaces and routes
 
         USAGE:
             csmesh trace <Type.Member> [OPTIONS]
@@ -132,7 +120,7 @@ public static class HelpCommand
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --depth <N>        Maximum call chain depth (default: 6)
-            --json             Output as structured JSON
+            --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
 
@@ -143,23 +131,23 @@ public static class HelpCommand
 
     public const string ImplHelp =
         """
-        csmesh impl - Find implementations of an interface, ranking DI-bound first
+        csmesh impl - Find implementations of an interface or base class, DI-bound first
 
         USAGE:
-            csmesh impl <IInterface> [OPTIONS]
+            csmesh impl <IInterface|BaseClass> [OPTIONS]
 
         ARGUMENTS:
-            <IInterface>       Interface symbol name (e.g. IPaymentGateway)
+            <IInterface>       Interface or abstract base type (e.g. IPaymentGateway)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 300, exits code 2 on overflow)
-            --json             Output as structured JSON
+            --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
 
         EXAMPLES:
             csmesh impl IPaymentGateway --budget 300
-            csmesh impl IOrderRepository
+            csmesh impl PaymentHandlerBase
         """;
 
     public const string BlastRadiusHelp =
@@ -175,7 +163,7 @@ public static class HelpCommand
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
             --depth <N>        Maximum reverse traversal depth (default: 3)
-            --json             Output as structured JSON
+            --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
 
@@ -196,7 +184,7 @@ public static class HelpCommand
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
-            --json             Output as structured JSON
+            --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
 
@@ -214,15 +202,15 @@ public static class HelpCommand
             csmesh usage [OPTIONS]
 
         OPTIONS:
-            --days <N>         Filter invocations from the last N days (default: 30)
-            --tail <N>         Show the last N invocations (default: 10)
-            --json             Output metrics as JSON
+            --days <N>         Filter invocations from the last N days (default: 7)
+            --tail <N>         Show the last N invocations instead of the summary (default: 10)
+            --json             Output the raw invocation log as JSON
             --repo <PATH>      Repository root
             -h, --help         Print help information
 
         EXAMPLES:
             csmesh usage
-            csmesh usage --days 7
+            csmesh usage --days 30
             csmesh usage --tail 20
         """;
 

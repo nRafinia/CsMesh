@@ -1,7 +1,5 @@
 using CsMesh.Common;
 using CsMesh.Models;
-using EdgeKind = CsMesh.Models.EdgeKind;
-using Graph = CsMesh.Models.Graph;
 
 namespace CsMesh.Analysis;
 
@@ -14,15 +12,27 @@ public static class Queries
     {
         EdgeKind.Mediatr => note != null ? $"  [mediatr {note}]" : "  [mediatr]",
         EdgeKind.Interface => note == "di-bound" ? "  [impl, di-bound]" : "  [impl]",
+        EdgeKind.Override => note == "di-bound" ? "  [override, di-bound]" : "  [override]",
+        EdgeKind.Route => note != null ? $"  [route {note}]" : "  [route]",
         EdgeKind.Construct => "  [new]",
         EdgeKind.DiBinding => $"  [di:{note}]",
-        EdgeKind.Override => "  [override]",
         _ => ""
     };
 
-    private static string Loc(Models.Node n) => n.File.Length > 0 ? $"  {n.File}:{n.Line}" : "";
+    private static string Relation(EdgeKind k) => k switch
+    {
+        EdgeKind.Mediatr => "mediatr",
+        EdgeKind.Interface => "impl",
+        EdgeKind.Override => "override",
+        EdgeKind.Route => "route",
+        EdgeKind.Construct => "new",
+        EdgeKind.DiBinding => "di",
+        _ => "call"
+    };
 
-    private static string TagSuffix(Models.Node n)
+    private static string Loc(Node n) => n.File.Length > 0 ? $"  {n.File}:{n.Line}" : "";
+
+    private static string TagSuffix(Node n)
     {
         var interesting = n.Tags.Where(t =>
             t.StartsWith("http:") || t.StartsWith("route:") || t == "handler" ||
@@ -30,46 +40,78 @@ public static class Queries
         return interesting.Count == 0 ? "" : "  {" + string.Join(" ", interesting) + "}";
     }
 
+    private static bool IsStale(Node n, HashSet<string> dirty) => n.File.Length > 0 && dirty.Contains(n.File);
+
+    private static string StaleTag(Node n, HashSet<string> dirty) => IsStale(n, dirty) ? "  [STALE]" : "";
+
+    private static QueryRow Row(Node n, int depth, string relation, string? note, HashSet<string> dirty) => new()
+    {
+        Depth = depth,
+        Symbol = n.Short,
+        Kind = n.Kind,
+        Relation = relation,
+        Note = note,
+        File = n.File.Length > 0 ? n.File : null,
+        Line = n.Line,
+        Stale = IsStale(n, dirty),
+        Tags = n.Tags.Count > 0 ? n.Tags : null
+    };
+
     /// <summary>
     /// Performs a forward call-graph walk tracing outbound invocations and indirection.
     /// </summary>
-    public static int Trace(Graph g, Models.Node start, int depth, BudgetWriter w, HashSet<string> dirty)
+    public static int Trace(Graph g, Node start, int depth, BudgetWriter w, HashSet<string> dirty)
     {
-        var seen = new HashSet<int>();
+        // A node reached first at depth 5 must still be expanded when a shorter path reaches it,
+        // otherwise whole branches of the tree silently disappear. onPath guards against cycles.
+        var expandedAt = new Dictionary<int, int>();
+        var onPath = new HashSet<int>();
         var truncatedAt = new List<string>();
+        var emitted = 0;
 
-        w.Force($"{start.Short}{TagSuffix(start)}{Loc(start)}{StaleTag(start, dirty)}");
+        w.Force($"{start.Short}{TagSuffix(start)}{Loc(start)}{StaleTag(start, dirty)}",
+                Row(start, 0, "root", null, dirty));
 
-        bool Walk(Models.Node node, int level, string prefix)
+        bool Walk(Node node, int level, string prefix)
         {
             if (level >= depth) return true;
-            if (!seen.Add(node.Id)) return true;
+            if (expandedAt.TryGetValue(node.Id, out var previous) && previous <= level) return true;
+            if (!onPath.Add(node.Id)) return true;
+            expandedAt[node.Id] = level;
 
-            var edges = g.Out(node.Id)
-                .Where(e => e.Kind is EdgeKind.Call or EdgeKind.Mediatr or EdgeKind.Interface or EdgeKind.Construct)
-                .Where(e => e.Note != "prop")
-                .ToList();
-
-            edges = edges.OrderByDescending(e => e.Note == "di-bound")
-                         .ThenBy(e => e.Kind == EdgeKind.Construct ? 1 : 0)
-                         .ToList();
-
-            foreach (var e in edges)
+            try
             {
-                var to = g.ById(e.To);
-                if (to == null) continue;
-                if (to.Kind == "type" && e.Kind == EdgeKind.Construct && level > 1) continue;
+                var edges = g.Out(node.Id)
+                    .Where(e => e.Kind is EdgeKind.Call or EdgeKind.Mediatr or EdgeKind.Interface
+                                       or EdgeKind.Override or EdgeKind.Construct or EdgeKind.Route)
+                    .Where(e => e.Note != "prop")
+                    .OrderByDescending(e => e.Note == "di-bound")
+                    .ThenBy(e => e.Kind == EdgeKind.Construct ? 1 : 0)
+                    .ToList();
 
-                var line = $"{prefix}-> {to.Short}{Marker(e.Kind, e.Note)}{TagSuffix(to)}{Loc(to)}{StaleTag(to, dirty)}";
-                if (!w.Add(line))
+                foreach (var e in edges)
                 {
-                    truncatedAt.Add(node.Short);
-                    return false;
+                    var to = g.ById(e.To);
+                    if (to == null) continue;
+                    if (to.Kind == "type" && e.Kind == EdgeKind.Construct && level > 1) continue;
+
+                    var line = $"{prefix}-> {to.Short}{Marker(e.Kind, e.Note)}{TagSuffix(to)}{Loc(to)}{StaleTag(to, dirty)}";
+                    if (!w.Add(line, Row(to, level + 1, Relation(e.Kind), e.Note, dirty)))
+                    {
+                        truncatedAt.Add(node.Short);
+                        return false;
+                    }
+
+                    emitted++;
+                    if (!Walk(to, level + 1, prefix + "  ")) return false;
                 }
 
-                if (!Walk(to, level + 1, prefix + "  ")) return false;
+                return true;
             }
-            return true;
+            finally
+            {
+                onPath.Remove(node.Id);
+            }
         }
 
         var complete = Walk(start, 0, "  ");
@@ -82,10 +124,7 @@ public static class Queries
             return Exit.OverBudget;
         }
 
-        if (w.Lines.Count == 1)
-        {
-            w.Force("  (no outgoing calls resolved in source)");
-        }
+        if (emitted == 0) w.Force("  (no outgoing calls resolved in source)");
 
         return Exit.Ok;
     }
@@ -93,23 +132,38 @@ public static class Queries
     /// <summary>
     /// Finds all implementations of an interface or base type, ranking DI-bound registrations first.
     /// </summary>
-    public static int Impl(Graph g, Models.Node iface, BudgetWriter w, HashSet<string> dirty)
+    public static int Impl(Graph g, Node target, BudgetWriter w, HashSet<string> dirty)
     {
-        var impls = g.Out(iface.Id).Where(e => e.Kind is EdgeKind.Interface or EdgeKind.DiBinding).ToList();
+        var impls = g.Out(target.Id)
+            .Where(e => e.Kind is EdgeKind.Interface or EdgeKind.Override or EdgeKind.DiBinding)
+            .DistinctBy(e => e.To)
+            .ToList();
+
         if (impls.Count == 0)
         {
-            w.Force($"{iface.Short}: no implementations found in source.");
+            w.Force($"{target.Short}: no implementations found in source.");
             return Exit.NotFound;
         }
 
-        w.Force($"{iface.Short}{Loc(iface)}  -- {impls.Select(e => e.To).Distinct().Count()} implementation(s)");
-        foreach (var e in impls.OrderByDescending(x => x.Note == "di-bound").DistinctBy(x => x.To))
+        w.Force($"{target.Short}{Loc(target)}  -- {impls.Count} implementation(s)",
+                Row(target, 0, "root", null, dirty));
+
+        foreach (var e in impls.OrderByDescending(x => x.Note == "di-bound"))
         {
             var to = g.ById(e.To);
             if (to == null) continue;
+
             var di = to.Tags.FirstOrDefault(t => t.StartsWith("di:"));
-            var mark = e.Note == "di-bound" || di != null ? $"  [{di ?? "di-bound"}]" : "";
-            if (!w.Add($"  {to.Short}{mark}{Loc(to)}{StaleTag(to, dirty)}")) return Exit.OverBudget;
+            var bound = e.Note == "di-bound" || di != null;
+            var mark = bound ? $"  [{di ?? "di-bound"}]" : "";
+
+            if (!w.Add($"  {to.Short}{mark}{Loc(to)}{StaleTag(to, dirty)}",
+                       Row(to, 1, e.Kind == EdgeKind.Override ? "override" : "impl", e.Note ?? di, dirty)))
+            {
+                w.Force("");
+                w.Force($"OVER BUDGET: {impls.Count} implementations. Raise --budget or query a narrower type.");
+                return Exit.OverBudget;
+            }
         }
 
         return Exit.Ok;
@@ -119,11 +173,11 @@ public static class Queries
     /// Performs a reverse traversal to discover all direct and indirect callers affected by a member change,
     /// surfacing reachable entrypoints (routes, message handlers, consumers, background services).
     /// </summary>
-    public static int BlastRadius(Graph g, Models.Node target, int depth, BudgetWriter w, HashSet<string> dirty)
+    public static int BlastRadius(Graph g, Node target, int depth, BudgetWriter w, HashSet<string> dirty)
     {
         var seen = new HashSet<int>();
-        var frontier = new List<(Models.Node Node, int Level)> { (target, 0) };
-        var reached = new List<(Models.Node Node, int Level)>();
+        var frontier = new List<(Node Node, int Level)> { (target, 0) };
+        var reached = new List<(Node Node, int Level)>();
         var entrypoints = new List<Node>();
 
         if (target.Kind is "type" or "interface")
@@ -154,14 +208,20 @@ public static class Queries
             frontier = next;
         }
 
-        w.Force($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}");
+        w.Force($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}", Row(target, 0, "root", null, dirty));
         w.Force($"reached by {reached.Count} member(s), {entrypoints.Count} entrypoint(s)");
 
         if (entrypoints.Count > 0)
         {
             w.Force("entrypoints:");
             foreach (var ep in entrypoints.Take(30))
-                if (!w.Add($"  {ep.Short}{TagSuffix(ep)}{Loc(ep)}")) return Overflow(w, reached.Count);
+            {
+                if (!w.Add($"  {ep.Short}{TagSuffix(ep)}{Loc(ep)}{StaleTag(ep, dirty)}",
+                           Row(ep, 1, "entrypoint", null, dirty)))
+                {
+                    return Overflow(w, reached.Count);
+                }
+            }
         }
 
         var direct = reached.Where(r => r.Level == 1).Select(r => r.Node).ToList();
@@ -169,10 +229,19 @@ public static class Queries
         {
             w.Force("direct callers:");
             foreach (var d in direct)
-                if (!w.Add($"  {d.Short}{Loc(d)}{StaleTag(d, dirty)}")) return Overflow(w, reached.Count);
+            {
+                if (!w.Add($"  {d.Short}{Loc(d)}{StaleTag(d, dirty)}", Row(d, 1, "direct-caller", null, dirty)))
+                {
+                    return Overflow(w, reached.Count);
+                }
+            }
         }
 
-        var indirect = reached.Where(r => r.Level > 1).Select(r => r.Node.Short.Split('.')[0]).Distinct().ToList();
+        var indirect = reached.Where(r => r.Level > 1)
+            .Select(r => r.Node.Short.Split('.')[0])
+            .Distinct()
+            .ToList();
+
         if (indirect.Count > 0)
         {
             var line = "indirect (types): " + string.Join(", ", indirect.Take(25));
@@ -190,9 +259,9 @@ public static class Queries
     }
 
     private static bool IsEntrypoint(Node n) =>
-        n.Tags.Any(t => t.StartsWith("http:") || t == "handler" || t == "consumer" || t == "hosted" || t == "action");
+        n.Tags.Any(t => t.StartsWith("http:") || t is "handler" or "consumer" or "hosted" or "action");
 
-    public static int Entrypoints(Graph g, string? filter, BudgetWriter w)
+    public static int Entrypoints(Graph g, string? filter, BudgetWriter w, HashSet<string> dirty)
     {
         var eps = g.Nodes.Where(IsEntrypoint)
             .Where(n => filter == null || n.Short.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
@@ -208,7 +277,8 @@ public static class Queries
         w.Force($"{eps.Count} entrypoint(s)");
         foreach (var ep in eps)
         {
-            if (!w.Add($"  {ep.Short}{TagSuffix(ep)}{Loc(ep)}"))
+            if (!w.Add($"  {ep.Short}{TagSuffix(ep)}{Loc(ep)}{StaleTag(ep, dirty)}",
+                       Row(ep, 0, "entrypoint", null, dirty)))
             {
                 w.Force($"OVER BUDGET: {eps.Count} total. Filter with a substring argument.");
                 return Exit.OverBudget;
@@ -217,7 +287,4 @@ public static class Queries
 
         return Exit.Ok;
     }
-
-    private static string StaleTag(Node n, HashSet<string> dirty) =>
-        n.File.Length > 0 && dirty.Contains(n.File) ? "  [STALE]" : "";
 }

@@ -30,6 +30,7 @@ public static class SkillCommand
         yield return Path.Combine(root, ".github", "copilot-instructions.md");
         yield return Path.Combine(root, ".kilocode", "rules", "csmesh.md");
         yield return Path.Combine(root, ".mimocode", "skills", "csmesh", "SKILL.md");
+        yield return Path.Combine(root, ".opencode", "rules", "csmesh.md");
         yield return Path.Combine(root, "AGENTS.md");
         yield return Path.Combine(root, "GEMINI.md");
     }
@@ -53,6 +54,9 @@ public static class SkillCommand
         yield return Path.Combine(home, ".mimo", "instructions.md");
         yield return Path.Combine(home, ".cline", "rules", "csmesh.md");
         yield return Path.Combine(home, ".codeium", "windsurf", "memories", "global_rules.md");
+        var configDir = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ?? Path.Combine(home, ".config");
+        yield return Path.Combine(configDir, "opencode", "AGENTS.md");
+        yield return Path.Combine(home, ".opencode", "rules", "csmesh.md");
     }
 
     public static int Execute(string root, Options opt)
@@ -84,14 +88,14 @@ public static class SkillCommand
     private static readonly FrozenSet<string> ValidAgents = new[]
     {
         "claude", "cursor", "windsurf", "cline", "roo", "antigravity",
-        "copilot", "kilocode", "mimo", "mimocode", "codex", "kimi", "gemini", "all"
+        "copilot", "kilocode", "mimo", "mimocode", "codex", "kimi", "gemini", "opencode", "all"
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     private static int Install(string basePath, string targetAgent, bool isGlobal)
     {
         if (!ValidAgents.Contains(targetAgent))
         {
-            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, all.");
+            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, opencode, all.");
             return Exit.Usage;
         }
 
@@ -106,7 +110,8 @@ public static class SkillCommand
             ["kilocode"] = () => InstallKilocode(basePath),
             ["mimo"] = () => InstallMimo(basePath, isGlobal),
             ["codex"] = () => InstallCodex(basePath, isGlobal),
-            ["gemini"] = () => InstallGemini(basePath, isGlobal)
+            ["gemini"] = () => InstallGemini(basePath, isGlobal),
+            ["opencode"] = () => InstallOpencode(basePath, isGlobal)
         };
 
         if (targetAgent is "all")
@@ -244,6 +249,21 @@ public static class SkillCommand
             ? Path.Combine(basePath, ".gemini", "GEMINI.md")
             : Path.Combine(basePath, "GEMINI.md");
         WriteOrUpdateBlock(path, SkillText.Rules);
+    }
+
+    private static void InstallOpencode(string basePath, bool isGlobal)
+    {
+        if (isGlobal)
+        {
+            var configDir = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ?? Path.Combine(basePath, ".config");
+            WriteOrUpdateBlock(Path.Combine(configDir, "opencode", "AGENTS.md"), SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"), SkillText.Rules);
+        }
+        else
+        {
+            WriteOrUpdateBlock(Path.Combine(basePath, "AGENTS.md"), SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"), SkillText.Rules);
+        }
     }
 
     private static void WriteFile(string path, string content)
