@@ -491,6 +491,7 @@ FodyWeavers.xsd
 .cursor/
 .kilocode/
 .mimocode/
+.opencode/
 .clinerules
 .windsurfrules
 AGENTS.md
