@@ -132,10 +132,10 @@ Tested on a production-grade multi-project .NET backend (~1,600 nodes, ~3,000 ed
 ```bash
 # Build and install locally from source
 dotnet pack -c Release
-dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh.Cli
+dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh
 
 # Or update an existing installation
-dotnet tool update --global --add-source ./src/CsMesh/bin/Release CsMesh.Cli
+dotnet tool update --global --add-source ./src/CsMesh/bin/Release CsMesh
 ```
 
 ### 2. As a Standalone Native AOT Binary (Zero Runtime Dependency)
