@@ -566,7 +566,7 @@ public static class Indexer
                                 Link(typeId, mId, EdgeKind.TypeUse, "member");
                                 var mNode = g.ById(mId)!;
                                 mNode.Signature = SignatureOf(ms);
-                                RecordExternalIn(ms.ReturnType, md.ReturnType);
+                                if (!ms.ReturnsVoid) RecordExternalIn(ms.ReturnType, md.ReturnType);
                                 foreach (var parameter in ms.Parameters) RecordExternalIn(parameter.Type, md);
                                 foreach (var t in MethodTags(md)) AddTag(mNode, t);
                                 if (typeNode.Tags.Contains("controller")) AddTag(mNode, "action");

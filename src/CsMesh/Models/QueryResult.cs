@@ -62,5 +62,15 @@ public sealed class QueryResult
     public int StaleFiles { get; set; }
 
     public List<string> Notes { get; set; } = [];
+
+    /// <summary>
+    /// The answer as it was rendered for a terminal, line by line.
+    ///
+    /// Rows carry the structured part, but not every command has one: 'silence' explains why a
+    /// walk stopped, 'map' groups projects and entrypoints, 'changes' warns about a binding that
+    /// vanished. All of that lives in prose, and a JSON consumer that only reads Rows would get an
+    /// envelope with an exit code and nothing to act on.
+    /// </summary>
+    public List<string> Text { get; set; } = [];
     public List<QueryRow> Rows { get; set; } = [];
 }
