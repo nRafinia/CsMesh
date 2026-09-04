@@ -44,6 +44,22 @@ public sealed class Node
     public bool Covers(int line) => line >= Line && line <= Math.Max(EndLine, Line);
 
     /// <summary>
+    /// The shape of the symbol: a method's parameters and return type, a property's or field's
+    /// type with its nullable annotation, an enum's underlying type. Empty when it does not apply.
+    /// Answers "what does this look like" without opening the file, which is the question a caller
+    /// usually has right after finding out where something lives.
+    /// </summary>
+    public string Signature { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The .csproj this symbol belongs to, without extension. Empty when no project file was
+    /// found above the source file. This is data, not policy: a blast radius that crosses four
+    /// projects is a different size of change from one that stays inside a single assembly, and
+    /// the caller cannot tell from a list of type names.
+    /// </summary>
+    public string Project { get; set; } = string.Empty;
+
+    /// <summary>
     /// Semantic tags associated with the symbol (e.g. route:GET /payments, handler, controller, di:scoped).
     /// </summary>
     public List<string> Tags { get; set; } = [];

@@ -63,7 +63,7 @@ public sealed class QueryTests(GraphFixture fixture) : IClassFixture<GraphFixtur
     public void Cycles_finds_the_three_type_loop()
     {
         var w = Writer();
-        var exit = Queries.Cycles(fixture.Graph, "type", w, []);
+        var exit = Queries.Cycles(fixture.Graph, "type", null, w, []);
         var text = Text(w);
 
         Assert.Equal(Exit.Ok, exit);
@@ -78,7 +78,7 @@ public sealed class QueryTests(GraphFixture fixture) : IClassFixture<GraphFixtur
     public void Cycles_ignores_recursion_inside_a_single_type()
     {
         var w = Writer();
-        Queries.Cycles(fixture.Graph, "type", w, []);
+        Queries.Cycles(fixture.Graph, "type", null, w, []);
 
         // The handler calls the store and nothing calls it back; it must not appear as a cycle.
         Assert.DoesNotContain("CreateOrderHandler", Text(w));

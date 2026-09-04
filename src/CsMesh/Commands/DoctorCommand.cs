@@ -45,6 +45,17 @@ public static class DoctorCommand
                 Console.WriteLine("  note: no DI bindings resolved; interface implementations will not have di-bound ranking.");
             }
 
+            if (graph.ScanRegistrations.Count > 0)
+            {
+                Console.WriteLine($"scanning        {graph.ScanRegistrations.Count} convention registration(s):");
+                foreach (var entry in graph.ScanRegistrations.Take(8))
+                {
+                    Console.WriteLine($"  {entry}");
+                }
+
+                Console.WriteLine("  bindings from these are inferred, not named -- they carry ?0.75 in output.");
+            }
+
             Quality(graph);
         }
 

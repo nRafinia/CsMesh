@@ -15,6 +15,9 @@ public sealed class BudgetWriter(int budgetTokens)
     private int _tokens;
 
     public int Tokens => _tokens;
+
+    /// <summary>The cap this writer was built with, so a query can suggest one that fits.</summary>
+    public int Budget => budgetTokens;
     public bool Overflowed { get; private set; }
 
     /// <summary>Rows emitted so far, excluding headers and warnings.</summary>

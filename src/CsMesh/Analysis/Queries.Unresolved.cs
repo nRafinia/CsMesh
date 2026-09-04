@@ -12,10 +12,12 @@ public static partial class Queries
     /// 9%, because the failure mode of a structural tool is silence: a missing edge reads exactly
     /// like an absent one. Every row here is a place where an answer was thinner than it looked.
     /// </summary>
-    public static int Unresolved(Graph g, string? kind, BudgetWriter w, HashSet<string> dirty)
+    public static int Unresolved(Graph g, string? kind, string? under, BudgetWriter w, HashSet<string> dirty)
     {
         var sites = g.Unresolved
             .Where(u => kind == null || string.Equals(u.Kind, kind, StringComparison.OrdinalIgnoreCase))
+            .Where(u => under == null ||
+                        u.File.Replace('\\', '/').StartsWith(under.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (g.Unresolved.Count == 0)
@@ -96,7 +98,8 @@ public static partial class Queries
     {
         "di" => 0,
         "mediatr" => 1,
-        _ => 2
+        "type" => 2,
+        _ => 3
     };
 
     /// <summary>
@@ -121,6 +124,9 @@ public static partial class Queries
                 "Most failures are same-named types across namespaces: those DI registrations produced no binding at all.",
             "ambiguous-request-name" =>
                 "Most failures are same-named request types: those Send/Publish sites were skipped rather than misrouted.",
+            "unbound-type" =>
+                "Most failures are type names the compiler could not bind: the reference set is incomplete, "
+                + "so run 'dotnet build' and re-index before trusting any answer from this graph.",
             "no-handler" =>
                 "Most failures are dispatches with no handler in this repository: the handler may live in another solution.",
             _ => "Open the listed files to confirm; these edges are missing from every query."

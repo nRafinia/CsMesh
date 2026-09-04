@@ -23,6 +23,24 @@ public static partial class Queries
         role.AddRange(node.Tags.Where(t => !t.StartsWith("http:") && !t.StartsWith("route:")));
         Section("ROLE", [string.Join("  ", role.Distinct())]);
 
+        // What the thing *is*, before what touches it. A caller who asks for context on a type
+        // almost always wants its shape first -- which fields, which types, what is nullable --
+        // and today they get a file:line and go read it themselves.
+        if (node.Kind is "type" or "interface" or "enum" or "enum")
+        {
+            var members = g.Out(node.Id)
+                .Where(e => e.Kind == EdgeKind.TypeUse && e.Note is "member" or "ctor")
+                .Select(e => g.ById(e.To))
+                .Where(n => n != null)
+                .Select(n => n!)
+                .OrderBy(n => n.Kind == "method" ? 1 : 0)
+                .ThenBy(n => n.Line)
+                .Take(20)
+                .ToList();
+
+            Section("MEMBERS", members.Select(Describe), members);
+        }
+
         var callers = g.In(node.Id)
             .Where(e => e.Kind != EdgeKind.TypeUse)
             .Select(e => (Edge: e, Node: g.ById(e.From)))
@@ -129,6 +147,17 @@ public static partial class Queries
     }
 
     /// <summary>
+    /// One member on one line: name first, because that is what the reader is scanning for.
+    /// </summary>
+    private static string Describe(Node member)
+    {
+        var name = member.Short.Contains('.') ? member.Short[(member.Short.LastIndexOf('.') + 1)..] : member.Short;
+
+        if (member.Signature.Length == 0) return name;
+        return member.Kind == "method" ? $"{name}{member.Signature}" : $"{name}  {member.Signature}";
+    }
+
+    /// <summary>
     /// Members that would be affected if this symbol changed. Shared with blast-radius in spirit,
     /// but returns the set instead of printing it.
     /// </summary>
@@ -138,7 +167,7 @@ public static partial class Queries
         var reached = new List<Node>();
         var frontier = new List<Node> { target };
 
-        if (target.Kind is "type" or "interface")
+        if (target.Kind is "type" or "interface" or "enum")
         {
             foreach (var e in g.Out(target.Id).Where(x => x.Kind == EdgeKind.TypeUse))
             {

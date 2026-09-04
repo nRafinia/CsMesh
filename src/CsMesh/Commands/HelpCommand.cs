@@ -20,6 +20,9 @@ public static class HelpCommand
             "cycles" => CyclesHelp,
             "unresolved" => UnresolvedHelp,
             "diff" => DiffHelp,
+            "changes" => ChangesHelp,
+            "silence" or "why-not" => SilenceHelp,
+            "map" => MapHelp,
             "usage" => UsageHelp,
             "doctor" => DoctorHelp,
             "skill" => SkillHelp,
@@ -38,6 +41,7 @@ public static class HelpCommand
             csmesh <COMMAND> [OPTIONS]
 
         COMMANDS:
+            map            Where the weight is: projects, entrypoints, hotspots
             index          Build or refresh the symbol graph for the repository
             trace          Trace execution paths through DI, MediatR, and interfaces
             impl           Find implementations of an interface or base class, DI-bound first
@@ -48,6 +52,8 @@ public static class HelpCommand
             cycles         Circular dependencies between types or namespaces
             unresolved     Where the indexer failed, grouped by reason
             diff           Symbols a git diff touched, and what they reach
+            changes        Bindings, dispatches and implementations that appeared or vanished
+            silence        Why a query came back empty (alias: why-not)
             usage          Display local invocation metrics and caller attribution
             doctor         Diagnose index freshness, skill installation, and environment
             skill          Display skill markdown or install agent skill/rule files
@@ -56,6 +62,7 @@ public static class HelpCommand
 
         GLOBAL OPTIONS:
             --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
+            --under <PATH>     Restrict to a subtree, e.g. --under src/Api
             --budget <N>       Maximum output tokens (trace 600, impl 300, blast-radius 800)
             --depth <N>        Traversal depth limit (trace 6, blast-radius 3, context 3, path 12)
             --json             Output results as a structured JSON envelope
@@ -274,6 +281,7 @@ public static class HelpCommand
 
         OPTIONS:
             --namespace        Collapse to namespace level instead of type level
+            --project          Collapse to project level
             --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -286,6 +294,7 @@ public static class HelpCommand
         EXAMPLES:
             csmesh cycles
             csmesh cycles --namespace --budget 400
+            csmesh cycles --project
         """;
 
     public const string UnresolvedHelp =
@@ -296,7 +305,7 @@ public static class HelpCommand
             csmesh unresolved [OPTIONS]
 
         OPTIONS:
-            --kind <K>         Filter to one kind: call, di, mediatr
+            --kind <K>         Filter to one kind: call, type, di, mediatr
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -340,6 +349,103 @@ public static class HelpCommand
             csmesh diff
             csmesh diff --staged
             csmesh diff main...HEAD --depth 2
+        """;
+
+    public const string ChangesHelp =
+        """
+        csmesh changes - Bindings, dispatches and implementations that appeared or vanished
+
+        USAGE:
+            csmesh changes [OPTIONS]
+
+        OPTIONS:
+            --calls            Include call and construction edges (noisy; off by default)
+            --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            Compares the current index against the one before it, kept at .csmesh/graph.prev.json.
+            Run 'csmesh index' before your change and again after it.
+
+            'diff' answers what you edited. This answers what the shape of the codebase did. A
+            deleted AddScoped is one moved line in a diff and a missing binding here -- the
+            compiler catches neither, and unit tests that inject mocks do not either.
+
+        EXIT CODES:
+            4 when there is no previous index to compare against.
+
+        EXAMPLES:
+            csmesh changes
+            csmesh changes --calls --budget 1200
+        """;
+
+    public const string MapHelp =
+        """
+        csmesh map - Where the weight is: projects, entrypoints, hotspots
+
+        USAGE:
+            csmesh map [OPTIONS]
+
+        OPTIONS:
+            --under <PATH>     Restrict to a subtree, e.g. --under src/Api
+            --budget <N>       Maximum output tokens (default: 700, exits code 2 on overflow)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            The first command to run in a repository you do not know. 'ls' and 'tree' answer
+            "where are the files", which is the wrong axis: a folder name does not say whether
+            anything in it is load bearing. This answers which projects lean on which, where the
+            entrypoints cluster, and which handful of members everything runs through.
+
+            Deliberately one screen. A map that needs two is a directory listing.
+
+        EXAMPLES:
+            csmesh map
+            csmesh map --under src/Application --budget 400
+        """;
+
+    public const string SilenceHelp =
+        """
+        csmesh silence - Why a query came back empty
+
+        USAGE:
+            csmesh silence <symbol> [<target>] [OPTIONS]
+            csmesh why-not <symbol> [<target>] [OPTIONS]
+
+        ARGUMENTS:
+            <symbol>           The symbol the answer was expected about
+            [<target>]         Optional. With two symbols, explains a missing path between them
+
+        OPTIONS:
+            --depth <N>        How far to walk before giving up (default: 12)
+            --budget <N>       Maximum output tokens (default: 700, exits code 2 on overflow)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            Exit 1 from any other command means the graph had nothing. It does not say whether the
+            symbol was mistyped, lives in a package, was never bound because the solution was not
+            built, or is reached only through a container scan. Those call for four different next
+            actions.
+
+            With two symbols this reports where the walk stopped and what the indexer recorded at
+            each dead end, and checks whether the route exists in the other direction. With one it
+            reports why nothing enters or leaves it, including references that appear in source but
+            never bound.
+
+        EXIT CODES:
+            0 when there was no silence to explain -- the path exists, or the symbol is connected.
+            1 when the absence is real and explained.
+
+        EXAMPLES:
+            csmesh silence PaymentController.Post StripeGateway.Authorize
+            csmesh silence IPaymentGateway
+            csmesh why-not OrderService.Process AuditLog.Write --depth 6
         """;
 
     public const string UsageHelp =

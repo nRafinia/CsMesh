@@ -27,6 +27,14 @@ public sealed class Edge
     /// </summary>
     public string? Source { get; set; }
 
+    /// <summary>
+    /// Where this edge was declared, as file:line -- the registration call for a DI binding, the
+    /// Send/Publish call for a dispatch. The definition site of the target is already on the node;
+    /// this is the other half, and without it the next question ("where is it wired up?") sends
+    /// the caller back to grep.
+    /// </summary>
+    public string? Site { get; set; }
+
     /// <summary>Confidence with the default applied. Never null, never serialized.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public double Score => Confidence ?? 1.0;
