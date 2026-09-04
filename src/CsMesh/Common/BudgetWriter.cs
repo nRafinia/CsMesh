@@ -18,6 +18,12 @@ public sealed class BudgetWriter(int budgetTokens)
 
     /// <summary>The cap this writer was built with, so a query can suggest one that fits.</summary>
     public int Budget => budgetTokens;
+
+    /// <summary>
+    /// What is left. Lets a caller price a heading and its first row together, so a section title
+    /// is never printed with nothing under it.
+    /// </summary>
+    public int Remaining => Math.Max(0, budgetTokens - _tokens);
     public bool Overflowed { get; private set; }
 
     /// <summary>Rows emitted so far, excluding headers and warnings.</summary>

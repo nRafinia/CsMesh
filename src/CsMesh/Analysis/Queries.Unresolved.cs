@@ -41,7 +41,20 @@ public static partial class Queries
             return Exit.NotFound;
         }
 
-        w.Force($"{sites.Count} unresolved site(s) sampled");
+        var total = g.UnresolvedByReason.Values.Sum();
+        w.Force(total > sites.Count
+            ? $"{total} unresolved site(s) in total; {sites.Count} shown"
+            : $"{sites.Count} unresolved site(s)");
+
+        // The sample is capped in traversal order, so its proportions are about the first files
+        // walked. The full counts are the ones to reason from.
+        if (g.UnresolvedByReason.Count > 0 && kind == null)
+        {
+            foreach (var (reason, count) in g.UnresolvedByReason.OrderByDescending(x => x.Value).Take(6))
+            {
+                if (!w.Add($"  {reason,-28} {count}")) return TooMany(w, total);
+            }
+        }
 
         // Ordered by what is worth fixing, not by how many there are. A hundred unbound BCL calls
         // mean "build the solution"; two ambiguous DI registrations mean two services the graph

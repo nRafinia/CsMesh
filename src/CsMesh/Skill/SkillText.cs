@@ -1,5 +1,14 @@
 namespace CsMesh.Skill;
 
+/// <summary>
+/// The text written by <c>csmesh skill --install</c>.
+///
+/// <see cref="Markdown"/> is byte-identical to SKILL.md at the repository root; the two drifted
+/// apart before, and an installed rule set that disagrees with the documented one is worse than
+/// either alone. <see cref="Rules"/> is the compact form for assistants that take a single rules
+/// file rather than a skill folder, and <see cref="CursorMdc"/> is the same body behind Cursor's
+/// front matter.
+/// </summary>
 public static class SkillText
 {
     public const string Markdown =
@@ -7,87 +16,142 @@ public static class SkillText
         ---
         name: csmesh
         description: >
-          Use this skill in ANY repository that contains C# or .NET code -- if you see a .sln or .slnx, a .csproj,
-          or .cs files, this skill applies and you should reach for csmesh before grep, ripgrep, glob or
-          reading files to answer structural questions. Structural questions are: what does this method
-          end up calling, which class implements this interface, what breaks if I change this member,
-          where does this HTTP route go, which handler runs for this command or message. csmesh resolves
-          the indirection that text search cannot see: dependency injection registrations, MediatR
-          Send/Publish, interface dispatch, attribute routing, minimal API endpoints, MassTransit consumers.
+          Use this skill in ANY repository that contains C# or .NET code -- if you see a .sln or .slnx, a
+          .csproj, or .cs files, this skill applies. Reach for csmesh before grep, ripgrep, glob, reading
+          files, or delegating discovery to a subagent. It answers structural questions from a prebuilt
+          symbol graph in one shell call: what does this end up calling, which class actually runs behind
+          this interface, what breaks if I change this, where does this route go, which handler receives
+          this command, what did my last edit affect. It resolves the indirection text search cannot see --
+          dependency injection registrations including assembly scanning, MediatR Send/Publish, interface
+          dispatch, attribute routing, minimal API endpoints, MassTransit consumers.
         ---
 
         # csmesh
 
-        A local command that answers structural questions about a C# codebase from a pre-built symbol
-        graph. One call replaces the read-file / grep / read-file loop that burns a turn per hop.
+        One shell call against a prebuilt symbol graph, in place of the read-file / grep / read-file loop
+        that spends a turn per hop.
 
         ## When this applies
 
-        If the repository contains `.cs`, `.csproj`, `.sln` or `.slnx` files, this skill is in scope. Check once at
-        the start of the task; if it is a .NET repo, use csmesh for the questions below for the rest of
-        the session.
+        If the repository contains `.cs`, `.csproj`, `.sln` or `.slnx` files, this skill is in scope. Check
+        once at the start of the task. If it is a .NET repo, use csmesh for the questions below for the
+        rest of the session.
 
-        ## Decision rules
+        ## Match what you are about to do
 
-        Follow these instead of your default search behaviour.
+        These are keyed on the thing you are about to reach for, not on a condition to check first.
 
-        0. First time in a repository, run `csmesh map`. It tells you which projects depend on which,
-           where the HTTP and message entrypoints cluster, and the few members everything runs through.
-           Do not use `ls` or `tree` for orientation -- folder names do not say what is load bearing.
-        1. Before opening a **second** file to follow a call path, run `csmesh trace`.
-        2. Before changing any `public` member, run `csmesh blast-radius`.
-        3. When you meet an interface or abstract base and need to know what actually runs, run
-           `csmesh impl` -- do not guess from naming convention, and do not assume there is only
-           one implementation.
-        4. When you see `_mediator.Send(...)`, `Publish(...)`, or a message bus call, run `csmesh trace`
-           on the calling method. grep will not find the handler; csmesh links it.
-        5. To find where an HTTP path or a background job is served, run `csmesh entrypoints <filter>`.
-        6. After you edit anything, run `csmesh diff` before you claim the change is safe. It takes the
-           git diff you already made and tells you what those symbols reach -- entrypoints, production
-           callers, and tests -- which is the question you actually have, not "what if I changed X".
-        7. When a query returns less than you expected, run `csmesh unresolved` before falling back to
-           grep. It says whether the edge is missing or the code is absent. Those are not the same
-           answer and only this command separates them.
-        8. When you need more than one of the above about the *same* symbol, run `csmesh context`
-           once rather than chaining three commands.
-        10. After a refactor, run `csmesh changes`. `diff` says what you edited; this says whether a
-            DI binding or a mediator dispatch stopped resolving. The compiler catches neither, and unit
-            tests that inject mocks do not either.
-        9. When you have two symbols and want to know how one reaches the other -- a class you found
-           in a stack trace, an endpoint and the repository underneath it -- run
-           `csmesh path <from> <to>`. Neither `trace` nor `blast-radius` answers that; each walks
-           from one end only.
+        **"Find me everything about X." "Explore how X works." "Where is X and what touches it?"**
+        -> `csmesh context X`
 
-        11. Symbol lookups cover enums, enum members, delegates and fields as well as types and methods.
-            `csmesh blast-radius OrderStatus` answers "if I add a member, which switches must I revisit";
-            do not grep for the enum name to find that out.
-        12. If a lookup reports a symbol comes from a referenced assembly, stop looking for it here. It is
-            a package type, not a missing file, and no amount of grepping this repository will find it.
+        This is the one that gets skipped. The reflex is to spawn a discovery subagent or start a broad
+        search, and it feels natural because the question is broad. It is the same question, answered from
+        a graph in one call instead of a sub-session of file reads. Use a subagent for what csmesh cannot
+        know: intent, naming, business rules, why a decision was made. Not for where things are and what
+        connects to what.
 
-        13. When any command exits 1, do not fall back to grep. Run `csmesh silence <symbol>` (or
-            `csmesh silence <from> <to>`) first. Exit 1 means the graph had nothing, which is not the same
-            as the codebase having nothing, and this says which one it was: a typo, a package type, an
-            unbuilt solution, or a container scan. Only one of those is fixed by searching this repository.
+        **"I am new to this repository. Where do I start?"**
+        -> `csmesh map`
 
-        Keep using grep for what it is good at: string literals, config values, TODOs, error messages.
+        Which projects depend on which, where the entrypoints cluster, the few members everything runs
+        through. Not `ls`, not `tree`, not a directory listing -- a folder name does not say whether
+        anything inside it is load bearing.
+
+        **"What does this method actually do / end up calling?"**
+        -> `csmesh trace Type.Member`
+
+        Run it before you open a **second** file to follow a call chain. It crosses container bindings and
+        mediator dispatch, which reading files in sequence does not.
+
+        **"Which class runs behind this interface?"**
+        -> `csmesh impl IThing`
+
+        Never guess from a naming convention, and never assume there is only one. The output ranks the
+        registered implementation first, labels test doubles, and prints where the binding was declared so
+        you do not have to look for it.
+
+        **"What breaks if I change this?"**
+        -> `csmesh blast-radius Type.Member`
+
+        Before changing any `public` member. Production callers and test callers are listed separately,
+        with how many projects the change reaches.
+
+        **"I see `_mediator.Send(...)` or a bus publish. Where does it go?"**
+        -> `csmesh trace` on the calling method
+
+        grep cannot find the handler; the request type is matched to it here.
+
+        **"Where is this HTTP route served? What background jobs exist?"**
+        -> `csmesh entrypoints <filter>`
+
+        **"How does A end up reaching B?"**
+        -> `csmesh path <from> <to>`
+
+        A class in a stack trace and the endpoint above it; an endpoint and the repository under it.
+        `trace` walks forward from one end and `blast-radius` backward from one end -- neither connects
+        two named symbols.
+
+        **"I just edited things. Is the change safe?"**
+        -> `csmesh diff`
+
+        Takes the git diff you already made and reports what those symbols reach. This is the real
+        question, not the hypothetical "what if I changed X".
+
+        **"I finished a refactor."**
+        -> `csmesh changes`
+
+        `diff` says what you edited. This says whether a DI binding or a mediator dispatch stopped
+        resolving. The compiler catches neither, and unit tests that inject mocks do not either.
+
+        **"What does this type hold? Is this field nullable?"**
+        -> `csmesh context TypeName`, read the `MEMBERS` section
+
+        Names, types and nullable annotations (`HostId  Guid?`). Do not open the file for the shape.
+
+        **"If I add a member to this enum, what has to change?"**
+        -> `csmesh blast-radius EnumName`
+
+        Enums, enum members, delegates and fields are all in the graph. Do not grep for the enum name.
+
+        ## When something comes back empty
+
+        **A command exits 1.** Do not fall back to grep. Run `csmesh silence <symbol>`, or
+        `csmesh silence <from> <to>` for a missing path. Exit 1 means the graph had nothing, which is not
+        the same as the codebase having nothing. It tells you which: a typo, a type from a referenced
+        package, a solution that was not built, or a container scan the indexer cannot follow. Only one of
+        those is fixed by searching this repository.
+
+        **An answer is thinner than you expected.** Run `csmesh unresolved`. It reports where the indexer
+        failed and why, grouped by reason. A missing edge and an absent symbol look identical everywhere
+        else.
+
+        **A lookup says a symbol comes from a referenced assembly.** Stop looking for it here. It is a
+        package type, not a missing file.
+
+        **`csmesh doctor` reports low call resolution.** The answers are thin because edges are missing,
+        not because the code is absent. Fix that before trusting anything the graph says.
+
+        ## Keep using grep for
+
+        String literals, config values, TODOs, error messages, log text, anything in a `.json`, `.yml` or
+        `.razor` file. csmesh knows symbols, not text.
 
         ## Commands
 
         ```bash
-        csmesh map                                     # orient first in an unfamiliar repo
-        csmesh index                                   # once per session if doctor says the index is stale
+        csmesh map                                          # orient first in an unfamiliar repo
+        csmesh context PaymentService.Process --budget 800  # everything about one symbol, one call
         csmesh trace PaymentController.Post --budget 600
         csmesh impl IPaymentGateway --budget 300
         csmesh blast-radius Order.Status --budget 800 --depth 2
-        csmesh entrypoints payments
-        csmesh context PaymentService.Process --budget 800
         csmesh path PaymentController.Post StripeGateway.Authorize
-        csmesh cycles --namespace --budget 400
-        csmesh changes                                 # did a binding or dispatch disappear?
+        csmesh entrypoints payments
+        csmesh diff --budget 800                            # after editing: what did I just affect?
+        csmesh changes                                      # after a refactor: did a binding vanish?
+        csmesh silence IPaymentGateway                      # exit 1: absent, or just unseen?
+        csmesh unresolved --kind di                         # why is an answer thinner than expected?
         csmesh cycles --project
-        csmesh diff --budget 800                       # after editing: what did I just affect?
-        csmesh unresolved --kind di                    # why is an answer thinner than expected?
-        csmesh silence IPaymentGateway                 # exit 1: absent, or just unseen?
+        csmesh index                                        # once per session if doctor says it is stale
         csmesh doctor
         ```
 
@@ -95,107 +159,172 @@ public static class SkillText
 
         Each row is `Symbol  [edge marker]  {tags}  file:line`.
 
-        - `[impl, di-bound]` -- this is the implementation registered in DI, so it is the one that runs.
-        - `[override]` -- a base class member overridden by a derived type.
-        - `[mediatr via Send(CreatePaymentCommand)]` -- the call is dispatched, not direct.
-        - `[route GET /orders]` -- a minimal API endpoint registration.
-        - `{http:POST /payments}` -- this member is an HTTP entrypoint.
+        - `[impl, di-bound]` -- registered in the container, so this is the one that runs.
+        - `[mediatr via Send(CreatePaymentCommand)]` -- dispatched, not called directly.
+        - `@ Api/Registrations.cs:22` -- where the edge was wired up, beside where the target is defined.
+          Go there to change a binding; do not search for it.
+        - `{http:POST /payments}` -- an HTTP entrypoint.
+        - `{test}` -- test code. A real caller, but not what breaks in production, which is why
+          `blast-radius` and `diff` list it apart.
+        - `[... ?0.70 short-name-match]` or `[?0.75 assembly-scan]` -- confidence. The edge came from a
+          name match or from container scanning, not from a compiler symbol. **Below `0.80` is a lead, not
+          a fact**: open the file before acting on it. A row with no `?score` was read straight off a
+          symbol and is exact.
         - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Re-run
-          `csmesh index`, or open that one file directly to confirm.
-        - `@ Api/Registrations.cs:22` -- where the edge was wired up, next to where the target is
-          defined. Go there to change a binding; do not grep for it.
-        - `[?0.75 assembly-scan]` -- bound by Scrutor/MediatR-style assembly scanning. The family
-          is wired, but the exact pair was not named in source. Confirm before relying on it.
-        - `MEMBERS` in `context` on a type or enum -- the shape, with nullable annotations
-          (`HostId  Guid?`). This is the answer to "what does this hold"; do not open the file for it.
-        - `{test}` -- test code. Still a real caller, but not what breaks in production;
-          `blast-radius` and `diff` list it separately for that reason.
-        - `[... ?0.70 short-name-match]` -- confidence. The edge came from a name match, not a
-          compiler symbol. Below `0.80`, treat the row as a lead and open the file before acting on
-          it. A row with no `?score` was read straight off a symbol and is exact.
-
-        Pass `--json` when you want to branch on structure instead of parsing the text layout.
+          `csmesh index`, or open that one file to confirm.
 
         ## Exit codes -- branch on these, do not parse the text
 
         | code | meaning | what to do |
         |---|---|---|
         | 0 | complete answer | use it |
-        | 1 | symbol not found | check spelling, or the symbol is not in this repo |
-        | 2 | answer exists but exceeds the budget | re-run with `--depth 2`, or trace a narrower symbol. Do **not** just raise `--budget` to a huge number |
+        | 1 | nothing found | `csmesh silence <symbol>` before anything else |
+        | 2 | answer exists but exceeds the budget | narrow with `--under`, or use the depth the message names. Do **not** just raise `--budget` to a huge number |
         | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
-        | 4 | no index, or an index written by an older csmesh | run `csmesh index` |
+        | 4 | no index, or one written by an older csmesh | run `csmesh index` |
         | 64 | bad command line | run `csmesh <cmd> --help` |
-        | 70 | csmesh itself failed | re-run with `--debug`; this is a bug, not your query |
+        | 70 | csmesh itself failed | re-run with `--debug`; that is a bug, not your query |
 
         ## Rules
 
+        - Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for `blast-radius`,
+          `context` and `diff`, 400 for `path`.
         - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
           question is cheaper than paying for the whole tree.
-        - Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for
-          `blast-radius` and `context`, 400 for `path`.
-        - Prefer `Type.Member` over a bare member name; bare names cost an extra round trip via exit 3.
-        - Chain calls in one shell command when you have two questions:
+        - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3.
+        - On overflow, `trace` names a depth that fits and prints the command to re-run. Use that rather
+          than guessing a smaller number.
+        - Chain two questions into one shell call:
           `csmesh impl IPaymentGateway --budget 200 && csmesh blast-radius Order.Status --budget 400`
-        - `csmesh doctor` reports how much of the graph resolved. Low call resolution means edges
-          are missing, not that the code is absent -- run `dotnet build`, then re-index.
-        - csmesh tells you which files matter. Open those files. It is not a replacement for reading the
-          code you are about to change -- it is a replacement for hunting for it.
+        - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
+          the code you are about to change.
         """;
 
     public const string Rules =
         """
-        # csmesh: C# Codebase Symbol Graph
+        # csmesh: C# structural code intelligence
 
-        Whenever working with C# / .NET code in this repository (`.cs`, `.csproj`, `.sln`, `.slnx`):
+        In any repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, reach for `csmesh` before grep,
+        ripgrep, glob, reading files in sequence, or handing discovery to a subagent. It answers from a
+        prebuilt symbol graph in one shell call and resolves what text search cannot see: DI registrations
+        including assembly scanning, MediatR Send/Publish, interface dispatch, attribute routing.
 
-        ## Primary Rules
-        Always prefer `csmesh` CLI over `grep`, `ripgrep`, glob, or repeated file reads for structural code navigation:
+        ## Match the thing you are about to do
 
-        1. **Before opening a second file to trace execution**: run `csmesh trace <Type.Member> --budget 600`.
-        2. **Before modifying any public member**: run `csmesh blast-radius <Type.Member> --budget 800`.
-        3. **To find implementations of an interface or base class & DI binding**: run `csmesh impl <IInterface> --budget 300`.
-        4. **To locate endpoints, handlers, or hosted services**: run `csmesh entrypoints [filter]`.
-        5. **If output contains `[STALE]` or after making significant code modifications**: run `csmesh index` to refresh the graph.
+        | you are about to | run instead |
+        |---|---|
+        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 800` |
+        | list directories to orient in an unfamiliar repo | `csmesh map` |
+        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 600` |
+        | guess which class implements an interface | `csmesh impl IThing --budget 300` |
+        | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
+        | grep for a mediator handler | `csmesh trace` on the calling method |
+        | search for an HTTP route or a background job | `csmesh entrypoints <filter>` |
+        | work out how A reaches B | `csmesh path <from> <to>` |
+        | claim an edit is safe | `csmesh diff --budget 800` |
+        | finish a refactor | `csmesh changes` |
+        | open a file to see a type's fields and nullability | `csmesh context TypeName`, read `MEMBERS` |
+
+        A subagent is for what csmesh cannot know: intent, naming, business rules, why a decision was made.
+        Not for where things are and what connects to what.
+
+        ## When something comes back empty
+
+        - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
+          whether the symbol was mistyped, lives in a package, was never bound because the solution was not
+          built, or is reached only through a container scan. Only one of those is fixed by searching here.
+        - **Thinner than expected**: `csmesh unresolved` reports where the indexer failed and why.
+        - **`[STALE]` rows**: run `csmesh index`.
+
+        Keep using grep for string literals, config values, TODOs, error messages, and non-`.cs` files.
+
+        ## Reading the output
+
+        - `[impl, di-bound]` -- registered in the container; this is the one that runs.
+        - `@ Api/Registrations.cs:22` -- where the edge was wired up. Go there; do not search for it.
+        - `{test}` -- test code: a real caller, but not what breaks in production.
+        - `?0.70 short-name-match` / `?0.75 assembly-scan` -- inferred, not read off a compiler symbol.
+          **Below 0.80 is a lead, not a fact.** No `?score` means exact.
 
         ## Exit codes
-        `0` ok, `1` not found, `2` over budget, `3` ambiguous, `4` no index, `64` bad command line, `70` internal error.
 
-        ## Best Practices
-        - Always supply `--budget` (defaults: `trace` 600, `impl` 300, `blast-radius` 800).
-        - Prefer qualified names (`Type.Member`) over bare member names to avoid ambiguous matches.
-        - Use `--json` when branching on the result programmatically.
-        - Keep using `grep` only for string literals, error messages, config keys, and non-C# files.
+        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index, `64` bad command line,
+        `70` internal error. Branch on these; do not parse the text.
+
+        ## Practice
+
+        - Always pass `--budget`: 600 `trace`, 300 `impl`, 800 `blast-radius`/`context`/`diff`, 400 `path`.
+        - Narrow with `--under src/Api` before raising `--budget`.
+        - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
+        - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
+        - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
+          the code you are about to change.
         """;
 
     public const string CursorMdc =
         """
         ---
-        description: C# structural code navigation and blast radius analysis with csmesh
+        description: C# structural code navigation, blast radius and change analysis with csmesh
         globs: ["**/*.cs", "**/*.csproj", "**/*.sln", "**/*.slnx"]
         alwaysApply: false
         ---
 
-        # csmesh: C# Codebase Symbol Graph
+        # csmesh: C# structural code intelligence
 
-        Whenever working with C# / .NET code in this repository (`.cs`, `.csproj`, `.sln`, `.slnx`):
+        In any repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, reach for `csmesh` before grep,
+        ripgrep, glob, reading files in sequence, or handing discovery to a subagent. It answers from a
+        prebuilt symbol graph in one shell call and resolves what text search cannot see: DI registrations
+        including assembly scanning, MediatR Send/Publish, interface dispatch, attribute routing.
 
-        ## Primary Rules
-        Always prefer `csmesh` CLI over `grep`, `ripgrep`, glob, or repeated file reads for structural code navigation:
+        ## Match the thing you are about to do
 
-        1. **Before opening a second file to trace execution**: run `csmesh trace <Type.Member> --budget 600`.
-        2. **Before modifying any public member**: run `csmesh blast-radius <Type.Member> --budget 800`.
-        3. **To find implementations of an interface or base class & DI binding**: run `csmesh impl <IInterface> --budget 300`.
-        4. **To locate endpoints, handlers, or hosted services**: run `csmesh entrypoints [filter]`.
-        5. **If output contains `[STALE]` or after making significant code modifications**: run `csmesh index` to refresh the graph.
+        | you are about to | run instead |
+        |---|---|
+        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 800` |
+        | list directories to orient in an unfamiliar repo | `csmesh map` |
+        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 600` |
+        | guess which class implements an interface | `csmesh impl IThing --budget 300` |
+        | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
+        | grep for a mediator handler | `csmesh trace` on the calling method |
+        | search for an HTTP route or a background job | `csmesh entrypoints <filter>` |
+        | work out how A reaches B | `csmesh path <from> <to>` |
+        | claim an edit is safe | `csmesh diff --budget 800` |
+        | finish a refactor | `csmesh changes` |
+        | open a file to see a type's fields and nullability | `csmesh context TypeName`, read `MEMBERS` |
+
+        A subagent is for what csmesh cannot know: intent, naming, business rules, why a decision was made.
+        Not for where things are and what connects to what.
+
+        ## When something comes back empty
+
+        - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
+          whether the symbol was mistyped, lives in a package, was never bound because the solution was not
+          built, or is reached only through a container scan. Only one of those is fixed by searching here.
+        - **Thinner than expected**: `csmesh unresolved` reports where the indexer failed and why.
+        - **`[STALE]` rows**: run `csmesh index`.
+
+        Keep using grep for string literals, config values, TODOs, error messages, and non-`.cs` files.
+
+        ## Reading the output
+
+        - `[impl, di-bound]` -- registered in the container; this is the one that runs.
+        - `@ Api/Registrations.cs:22` -- where the edge was wired up. Go there; do not search for it.
+        - `{test}` -- test code: a real caller, but not what breaks in production.
+        - `?0.70 short-name-match` / `?0.75 assembly-scan` -- inferred, not read off a compiler symbol.
+          **Below 0.80 is a lead, not a fact.** No `?score` means exact.
 
         ## Exit codes
-        `0` ok, `1` not found, `2` over budget, `3` ambiguous, `4` no index, `64` bad command line, `70` internal error.
 
-        ## Best Practices
-        - Always supply `--budget` (defaults: `trace` 600, `impl` 300, `blast-radius` 800).
-        - Prefer qualified names (`Type.Member`) over bare member names to avoid ambiguous matches.
-        - Use `--json` when branching on the result programmatically.
-        - Keep using `grep` only for string literals, error messages, config keys, and non-C# files.
+        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index, `64` bad command line,
+        `70` internal error. Branch on these; do not parse the text.
+
+        ## Practice
+
+        - Always pass `--budget`: 600 `trace`, 300 `impl`, 800 `blast-radius`/`context`/`diff`, 400 `path`.
+        - Narrow with `--under src/Api` before raising `--budget`.
+        - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
+        - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
+        - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
+          the code you are about to change.
         """;
 }

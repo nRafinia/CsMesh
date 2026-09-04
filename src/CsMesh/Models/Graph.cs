@@ -13,7 +13,7 @@ public sealed class Graph
     /// A graph written by an older version is rejected on load so the user is told to re-index
     /// instead of silently querying a graph built with different rules.
     /// </summary>
-    public const int CurrentFormatVersion = 6;
+    public const int CurrentFormatVersion = 11;
 
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }
@@ -30,6 +30,51 @@ public sealed class Graph
     /// references. Every one of these is a call edge that never made it into the graph.
     /// </summary>
     public int UnresolvedCallSites { get; set; }
+
+    /// <summary>Framework assemblies loaded from the runtime directory.</summary>
+    /// <summary>
+    /// How many global-using sets were compiled in. Zero means no System namespace at all.
+    /// </summary>
+    public int GlobalUsingSources { get; set; }
+
+    /// <summary>
+    /// Project files left out of the index because nothing builds them. Named rather than
+    /// silently dropped: quietly ignoring source is worse than indexing dead source, since the
+    /// reader has no way to find out it happened.
+    /// </summary>
+    public List<string> SkippedProjects { get; set; } = [];
+
+    /// <summary>Why they were skipped, in one phrase.</summary>
+    public string SkippedProjectsReason { get; set; } = string.Empty;
+
+    /// <summary>
+    /// What decided which projects were indexed, reported whether or not anything was excluded.
+    /// A filter that fell back to including everything looks the same as one with nothing to
+    /// exclude, and that difference is worth a line.
+    /// </summary>
+    public string ScopeDecision { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Declared ProjectReference edges, by project name. The authority on what depends on what;
+    /// symbol edges answer a different question and point the other way for dispatch.
+    /// </summary>
+    public Dictionary<string, List<string>> ProjectReferences { get; set; } = new();
+
+    public int RuntimeReferences { get; set; }
+
+    /// <summary>
+    /// Assemblies loaded from bin/. Zero means the solution was never built, which is the single
+    /// most common reason a graph is thin, and it is invisible in a plain reference total.
+    /// </summary>
+    public int OutputReferences { get; set; }
+
+    public int OutputDirectories { get; set; }
+
+    /// <summary>True when a directory scan hit its file cap and stopped early.</summary>
+    public bool ReferencesCapped { get; set; }
+
+    /// <summary>Assemblies that could not be opened. Silent failures here look like nothing.</summary>
+    public int ReferencesFailed { get; set; }
 
     /// <summary>
     /// Call sites the indexer attempted to bind, resolved or not. The ratio against
@@ -60,6 +105,22 @@ public sealed class Graph
     /// Capped during indexing -- this is a sample to act on, not an exhaustive log.
     /// </summary>
     public List<UnresolvedSite> Unresolved { get; set; } = [];
+
+    /// <summary>
+    /// Full counts per kind/reason, independent of the sample cap. The sample is the first N in
+    /// traversal order, so proportions taken from it describe the first few files rather than the
+    /// solution.
+    /// </summary>
+    public Dictionary<string, int> UnresolvedByReason { get; set; } = new();
+
+    /// <summary>Full counts per project, so a single bad project is visible as one.</summary>
+    public Dictionary<string, int> UnresolvedByProject { get; set; } = new();
+
+    /// <summary>
+    /// Compiler errors about declarations, grouped by id. This is where the reason for a thin
+    /// graph usually is.
+    /// </summary>
+    public List<CompilerNote> Diagnostics { get; set; } = [];
 
     /// <summary>
     /// Registration helpers that bind by convention rather than by name: Scrutor's Scan, MediatR's

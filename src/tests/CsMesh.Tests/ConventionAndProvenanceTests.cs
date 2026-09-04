@@ -53,6 +53,18 @@ public sealed class ConventionAndProvenanceTests : IClassFixture<GraphFixture>
     }
 
     [Fact]
+    public void A_scan_on_something_that_is_not_a_service_collection_is_not_a_registration()
+    {
+        // Mapster's TypeAdapterConfig.Scan reads mapping profiles. Matching on the method name
+        // alone reported it as container wiring, and doctor then claimed the container was set up
+        // by scanning when nothing of the sort had happened.
+        Assert.DoesNotContain(_f.Graph.ScanRegistrations,
+            r => r.Contains("Code.cs", StringComparison.Ordinal) && r.Contains("RegisterMappings", StringComparison.Ordinal));
+
+        Assert.Equal(1, _f.Graph.ScanRegistrations.Count(r => r.StartsWith("Scan @", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void Convention_helpers_are_recorded_so_doctor_can_report_them()
     {
         Assert.Contains(_f.Graph.ScanRegistrations, r => r.StartsWith("Scan @", StringComparison.Ordinal));

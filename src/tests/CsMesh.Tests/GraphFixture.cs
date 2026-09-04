@@ -174,6 +174,56 @@ public sealed class GraphFixture : IDisposable
          }
          """),
 
+        ("Implicit.cs",
+         """
+         namespace Modern
+         {
+             // Not one using directive. Every type here arrives through the SDK's implicit global
+             // usings, which is the default for .NET 6 and later. If those are missing from the
+             // compilation, none of this binds and the graph loses the edges silently.
+             public sealed class Basket
+             {
+                 private readonly List<string> _items = new();
+
+                 public Guid Id { get; } = Guid.NewGuid();
+
+                 public Task<int> CountAsync(CancellationToken ct) => Task.FromResult(_items.Count);
+
+                 public IEnumerable<string> Sorted() => _items.OrderBy(x => x);
+             }
+         }
+         """),
+
+        ("Operators.cs",
+         """
+         using System;
+
+         namespace Noise
+         {
+             public interface ITransport { void Ship(string payload); }
+             public sealed class Courier : ITransport { public void Ship(string payload) { } }
+
+             public sealed class Guard
+             {
+                 public void Check(object? action)
+                 {
+                     // nameof is an operator, not a call, and must not count as a binding failure.
+                     if (action is null) throw new ArgumentNullException(nameof(action));
+                 }
+             }
+
+             public sealed class Envelope { public string Body { get; set; } = ""; }
+
+             // Send/SendAsync on something that is not a mediator, carrying a payload declared
+             // outside this repository. It must not be linked or counted as an unhandled message.
+             public sealed class Wire
+             {
+                 public void Dispatch(System.IO.Stream stream) => Post(stream);
+                 private void Post(System.IO.Stream stream) { }
+             }
+         }
+         """),
+
         ("Kinds.cs",
          """
          namespace Domain
@@ -223,8 +273,13 @@ public sealed class GraphFixture : IDisposable
              public sealed class EmailSink : INotificationSink { public void Push(string m) { } }
              public sealed class SlackSink : INotificationSink { public void Push(string m) { } }
 
+             // Mapster's config also exposes Scan(assemblies) and registers no services at all.
+             public interface IMapConfig { IMapConfig Scan(object[] assemblies); }
+
              public static class Scanning
              {
+                 public static void RegisterMappings(IMapConfig config) => config.Scan(new object[0]);
+
                  public static void Register(IServiceCollection services)
                  {
                      services.Scan(s => s
