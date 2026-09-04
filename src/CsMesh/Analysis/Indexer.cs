@@ -12,18 +12,28 @@ namespace CsMesh.Analysis;
 /// </summary>
 public static class Indexer
 {
+    private static readonly string[] NativeSuffixes =
+    {
+        ".Native.dll", "clrjit.dll", "clrgc.dll", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll",
+        "mscordaccore.dll", "mscordbi.dll", "msquic.dll"
+    };
+
     private static readonly string[] SkipDirs =
     {
         "/bin/", "/obj/", "/node_modules/", "/.git/", "/.vs/", "/.idea/", "/.svn/",
         "/packages/", "/TestResults/", "/artifacts/", "/.csmesh/"
     };
 
-    public static IEnumerable<string> EnumerateSourceFiles(string root)
+    public static IEnumerable<string> EnumerateSourceFiles(string root) =>
+        EnumerateSourceFiles(root, ProjectScope.Everything(root));
+
+    public static IEnumerable<string> EnumerateSourceFiles(string root, ProjectScope scope)
     {
         foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
         {
             var normalized = file.Replace('\\', '/');
             if (SkipDirs.Any(d => normalized.Contains(d, StringComparison.OrdinalIgnoreCase))) continue;
+            if (!scope.Includes(file)) continue;
             if (normalized.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)) continue;
             if (normalized.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase)) continue;
             if (normalized.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)) continue;
@@ -31,9 +41,71 @@ public static class Indexer
         }
     }
 
-    public static Graph Build(string root, Action<string>? progress = null)
+    /// <summary>
+    /// The global usings Microsoft.NET.Sdk turns on when ImplicitUsings is enabled, plus the ones
+    /// the Web SDK adds.
+    ///
+    /// These live in obj/Debug/{tfm}/{Project}.GlobalUsings.g.cs, which this indexer skipped twice
+    /// over: obj/ is excluded as build output, and *.g.cs is excluded as generated. The intent was
+    /// to drop designer files. The effect was that every project with ImplicitUsings -- the
+    /// default since .NET 6 -- compiled with no System namespace, so List&lt;&gt;, Task, Guid and
+    /// CancellationToken were unbound and roughly a quarter of every call site failed to resolve.
+    ///
+    /// The generated file is preferred when a build has produced one. This is the floor.
+    /// </summary>
+    private const string ImplicitUsings =
+        """
+        global using global::System;
+        global using global::System.Collections.Generic;
+        global using global::System.IO;
+        global using global::System.Linq;
+        global using global::System.Net.Http;
+        global using global::System.Threading;
+        global using global::System.Threading.Tasks;
+        global using global::System.Net.Http.Json;
+        global using global::Microsoft.AspNetCore.Builder;
+        global using global::Microsoft.AspNetCore.Http;
+        global using global::Microsoft.AspNetCore.Routing;
+        global using global::Microsoft.Extensions.Configuration;
+        global using global::Microsoft.Extensions.DependencyInjection;
+        global using global::Microsoft.Extensions.Hosting;
+        global using global::Microsoft.Extensions.Logging;
+        """;
+
+    /// <summary>
+    /// Global using files the build already generated, one per project. Read out of obj/ on
+    /// purpose: it is the only place the true set exists, and reconstructing it from the csproj
+    /// would mean evaluating MSBuild.
+    /// </summary>
+    private static IEnumerable<string> GlobalUsingFiles(string root)
     {
-        var files = EnumerateSourceFiles(root).ToList();
+        List<string> found;
+        try
+        {
+            found = Directory.EnumerateFiles(root, "*.GlobalUsings.g.cs", SearchOption.AllDirectories).ToList();
+        }
+        catch
+        {
+            yield break;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var file in found)
+        {
+            if (!file.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase)) continue;
+
+            string text;
+            try { text = File.ReadAllText(file); } catch { continue; }
+
+            // Several target frameworks and configurations emit identical copies.
+            if (seen.Add(text)) yield return text;
+        }
+    }
+
+    public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false)
+    {
+        var scope = includeAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
+        var files = EnumerateSourceFiles(root, scope).ToList();
         progress?.Invoke($"parsing {files.Count} files");
 
         var trees = new List<SyntaxTree>(files.Count);
@@ -71,7 +143,16 @@ public static class Indexer
             try { dirs["."] = Directory.GetLastWriteTimeUtc(root).Ticks; } catch { }
         }
 
-        var references = ReferenceSet(root);
+        // Without these the compilation has no System namespace and almost nothing binds.
+        var globalUsings = GlobalUsingFiles(root).ToList();
+        if (globalUsings.Count == 0) globalUsings.Add(ImplicitUsings);
+
+        for (var i = 0; i < globalUsings.Count; i++)
+        {
+            trees.Add(CSharpSyntaxTree.ParseText(globalUsings[i], parseOptions, path: $"<global-usings-{i}>"));
+        }
+
+        var references = ReferenceSet(root, out var referenceReport);
         progress?.Invoke($"compiling against {references.Count} references");
 
         // ConsoleApplication so that top-level statements bind to a real entry point instead of
@@ -89,16 +170,26 @@ public static class Indexer
             BuiltAt = DateTimeOffset.UtcNow,
             BuiltFromCommit = RepositoryLocator.GitHead(root),
             Files = stamps,
+            GlobalUsingSources = globalUsings.Count,
+            SkippedProjects = scope.Excluded,
+            SkippedProjectsReason = scope.Reason,
+            ScopeDecision = scope.Decision,
+            ProjectReferences = scope.References,
             Dirs = dirs.Select(kv => new DirStamp { Path = kv.Key, Ticks = kv.Value }).ToList(),
-            ReferenceCount = references.Count
+            ReferenceCount = references.Count,
+            RuntimeReferences = referenceReport.Runtime,
+            OutputReferences = referenceReport.Output,
+            OutputDirectories = referenceReport.OutputDirectories,
+            ReferencesCapped = referenceReport.Capped > 0,
+            ReferencesFailed = referenceReport.Failed
         };
 
-        var builder = new Builder(graph, compilation);
+        CaptureDiagnostics(compilation, graph);
+
+        var builder = new Builder(graph, compilation, new ProjectLocator(root));
         builder.Pass1_Declarations(progress);
         builder.Pass2_Bodies(progress);
         builder.Pass3_Indirection(progress);
-
-        AssignProjects(graph);
 
         graph.UnresolvedCallSites = builder.UnresolvedCallSites;
         graph.TotalCallSites = builder.TotalCallSites;
@@ -109,28 +200,68 @@ public static class Indexer
     }
 
     /// <summary>
-    /// Stamps each node with the nearest .csproj above its source file. Resolved once per
-    /// directory rather than once per node; a large solution has thousands of nodes and dozens of
-    /// directories.
+    /// What the compiler thinks is wrong with the reference set.
+    ///
+    /// The indexer treats diagnostics as advisory and indexes whatever binds, which is the right
+    /// default -- a graph from a half-compiling tree is still useful. But when resolution is poor
+    /// the reason is sitting in these diagnostics and was never read. CS0246 means a reference is
+    /// missing; CS0433 means the same type arrived from two assemblies, which happens when bin/
+    /// holds a compiled copy of the very source being parsed. Those two call for opposite fixes,
+    /// and guessing between them wasted a long time.
+    ///
+    /// Declaration diagnostics only: method bodies produce thousands and none of them are about
+    /// references.
     /// </summary>
-    private static void AssignProjects(Graph graph)
+    private static void CaptureDiagnostics(CSharpCompilation compilation, Graph graph)
     {
-        var byDirectory = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var node in graph.Nodes)
+        try
         {
-            if (node.File.Length == 0) continue;
+            var interesting = compilation.GetDeclarationDiagnostics()
+                .Where(d => d.Severity == DiagnosticSeverity.Error)
+                .GroupBy(d => d.Id)
+                .OrderByDescending(x => x.Count())
+                .Take(8);
 
-            var relative = Path.GetDirectoryName(node.File) ?? "";
-            if (byDirectory.TryGetValue(relative, out var cached))
+            foreach (var group in interesting)
             {
-                node.Project = cached;
-                continue;
+                var sample = group.First().GetMessage();
+                if (sample.Length > 160) sample = sample[..157] + "...";
+                graph.Diagnostics.Add(new CompilerNote
+                {
+                    Id = group.Key,
+                    Count = group.Count(),
+                    Message = sample
+                });
             }
+        }
+        catch (Exception ex)
+        {
+            // Diagnostics are a nicety; failing to collect them must not fail an index.
+            Dbg.Log($"diagnostics unavailable: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Nearest .csproj above a source file, resolved once per directory.
+    ///
+    /// Owned by the indexer rather than computed at the end, because pass 2 needs it: an
+    /// unfiltered assembly scan is scoped by the project its marker type lives in, and a project
+    /// stamp applied after the passes would be empty at the moment that decision is made.
+    /// </summary>
+    private sealed class ProjectLocator(string root)
+    {
+        private readonly Dictionary<string, string> _byDirectory = new(StringComparer.OrdinalIgnoreCase);
+
+        public string For(string relativeFile)
+        {
+            if (relativeFile.Length == 0) return "";
+
+            var directory = Path.GetDirectoryName(relativeFile) ?? "";
+            if (_byDirectory.TryGetValue(directory, out var cached)) return cached;
 
             var project = "";
-            var dir = new DirectoryInfo(Path.Combine(graph.Root, relative));
-            var stop = Path.GetFullPath(graph.Root);
+            var dir = new DirectoryInfo(Path.Combine(root, directory));
+            var stop = Path.GetFullPath(root);
 
             while (dir != null && dir.FullName.StartsWith(stop, StringComparison.OrdinalIgnoreCase))
             {
@@ -146,43 +277,76 @@ public static class Indexer
                 dir = dir.Parent;
             }
 
-            byDirectory[relative] = project;
-            node.Project = project;
+            _byDirectory[directory] = project;
+            return project;
         }
     }
 
-    private static List<MetadataReference> ReferenceSet(string root)
+    private static List<MetadataReference> ReferenceSet(string root, out ReferenceReport report)
     {
         var list = new List<MetadataReference>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tally = new ReferenceReport();
 
-        void AddDir(string dir, int cap)
+        void AddDir(string dir, int cap, bool runtime)
         {
             if (!Directory.Exists(dir)) return;
             var count = 0;
             foreach (var dll in Directory.EnumerateFiles(dir, "*.dll"))
             {
                 var name = Path.GetFileName(dll);
+
+                // Native shims sit next to managed assemblies and are not PE images with metadata.
+                // CreateFromFile throws on each one; the exception used to be swallowed, so
+                // thirteen failures per index went unmentioned and looked like nothing at all.
+                if (NativeSuffixes.Any(x => name.EndsWith(x, StringComparison.OrdinalIgnoreCase))) continue;
+
                 if (!seen.Add(name)) continue;
-                try { list.Add(MetadataReference.CreateFromFile(dll)); } catch { }
-                if (++count >= cap) return;
+
+                try
+                {
+                    list.Add(MetadataReference.CreateFromFile(dll));
+                    if (runtime) tally.Runtime++; else tally.Output++;
+                }
+                catch
+                {
+                    tally.Failed++;
+                }
+
+                if (++count >= cap)
+                {
+                    tally.Capped++;
+                    return;
+                }
             }
         }
 
-        AddDir(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), 400);
+        AddDir(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), 400, runtime: true);
 
         foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories).Take(80))
         {
+            tally.OutputDirectories++;
             foreach (var cfg in Directory.EnumerateDirectories(bin, "*", SearchOption.AllDirectories).Take(20))
             {
-                AddDir(cfg, 200);
+                AddDir(cfg, 200, runtime: false);
             }
         }
 
+        report = tally;
         return list;
     }
 
-    private sealed class Builder(Graph g, CSharpCompilation comp)
+    /// <summary>Where the reference set came from, and whether it was truncated.</summary>
+    private sealed class ReferenceReport
+    {
+        public int Runtime;
+        public int Output;
+        public int OutputDirectories;
+        public int Capped;
+        public int Failed;
+    }
+
+    private sealed class Builder(Graph g, CSharpCompilation comp, ProjectLocator projects)
     {
         private static readonly SymbolDisplayFormat KeyFormat = SymbolDisplayFormat.FullyQualifiedFormat;
 
@@ -191,6 +355,12 @@ public static class Indexer
         /// so it is reported as inferred and never ranks above an explicit AddScoped.
         /// </summary>
         private const double ScanConfidence = 0.75;
+
+        /// <summary>
+        /// An unfiltered scan scoped only by project. Weaker than a filtered one because the
+        /// assembly boundary is inferred from a file path rather than read from the scan itself.
+        /// </summary>
+        private const double BroadScanConfidence = 0.55;
 
         private static readonly string[] TestAttributes =
         {
@@ -287,6 +457,7 @@ public static class Indexer
             var node = new Node
             {
                 Id = g.Nodes.Count,
+                Project = projects.For(file),
                 Name = name,
                 Short = shortName,
                 Kind = kind,
@@ -443,6 +614,22 @@ public static class Indexer
         /// </summary>
         private void RecordUnresolved(string kind, SyntaxNode at, string expression, string reason)
         {
+            // The totals are counted before the cap, because a capped sample taken in traversal
+            // order is not a sample of anything -- it is the first N files. Reasoning about
+            // proportions from it produced a wrong conclusion once already.
+            var tally = $"{kind}/{reason}";
+            g.UnresolvedByReason[tally] = g.UnresolvedByReason.GetValueOrDefault(tally) + 1;
+
+            var project = at.SyntaxTree.FilePath.Length > 0
+                ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
+                : "";
+            if (project.Length > 0)
+            {
+                var owner = ProjectOf(project);
+                if (owner.Length > 0)
+                    g.UnresolvedByProject[owner] = g.UnresolvedByProject.GetValueOrDefault(owner) + 1;
+            }
+
             if (g.Unresolved.Count(u => u.Kind == kind) >= UnresolvedCaps.GetValueOrDefault(kind, 100)) return;
 
             var span = at.GetLocation().GetLineSpan();
@@ -480,6 +667,8 @@ public static class Indexer
         }
 
         /// <summary>Where an edge was declared, as a repo-relative file:line.</summary>
+        private string ProjectOf(string relativeFile) => projects.For(relativeFile);
+
         private string SiteOf(SyntaxNode at)
         {
             var file = at.SyntaxTree.FilePath.Length > 0
@@ -947,6 +1136,12 @@ public static class Indexer
 
             foreach (var inv in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
+                // nameof(x) is an operator, not a call. Roslyn models it as an invocation with no
+                // symbol, so counting it as a binding failure inflates the unresolved rate with
+                // something that was never going to bind -- 180 of the first 250 samples on a
+                // real solution were nameof.
+                if (inv.Expression is IdentifierNameSyntax { Identifier.Text: "nameof" }) continue;
+
                 var owner = OwnerOf(inv);
                 var info = model.GetSymbolInfo(inv);
                 var target = info.Symbol as IMethodSymbol ?? info.CandidateSymbols.FirstOrDefault() as IMethodSymbol;
@@ -1116,6 +1311,15 @@ public static class Indexer
             if (arg.Expression is ObjectCreationExpressionSyntax oc)
                 requestSymbol = model.GetSymbolInfo(oc.Type).Symbol as INamedTypeSymbol;
             requestSymbol ??= model.GetTypeInfo(arg.Expression).Type as INamedTypeSymbol;
+
+            // HttpClient.SendAsync, HttpMessageHandler.SendAsync, a channel's Publish: the method
+            // name is not the signal. A mediator dispatch carries a request type declared in this
+            // repository; an HTTP call carries HttpRequestMessage. Matching on the name alone
+            // reported test HTTP calls as messages with no handler.
+            if (requestSymbol != null && !requestSymbol.OriginalDefinition.Locations.Any(l => l.IsInSource))
+            {
+                return;
+            }
 
             string shortName;
             if (requestSymbol is { Name.Length: > 0 })
@@ -1380,6 +1584,12 @@ public static class Indexer
 
             if (name == "Scan")
             {
+                // Mapster's TypeAdapterConfig also has Scan(assemblies), and it reads mapping
+                // profiles rather than registering services. Matching on the method name alone
+                // reported it as a container registration, and 'doctor' then claimed the DI
+                // container was wired by scanning when nothing of the sort had happened.
+                if (!IsServiceCollection(ma.Expression, model)) return;
+
                 RegisterScrutorScan(inv, model);
                 return;
             }
@@ -1404,6 +1614,28 @@ public static class Indexer
                 // container. Recorded only so doctor can say the container is wired by scanning.
                 Note(name, inv);
             }
+        }
+
+        /// <summary>
+        /// Whether the receiver of a registration-shaped call is actually a service collection.
+        /// Falls back to the written name when the type will not bind, because a repository that
+        /// declares its own IServiceCollection is still describing a container.
+        /// </summary>
+        private static bool IsServiceCollection(ExpressionSyntax receiver, SemanticModel model)
+        {
+            var type = model.GetTypeInfo(receiver).Type;
+
+            if (type != null && type.TypeKind != TypeKind.Error)
+            {
+                if (Named(type)) return true;
+                return type.AllInterfaces.Any(Named);
+            }
+
+            var text = receiver.ToString();
+            return text.Contains("service", StringComparison.OrdinalIgnoreCase);
+
+            static bool Named(ITypeSymbol t) =>
+                t.Name is "IServiceCollection" or "ServiceCollection";
         }
 
         private void Note(string helper, SyntaxNode at)
@@ -1453,9 +1685,18 @@ public static class Indexer
 
             if (filters.Count == 0)
             {
-                // AsImplementedInterfaces() over a whole assembly with no AssignableTo filter binds
-                // everything to everything. Guessing here would be worse than admitting the gap.
-                RecordUnresolved("di", inv, inv.Expression.ToString(), "assembly-scan-unfiltered");
+                // AsImplementedInterfaces() with no AssignableTo filter binds everything in an
+                // assembly. FromAssemblyOf<T> still says which assembly, and Node.Project makes
+                // that a real constraint rather than a guess about the whole solution, so the
+                // scan is applied within that project only and recorded below a filtered one.
+                var marker = MarkerProject(inv, model);
+                if (marker == null)
+                {
+                    RecordUnresolved("di", inv, inv.Expression.ToString(), "assembly-scan-unfiltered");
+                    return;
+                }
+
+                BindProjectImplementations(marker, lifetime, inv);
                 return;
             }
 
@@ -1463,6 +1704,53 @@ public static class Indexer
             {
                 if (ResolveTypeNode(filter, model) is not { } resolved) continue;
                 BindImplementors(resolved.Id, lifetime, inv, "assembly-scan");
+            }
+        }
+
+        /// <summary>
+        /// The project a FromAssemblyOf&lt;T&gt; / FromAssemblyContaining&lt;T&gt; marker points at.
+        /// </summary>
+        private string? MarkerProject(InvocationExpressionSyntax inv, SemanticModel model)
+        {
+            foreach (var call in inv.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                if (call.Expression is not MemberAccessExpressionSyntax ma) continue;
+                if (ma.Name is not GenericNameSyntax gen) continue;
+                if (!gen.Identifier.Text.StartsWith("FromAssembly", StringComparison.Ordinal)) continue;
+
+                var argument = gen.TypeArgumentList.Arguments.FirstOrDefault();
+                if (argument == null) continue;
+                if (ResolveTypeNode(argument, model) is not { } resolved) continue;
+
+                var project = g.ById(resolved.Id)?.Project ?? "";
+                if (project.Length > 0) return project;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Every concrete class in one project, bound to the interfaces it implements. This is what
+        /// AsImplementedInterfaces does at startup; the difference is that the container evaluates
+        /// it against a real assembly and this evaluates it against a project stamp, so it is
+        /// recorded well below the threshold at which anything is treated as a fact.
+        /// </summary>
+        private void BindProjectImplementations(string project, string lifetime, SyntaxNode at)
+        {
+            foreach (var (baseId, implementors) in _implementorsByBase)
+            {
+                if (g.ById(baseId) is not { Kind: "interface" }) continue;
+
+                foreach (var implId in implementors)
+                {
+                    var impl = g.ById(implId);
+                    if (impl == null || impl.Project != project) continue;
+                    if (impl.Kind == "interface" || impl.Tags.Contains("abstract")) continue;
+                    if (impl.Tags.Contains("test")) continue;
+
+                    AddTag(impl, "di:" + lifetime);
+                    Link(baseId, implId, EdgeKind.DiBinding, lifetime, BroadScanConfidence, "assembly-scan-broad", at);
+                }
             }
         }
 

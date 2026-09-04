@@ -27,8 +27,48 @@ public static class DoctorCommand
 
             var resolution = graph.UnresolvedCallSites == 0
                 ? $"clean ({graph.ReferenceCount} references)"
-                : $"{graph.UnresolvedCallSites} unbound call site(s) against {graph.ReferenceCount} references -> edges are missing, run 'dotnet build' then 'csmesh index'";
+                : $"{graph.UnresolvedCallSites} unbound call site(s) against {graph.ReferenceCount} references";
             Console.WriteLine($"resolution      {resolution}");
+
+            if (graph.ScopeDecision.Length > 0)
+            {
+                Console.WriteLine($"scope           {graph.ScopeDecision}");
+            }
+
+            if (graph.SkippedProjects.Count > 0)
+            {
+                Console.WriteLine($"skipped         {graph.SkippedProjects.Count} project(s): {graph.SkippedProjectsReason}");
+                foreach (var project in graph.SkippedProjects.Take(10))
+                {
+                    Console.WriteLine($"  {project}");
+                }
+
+                Console.WriteLine("  their symbols, registrations and unresolved references are absent by design.");
+                Console.WriteLine("  include them with: csmesh index --all");
+            }
+
+            Console.WriteLine($"global usings   {graph.GlobalUsingSources} set(s) compiled in"
+                              + (graph.GlobalUsingSources == 0
+                                  ? "  -- none; the System namespace is missing and nothing will bind"
+                                  : ""));
+
+            Console.WriteLine($"references      {graph.ReferenceCount} total"
+                              + $" -- {graph.RuntimeReferences} runtime,"
+                              + $" {graph.OutputReferences} from bin/"
+                              + (graph.ReferencesCapped ? " (a directory scan hit its cap)" : "")
+                              + (graph.ReferencesFailed > 0 ? $", {graph.ReferencesFailed} could not be opened" : ""));
+
+            if (graph.OutputReferences == 0 && graph.UnresolvedCallSites > 0)
+            {
+                Console.WriteLine("                NOTHING FROM bin/. The solution was not built when this index was made,");
+                Console.WriteLine("                so every package type is unbound and the graph is missing edges.");
+                Console.WriteLine("                Run: dotnet build, then csmesh index");
+            }
+            else if (graph.UnresolvedCallSites > 0 && graph.OutputReferences < graph.OutputDirectories)
+            {
+                Console.WriteLine($"                {graph.OutputDirectories} bin/ director(ies) found but only {graph.OutputReferences} assembl(ies) loaded;");
+                Console.WriteLine("                library projects may need CopyLocalLockFileAssemblies to emit package DLLs.");
+            }
 
             foreach (var group in graph.Edges.GroupBy(e => e.Kind).OrderByDescending(x => x.Count()))
             {
@@ -53,7 +93,7 @@ public static class DoctorCommand
                     Console.WriteLine($"  {entry}");
                 }
 
-                Console.WriteLine("  bindings from these are inferred, not named -- they carry ?0.75 in output.");
+                Console.WriteLine("  bindings from these are inferred, not named -- they carry a ?score in output.");
             }
 
             Quality(graph);
@@ -108,7 +148,48 @@ public static class DoctorCommand
             var bound = graph.TotalCallSites - graph.UnresolvedCallSites;
             var rate = 100.0 * bound / graph.TotalCallSites;
             Console.WriteLine($"  calls resolved  {rate:F1}%  ({bound}/{graph.TotalCallSites})");
-            if (rate < 90) Console.WriteLine("                  low -> run 'dotnet build' so bin/ assemblies are available, then re-index");
+            // Only name the build when the reference set actually looks unbuilt. Telling someone
+            // to run dotnet build on a solution whose bin/ already holds 223 assemblies is a
+            // wrong diagnosis stated confidently, which is worse than no diagnosis.
+            if (rate < 90)
+            {
+                Console.WriteLine(graph.OutputReferences == 0
+                    ? "                  low, and nothing was loaded from bin/ -> run 'dotnet build', then re-index"
+                    : "                  low despite a populated bin/ -> run 'csmesh unresolved --kind call' to see what is missing");
+            }
+        }
+
+        if (graph.Diagnostics.Count > 0)
+        {
+            Console.WriteLine("  compiler said");
+            foreach (var note in graph.Diagnostics.Take(5))
+            {
+                Console.WriteLine($"    {note.Id} x{note.Count,-6} {note.Message}");
+            }
+
+            if (graph.Diagnostics.Any(d => d.Id == "CS0433"))
+            {
+                Console.WriteLine("    CS0433 means a type arrived from two assemblies. bin/ probably holds a");
+                Console.WriteLine("    compiled copy of the source being indexed; that breaks resolution.");
+            }
+        }
+
+        if (graph.UnresolvedByReason.Count > 0)
+        {
+            Console.WriteLine("  unresolved by reason  (full counts, not the sample)");
+            foreach (var (reason, count) in graph.UnresolvedByReason.OrderByDescending(x => x.Value).Take(6))
+            {
+                Console.WriteLine($"    {reason,-28} {count}");
+            }
+        }
+
+        if (graph.UnresolvedByProject.Count > 1)
+        {
+            Console.WriteLine("  unresolved by project");
+            foreach (var (project, count) in graph.UnresolvedByProject.OrderByDescending(x => x.Value).Take(6))
+            {
+                Console.WriteLine($"    {project,-28} {count}");
+            }
         }
 
         var inferred = graph.Edges.Where(e => e.Confidence != null).ToList();
