@@ -462,6 +462,16 @@ public static class HelpCommand
             --repo <PATH>      Repository root
             -h, --help         Print help information
 
+        READING IT:
+            The hit rate covers only commands that resolve a symbol, because exit 1 means
+            something different elsewhere: from 'silence' it means a real absence was explained,
+            from 'diff' that nothing changed.
+
+            A high answered rate means the tool works and the question is whether anyone is
+            reaching for it. A high not-found rate means it is being reached for and failing,
+            which is a different problem. 'never used' is a read on the installed skill rather
+            than on the commands themselves.
+
         EXAMPLES:
             csmesh usage
             csmesh usage --days 30

@@ -12,7 +12,7 @@
     <ToolCommandName>csmesh</ToolCommandName>
     <AssemblyName>csmesh</AssemblyName>
     <PackageId>CsMesh</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Vali (naser) Rafinia</Authors>
     <Description>Structural answer engine for C# codebases. Answers agent questions about call paths, interface implementations and change blast radius under a hard token budget.</Description>
     <PackageProjectUrl>https://github.com/nRafinia/CsMesh</PackageProjectUrl>

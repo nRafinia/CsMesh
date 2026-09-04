@@ -70,6 +70,19 @@ public sealed class MapTests : IClassFixture<GraphFixture>
     }
 
     [Fact]
+    public void Prose_answers_are_not_lost_when_a_caller_asks_for_structure()
+    {
+        // silence, map and changes answer mostly in prose. A JSON consumer reading only Rows
+        // would get an exit code and nothing to act on, so the rendered lines travel with it.
+        var w = Writer();
+        Queries.Map(_f.Graph, null, w, []);
+
+        Assert.NotEmpty(w.Lines);
+        Assert.True(w.Lines.Count > w.Rows.Count,
+            "most of a map is grouping and headings, not rows; both have to reach the caller");
+    }
+
+    [Fact]
     public void Under_filter_narrows_entrypoints_without_changing_their_meaning()
     {
         var all = Writer();

@@ -244,7 +244,13 @@ public static partial class Queries
             // Without the second, "now change the binding" starts with a grep.
             var wiring = WiringSite(g, target.Id, to.Id);
             row.Site = wiring;
-            var site = wiring != null ? $"  @ {wiring}" : "";
+
+            // Registering a type in the file that declares it is common; printing the path twice
+            // on one line is noise, so only the line number survives.
+            var site = wiring == null ? ""
+                : wiring.StartsWith(to.File + ":", StringComparison.OrdinalIgnoreCase)
+                    ? $"  @ line {wiring[(to.File.Length + 1)..]}"
+                    : $"  @ {wiring}";
 
             if (!w.Add($"  {to.Short}{mark}{Loc(to)}{site}{StaleTag(to, dirty)}", row))
             {

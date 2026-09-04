@@ -349,6 +349,11 @@ public static class QueryCommand
         if (note != null) result.Notes.Add(note);
         if (!keepRows) result.Rows.AddRange(writer.Rows);
 
+        // Everything the terminal would have shown, including the parts that are prose rather
+        // than rows. A caller that branches on Rows keeps working; one that needs the reasoning
+        // no longer has to run the command twice without --json to get it.
+        result.Text.AddRange(writer.Lines);
+
         result.Exit = exitCode;
         result.Truncated = writer.Overflowed;
 
