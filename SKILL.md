@@ -32,6 +32,11 @@ Follow these instead of your default search behaviour.
 4. When you see `_mediator.Send(...)`, `Publish(...)`, or a message bus call, run `csmesh trace`
    on the calling method. grep will not find the handler; csmesh links it.
 5. To find where an HTTP path or a background job is served, run `csmesh entrypoints <filter>`.
+6. When you need more than one of the above about the *same* symbol, run `csmesh context` once
+   instead of chaining three commands.
+7. When you have two symbols and want to know how one reaches the other -- a class in a stack
+   trace, an endpoint and a repository -- run `csmesh path <from> <to>`. Neither `trace` nor
+   `blast-radius` can answer that; they each walk from one end only.
 
 Keep using grep for what it is good at: string literals, config values, TODOs, error messages.
 
@@ -43,6 +48,9 @@ csmesh trace PaymentController.Post --budget 600
 csmesh impl IPaymentGateway --budget 300
 csmesh blast-radius Order.Status --budget 800 --depth 2
 csmesh entrypoints payments
+csmesh context PaymentService.Process --budget 800
+csmesh path PaymentController.Post StripeGateway.Authorize
+csmesh cycles --namespace --budget 400
 csmesh doctor
 ```
 
@@ -55,6 +63,9 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 - `{http:POST /payments}` -- this member is an HTTP entrypoint.
 - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Re-run
   `csmesh index`, or open that one file directly to confirm.
+- `[... ?0.70 short-name-match]` -- the edge came from a name match, not a compiler symbol.
+  Anything below `0.80` is a lead, not a fact: open the file before you act on it. Rows without a
+  `?score` were read straight off a symbol and are exact.
 
 ## Exit codes -- branch on these, do not parse the text
 
@@ -72,5 +83,8 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 - Prefer `Type.Member` over a bare member name; bare names cost an extra round trip via exit 3.
 - Chain calls in one shell command when you have two questions:
   `csmesh impl IPaymentGateway --budget 200 && csmesh blast-radius Order.Status --budget 400`
+- `csmesh doctor` reports how much of the graph resolved. If call resolution is low, the answers
+  are thin because edges are missing, not because the code is not there -- run `dotnet build`
+  first, then re-index.
 - csmesh tells you which files matter. Open those files. It is not a replacement for reading the
   code you are about to change -- it is a replacement for hunting for it.

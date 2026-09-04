@@ -39,6 +39,12 @@ public static class SkillText
         4. When you see `_mediator.Send(...)`, `Publish(...)`, or a message bus call, run `csmesh trace`
            on the calling method. grep will not find the handler; csmesh links it.
         5. To find where an HTTP path or a background job is served, run `csmesh entrypoints <filter>`.
+        6. When you need more than one of the above about the *same* symbol, run `csmesh context`
+           once rather than chaining three commands.
+        7. When you have two symbols and want to know how one reaches the other -- a class you found
+           in a stack trace, an endpoint and the repository underneath it -- run
+           `csmesh path <from> <to>`. Neither `trace` nor `blast-radius` answers that; each walks
+           from one end only.
 
         Keep using grep for what it is good at: string literals, config values, TODOs, error messages.
 
@@ -50,6 +56,9 @@ public static class SkillText
         csmesh impl IPaymentGateway --budget 300
         csmesh blast-radius Order.Status --budget 800 --depth 2
         csmesh entrypoints payments
+        csmesh context PaymentService.Process --budget 800
+        csmesh path PaymentController.Post StripeGateway.Authorize
+        csmesh cycles --namespace --budget 400
         csmesh doctor
         ```
 
@@ -64,6 +73,9 @@ public static class SkillText
         - `{http:POST /payments}` -- this member is an HTTP entrypoint.
         - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Re-run
           `csmesh index`, or open that one file directly to confirm.
+        - `[... ?0.70 short-name-match]` -- confidence. The edge came from a name match, not a
+          compiler symbol. Below `0.80`, treat the row as a lead and open the file before acting on
+          it. A row with no `?score` was read straight off a symbol and is exact.
 
         Pass `--json` when you want to branch on structure instead of parsing the text layout.
 
@@ -81,10 +93,13 @@ public static class SkillText
 
         ## Rules
 
-        - Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for `blast-radius`.
+        - Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for
+          `blast-radius` and `context`, 400 for `path`.
         - Prefer `Type.Member` over a bare member name; bare names cost an extra round trip via exit 3.
         - Chain calls in one shell command when you have two questions:
           `csmesh impl IPaymentGateway --budget 200 && csmesh blast-radius Order.Status --budget 400`
+        - `csmesh doctor` reports how much of the graph resolved. Low call resolution means edges
+          are missing, not that the code is absent -- run `dotnet build`, then re-index.
         - csmesh tells you which files matter. Open those files. It is not a replacement for reading the
           code you are about to change -- it is a replacement for hunting for it.
         """;

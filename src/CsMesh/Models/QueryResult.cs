@@ -27,6 +27,15 @@ public sealed class QueryRow
     /// <summary>True when the source file changed after the index was built.</summary>
     public bool Stale { get; set; }
 
+    /// <summary>
+    /// How far the edge that produced this row can be trusted, 0 to 1. Absent means certain.
+    /// Below 0.8 the caller should open the file before acting on the row.
+    /// </summary>
+    public double? Confidence { get; set; }
+
+    /// <summary>What produced the edge, when it was not a plain compiler symbol lookup.</summary>
+    public string? Source { get; set; }
+
     public List<string>? Tags { get; set; }
 }
 

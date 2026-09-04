@@ -13,7 +13,7 @@ public sealed class Graph
     /// A graph written by an older version is rejected on load so the user is told to re-index
     /// instead of silently querying a graph built with different rules.
     /// </summary>
-    public const int CurrentFormatVersion = 2;
+    public const int CurrentFormatVersion = 3;
 
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }
@@ -30,6 +30,29 @@ public sealed class Graph
     /// references. Every one of these is a call edge that never made it into the graph.
     /// </summary>
     public int UnresolvedCallSites { get; set; }
+
+    /// <summary>
+    /// Call sites the indexer attempted to bind, resolved or not. The ratio against
+    /// <see cref="UnresolvedCallSites"/> is what 'doctor' reports as call resolution.
+    /// </summary>
+    public int TotalCallSites { get; set; }
+
+    /// <summary>
+    /// DI registrations skipped because the registered type name matched more than one type in
+    /// the graph. Each one is a binding the graph does not have.
+    /// </summary>
+    public int AmbiguousDiRegistrations { get; set; }
+
+    /// <summary>
+    /// Send/Publish call sites skipped because the request short name matched handlers for more
+    /// than one fully qualified request type. Linking them would be a false dispatch.
+    /// </summary>
+    public int AmbiguousMessageDispatches { get; set; }
+
+    /// <summary>
+    /// Send/Publish call sites whose request type resolved but had no registered handler.
+    /// </summary>
+    public int UnmatchedMessageDispatches { get; set; }
 
     public List<Node> Nodes { get; set; } = [];
     public List<Edge> Edges { get; set; } = [];
