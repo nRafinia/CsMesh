@@ -28,9 +28,20 @@ public sealed class Node
     public string File { get; set; } = string.Empty;
 
     /// <summary>
-    /// 1-based source line number.
+    /// 1-based source line number where the declaration starts.
     /// </summary>
     public int Line { get; set; }
+
+    /// <summary>
+    /// 1-based line where the declaration ends. Without it a git hunk cannot be attributed to a
+    /// symbol: a diff gives line ranges, and "nearest declaration above" guesses wrong on nested
+    /// types, local functions and multi-class files. Falls back to <see cref="Line"/> for graphs
+    /// written before this existed.
+    /// </summary>
+    public int EndLine { get; set; }
+
+    /// <summary>True when the given 1-based line falls inside this declaration.</summary>
+    public bool Covers(int line) => line >= Line && line <= Math.Max(EndLine, Line);
 
     /// <summary>
     /// Semantic tags associated with the symbol (e.g. route:GET /payments, handler, controller, di:scoped).

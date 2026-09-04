@@ -174,7 +174,10 @@ public static partial class Queries
         w.Force($"{target.Short}{Loc(target)}  -- {impls.Count} implementation(s)",
                 Row(target, 0, "root", null, dirty));
 
-        foreach (var e in impls.OrderByDescending(x => x.Note == "di-bound").ThenByDescending(x => x.Score))
+        foreach (var e in impls
+                     .OrderByDescending(x => x.Note == "di-bound")
+                     .ThenBy(x => g.ById(x.To) is { } n && IsTest(n) ? 1 : 0)
+                     .ThenByDescending(x => x.Score))
         {
             var to = g.ById(e.To);
             if (to == null) continue;
@@ -186,6 +189,7 @@ public static partial class Queries
             var parts = new List<string>();
             if (bound) parts.Add(di ?? "di-bound");
             if (keyed != null) parts.Add(keyed);
+            if (IsTest(to)) parts.Add("test");
             if (e.Score < 1.0) parts.Add($"?{e.Score:0.00}{(e.Source != null ? " " + e.Source : "")}");
             var mark = parts.Count == 0 ? "" : "  [" + string.Join(", ", parts) + "]";
 
@@ -210,71 +214,92 @@ public static partial class Queries
     /// </summary>
     public static int BlastRadius(Graph g, Node target, int depth, BudgetWriter w, HashSet<string> dirty)
     {
+        // Confidence is carried along the path, not read off the last edge. A caller reached only
+        // through a 0.70 dispatch is a 0.70 caller no matter how certain the remaining hops were,
+        // and blast-radius is the worst place to overstate certainty: the person running it is
+        // deciding what not to break.
         var seen = new HashSet<int>();
-        var frontier = new List<(Node Node, int Level)> { (target, 0) };
-        var reached = new List<(Node Node, int Level)>();
-        var entrypoints = new List<Node>();
+        var frontier = new List<Reach> { new(target, 0, 1.0, null) };
+        var reached = new List<Reach>();
+        var entrypoints = new List<Reach>();
 
         if (target.Kind is "type" or "interface")
         {
             foreach (var e in g.Out(target.Id).Where(x => x.Kind == EdgeKind.TypeUse))
             {
                 var m = g.ById(e.To);
-                if (m != null && seen.Add(m.Id)) frontier.Add((m, 0));
+                if (m != null && seen.Add(m.Id)) frontier.Add(new Reach(m, 0, 1.0, null));
             }
         }
 
         while (frontier.Count > 0)
         {
-            var next = new List<(Node, int)>();
-            foreach (var (node, level) in frontier)
+            var next = new List<Reach>();
+            foreach (var reach in frontier)
             {
-                if (level >= depth) continue;
-                foreach (var e in g.In(node.Id))
+                if (reach.Level >= depth) continue;
+                foreach (var e in g.In(reach.Node.Id))
                 {
                     if (e.Kind == EdgeKind.TypeUse) continue;
                     var from = g.ById(e.From);
                     if (from == null || !seen.Add(from.Id)) continue;
-                    reached.Add((from, level + 1));
-                    if (IsEntrypoint(from)) entrypoints.Add(from);
-                    next.Add((from, level + 1));
+
+                    var score = Math.Min(reach.Score, e.Score);
+                    var source = e.Score < reach.Score ? e.Source : reach.Source;
+                    var hop = new Reach(from, reach.Level + 1, score, source);
+
+                    reached.Add(hop);
+                    if (IsEntrypoint(from)) entrypoints.Add(hop);
+                    next.Add(hop);
                 }
             }
             frontier = next;
         }
 
+        var tests = reached.Where(r => IsTest(r.Node)).ToList();
+        var weakest = reached.Select(r => r.Score).DefaultIfEmpty(1.0).Min();
+
         w.Force($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}", Row(target, 0, "root", null, dirty));
-        w.Force($"reached by {reached.Count} member(s), {entrypoints.Count} entrypoint(s)");
+        w.Force($"reached by {reached.Count} member(s), {entrypoints.Count} entrypoint(s), {tests.Count} test(s)");
 
         if (entrypoints.Count > 0)
         {
             w.Force("entrypoints:");
             foreach (var ep in entrypoints.Take(30))
             {
-                if (!w.Add($"  {ep.Short}{TagSuffix(ep)}{Loc(ep)}{StaleTag(ep, dirty)}",
-                           Row(ep, 1, "entrypoint", null, dirty)))
-                {
-                    return Overflow(w, reached.Count);
-                }
+                if (!Write(ep, "entrypoint", TagSuffix(ep.Node))) return Overflow(w, reached.Count);
             }
         }
 
-        var direct = reached.Where(r => r.Level == 1).Select(r => r.Node).ToList();
-        if (direct.Count > 0)
+        // Production callers first. A test calling a member is a real caller, but it is not the
+        // thing that breaks in production, and mixing the two buries the answer.
+        var direct = reached.Where(r => r.Level == 1).ToList();
+        var directProduction = direct.Where(r => !IsTest(r.Node)).ToList();
+        var directTests = direct.Where(r => IsTest(r.Node)).ToList();
+
+        if (directProduction.Count > 0)
         {
             w.Force("direct callers:");
-            foreach (var d in direct)
+            foreach (var d in directProduction)
             {
-                if (!w.Add($"  {d.Short}{Loc(d)}{StaleTag(d, dirty)}", Row(d, 1, "direct-caller", null, dirty)))
-                {
-                    return Overflow(w, reached.Count);
-                }
+                if (!Write(d, "direct-caller", "")) return Overflow(w, reached.Count);
             }
         }
 
+        if (directTests.Count > 0)
+        {
+            w.Force("direct callers (tests):");
+            foreach (var d in directTests)
+            {
+                if (!Write(d, "direct-caller-test", "")) return Overflow(w, reached.Count);
+            }
+        }
+
+        // Group by the owning type id, not by a string: two types with the same simple name in
+        // different namespaces are two types.
         var indirect = reached.Where(r => r.Level > 1)
-            .Select(r => r.Node.Short.Split('.')[0])
-            .Distinct()
+            .Select(r => r.Node.Short.Contains('.') ? r.Node.Short[..r.Node.Short.LastIndexOf('.')] : r.Node.Short)
+            .Distinct(StringComparer.Ordinal)
             .ToList();
 
         if (indirect.Count > 0)
@@ -283,8 +308,34 @@ public static partial class Queries
             if (!w.Add(line)) return Overflow(w, reached.Count);
         }
 
+        if (weakest < Edge.TrustThreshold)
+        {
+            w.Force($"weakest path into this set: {weakest:0.00}. Rows marked ?score are inferred, not read off a symbol.");
+        }
+
         return Exit.Ok;
+
+        bool Write(Reach r, string relation, string tags)
+        {
+            var mark = r.Score < 1.0
+                ? $"  [?{r.Score:0.00}{(r.Source != null ? " " + r.Source : "")}]"
+                : "";
+
+            var row = Row(r.Node, r.Level, relation, null, dirty);
+            if (r.Score < 1.0)
+            {
+                row.Confidence = r.Score;
+                row.Source = r.Source;
+            }
+
+            return w.Add($"  {r.Node.Short}{mark}{tags}{Loc(r.Node)}{StaleTag(r.Node, dirty)}", row);
+        }
     }
+
+    /// <summary>One node reached during a reverse walk, with the weakest edge on the way to it.</summary>
+    private readonly record struct Reach(Node Node, int Level, double Score, string? Source);
+
+    internal static bool IsTest(Node n) => n.Tags.Contains("test");
 
     private static int Overflow(BudgetWriter w, int total)
     {

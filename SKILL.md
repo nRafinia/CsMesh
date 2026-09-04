@@ -32,9 +32,15 @@ Follow these instead of your default search behaviour.
 4. When you see `_mediator.Send(...)`, `Publish(...)`, or a message bus call, run `csmesh trace`
    on the calling method. grep will not find the handler; csmesh links it.
 5. To find where an HTTP path or a background job is served, run `csmesh entrypoints <filter>`.
-6. When you need more than one of the above about the *same* symbol, run `csmesh context` once
+6. After you edit anything, run `csmesh diff` before you claim the change is safe. It takes the
+   git diff you already made and tells you what those symbols reach -- entrypoints, production
+   callers, and tests -- which is the question you actually have, not "what if I changed X".
+7. When a query returns less than you expected, run `csmesh unresolved` before falling back to
+   grep. It says whether the edge is missing or the code is absent. Those are not the same
+   answer and only this command separates them.
+8. When you need more than one of the above about the *same* symbol, run `csmesh context` once
    instead of chaining three commands.
-7. When you have two symbols and want to know how one reaches the other -- a class in a stack
+9. When you have two symbols and want to know how one reaches the other -- a class in a stack
    trace, an endpoint and a repository -- run `csmesh path <from> <to>`. Neither `trace` nor
    `blast-radius` can answer that; they each walk from one end only.
 
@@ -51,6 +57,8 @@ csmesh entrypoints payments
 csmesh context PaymentService.Process --budget 800
 csmesh path PaymentController.Post StripeGateway.Authorize
 csmesh cycles --namespace --budget 400
+csmesh diff --budget 800                       # after editing: what did I just affect?
+csmesh unresolved --kind di                    # why is an answer thinner than expected?
 csmesh doctor
 ```
 
@@ -63,6 +71,8 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 - `{http:POST /payments}` -- this member is an HTTP entrypoint.
 - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Re-run
   `csmesh index`, or open that one file directly to confirm.
+- `{test}` -- test code. Still a real caller, but not what breaks in production;
+  `blast-radius` and `diff` list it separately for that reason.
 - `[... ?0.70 short-name-match]` -- the edge came from a name match, not a compiler symbol.
   Anything below `0.80` is a lead, not a fact: open the file before you act on it. Rows without a
   `?score` were read straight off a symbol and are exact.

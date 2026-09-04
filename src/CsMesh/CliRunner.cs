@@ -62,6 +62,8 @@ public static class CliRunner
             "context" => QueryCommand.Execute(root, opt, "context"),
             "path" or "why" => QueryCommand.Execute(root, opt, "path"),
             "cycles" => QueryCommand.Execute(root, opt, "cycles"),
+            "unresolved" => QueryCommand.Execute(root, opt, "unresolved"),
+            "diff" => QueryCommand.Execute(root, opt, "diff"),
             "usage" => UsageCommand.Execute(root, opt),
             "doctor" => DoctorCommand.Execute(root, opt),
             "skill" => SkillCommand.Execute(root, opt),

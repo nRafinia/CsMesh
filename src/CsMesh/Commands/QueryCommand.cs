@@ -37,6 +37,7 @@ public static class QueryCommand
             "blast" => 3,
             "context" => 3,
             "path" => 12,
+            "diff" => 3,
             _ => 6
         });
 
@@ -52,6 +53,20 @@ public static class QueryCommand
         if (kind == "entrypoints")
         {
             exitCode = Queries.Entrypoints(graph, opt.Positional.FirstOrDefault(), writer, dirtySet);
+        }
+        else if (kind == "unresolved")
+        {
+            exitCode = Queries.Unresolved(graph, opt.Value("kind"), writer, dirtySet);
+        }
+        else if (kind == "diff")
+        {
+            // Default matches what a person means by "what did I just change": working tree
+            // against the last commit. A ref or range as a positional argument overrides it.
+            var range = opt.Positional.FirstOrDefault()
+                        ?? (opt.Flag("staged") ? "--staged" : "HEAD");
+
+            result.Query = range;
+            exitCode = Queries.Diff(graph, root, range, depth, writer, dirtySet);
         }
         else if (kind == "cycles")
         {
@@ -125,6 +140,8 @@ public static class QueryCommand
         "blast" => 800,
         "context" => 800,
         "cycles" => 800,
+        "unresolved" => 600,
+        "diff" => 800,
         "path" => 400,
         _ => 600
     };
