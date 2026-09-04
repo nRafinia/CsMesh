@@ -18,6 +18,8 @@ public static class HelpCommand
             "context" => ContextHelp,
             "path" or "why" => PathHelp,
             "cycles" => CyclesHelp,
+            "unresolved" => UnresolvedHelp,
+            "diff" => DiffHelp,
             "usage" => UsageHelp,
             "doctor" => DoctorHelp,
             "skill" => SkillHelp,
@@ -44,6 +46,8 @@ public static class HelpCommand
             context        Everything structural about one symbol, in a single call
             path           Shortest route from one symbol to another (alias: why)
             cycles         Circular dependencies between types or namespaces
+            unresolved     Where the indexer failed, grouped by reason
+            diff           Symbols a git diff touched, and what they reach
             usage          Display local invocation metrics and caller attribution
             doctor         Diagnose index freshness, skill installation, and environment
             skill          Display skill markdown or install agent skill/rule files
@@ -282,6 +286,60 @@ public static class HelpCommand
         EXAMPLES:
             csmesh cycles
             csmesh cycles --namespace --budget 400
+        """;
+
+    public const string UnresolvedHelp =
+        """
+        csmesh unresolved - Where the indexer failed, grouped by reason
+
+        USAGE:
+            csmesh unresolved [OPTIONS]
+
+        OPTIONS:
+            --kind <K>         Filter to one kind: call, di, mediatr
+            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            'doctor' reports that a graph is, say, 91% resolved. This says which 9%. A missing
+            edge and an absent one look identical in every other command; this is the only place
+            they can be told apart. The sample is capped at 400 sites per index.
+
+        EXAMPLES:
+            csmesh unresolved
+            csmesh unresolved --kind di
+            csmesh unresolved --kind mediatr --budget 300
+        """;
+
+    public const string DiffHelp =
+        """
+        csmesh diff - Symbols a git diff touched, and what they reach
+
+        USAGE:
+            csmesh diff [REF|RANGE] [OPTIONS]
+
+        ARGUMENTS:
+            [REF|RANGE]        What to diff against (default: HEAD, i.e. the working tree)
+
+        OPTIONS:
+            --staged           Diff the index instead of the working tree
+            --depth <N>        Reverse traversal depth from each changed symbol (default: 3)
+            --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            blast-radius takes a symbol; this takes a change-set. Changed lines are attributed to
+            the innermost declaration that spans them, so an index built before the edit will
+            attribute wrongly -- re-index first. Requires git on PATH.
+
+        EXAMPLES:
+            csmesh diff
+            csmesh diff --staged
+            csmesh diff main...HEAD --depth 2
         """;
 
     public const string UsageHelp =

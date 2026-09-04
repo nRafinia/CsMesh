@@ -132,5 +132,14 @@ public static class DoctorCommand
         {
             Console.WriteLine($"  unhandled msgs  {graph.UnmatchedMessageDispatches} Send/Publish site(s) had no handler in this repository");
         }
+
+        if (graph.Unresolved.Count > 0)
+        {
+            Console.WriteLine($"  locations       {graph.Unresolved.Count} sampled -> run: csmesh unresolved");
+        }
+        else if (graph.UnresolvedCallSites > 0)
+        {
+            Console.WriteLine("  locations       none recorded; this index predates them -> run: csmesh index");
+        }
     }
 }

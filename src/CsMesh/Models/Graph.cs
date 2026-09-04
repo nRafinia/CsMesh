@@ -13,7 +13,7 @@ public sealed class Graph
     /// A graph written by an older version is rejected on load so the user is told to re-index
     /// instead of silently querying a graph built with different rules.
     /// </summary>
-    public const int CurrentFormatVersion = 3;
+    public const int CurrentFormatVersion = 4;
 
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }
@@ -53,6 +53,13 @@ public sealed class Graph
     /// Send/Publish call sites whose request type resolved but had no registered handler.
     /// </summary>
     public int UnmatchedMessageDispatches { get; set; }
+
+    /// <summary>
+    /// Where the indexer failed, not just how often. The counters above say a graph is 91%
+    /// resolved; these say which 9%, so a thin answer can be told apart from an absent one.
+    /// Capped during indexing -- this is a sample to act on, not an exhaustive log.
+    /// </summary>
+    public List<UnresolvedSite> Unresolved { get; set; } = [];
 
     public List<Node> Nodes { get; set; } = [];
     public List<Edge> Edges { get; set; } = [];

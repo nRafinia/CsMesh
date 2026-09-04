@@ -141,6 +141,11 @@ public static class Indexer
     {
         private static readonly SymbolDisplayFormat KeyFormat = SymbolDisplayFormat.FullyQualifiedFormat;
 
+        private static readonly string[] TestAttributes =
+        {
+            "Fact", "Theory", "Test", "TestCase", "TestMethod", "DataTestMethod", "Property"
+        };
+
         private static readonly string[] HandlerInterfaces =
         {
             "IRequestHandler", "INotificationHandler", "ICommandHandler",
@@ -170,6 +175,18 @@ public static class Indexer
         private readonly HashSet<(int, int, EdgeKind)> _dedupe = new();
         private readonly List<(INamedTypeSymbol Type, TypeDeclarationSyntax Decl, int Id)> _pendingHandlers = new();
 
+        /// <summary>
+        /// A sample, not a log. Capped per kind rather than in total: unbound calls into the BCL
+        /// run into the hundreds and would otherwise crowd out the handful of DI and dispatch
+        /// failures, which are the ones worth acting on.
+        /// </summary>
+        private static readonly Dictionary<string, int> UnresolvedCaps = new(StringComparer.Ordinal)
+        {
+            ["call"] = 250,
+            ["di"] = 75,
+            ["mediatr"] = 75
+        };
+
         public int UnresolvedCallSites { get; private set; }
         public int TotalCallSites { get; private set; }
         public int AmbiguousDiRegistrations { get; private set; }
@@ -184,13 +201,16 @@ public static class Indexer
             var l = loc ?? sym.Locations.FirstOrDefault(x => x.IsInSource);
             var file = "";
             var line = 0;
+            var endLine = 0;
             if (l is { IsInSource: true })
             {
+                var span = l.GetLineSpan();
                 file = Path.GetRelativePath(g.Root, l.SourceTree!.FilePath);
-                line = l.GetLineSpan().StartLinePosition.Line + 1;
+                line = span.StartLinePosition.Line + 1;
+                endLine = span.EndLinePosition.Line + 1;
             }
 
-            return AddNode(key, FullName(sym), ShortName(sym), kind, file, line);
+            return AddNode(key, FullName(sym), ShortName(sym), kind, file, line, endLine);
         }
 
         /// <summary>
@@ -206,10 +226,11 @@ public static class Indexer
                 ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
                 : "";
 
-            return AddNode(key, name, shortName, kind, file, span.StartLinePosition.Line + 1);
+            return AddNode(key, name, shortName, kind, file,
+                           span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
         }
 
-        private int AddNode(string key, string name, string shortName, string kind, string file, int line)
+        private int AddNode(string key, string name, string shortName, string kind, string file, int line, int endLine)
         {
             var node = new Node
             {
@@ -218,7 +239,8 @@ public static class Indexer
                 Short = shortName,
                 Kind = kind,
                 File = file,
-                Line = line
+                Line = line,
+                EndLine = endLine
             };
 
             g.Nodes.Add(node);
@@ -266,6 +288,30 @@ public static class Indexer
             if (s is IMethodSymbol or IPropertySymbol)
                 return $"{s.ContainingType?.Name ?? "?"}.{s.Name}";
             return s.Name;
+        }
+
+        /// <summary>
+        /// Records where an edge was wanted and not made. Silence is the failure mode this exists
+        /// to prevent: without it an agent reads a missing edge as "there is nothing there".
+        /// </summary>
+        private void RecordUnresolved(string kind, SyntaxNode at, string expression, string reason)
+        {
+            if (g.Unresolved.Count(u => u.Kind == kind) >= UnresolvedCaps.GetValueOrDefault(kind, 100)) return;
+
+            var span = at.GetLocation().GetLineSpan();
+            var text = expression.Replace('\n', ' ').Replace('\r', ' ').Trim();
+            if (text.Length > 80) text = text[..77] + "...";
+
+            g.Unresolved.Add(new UnresolvedSite
+            {
+                Kind = kind,
+                File = at.SyntaxTree.FilePath.Length > 0
+                    ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
+                    : "",
+                Line = span.StartLinePosition.Line + 1,
+                Expression = text,
+                Reason = reason
+            });
         }
 
         private void Link(int from, int to, EdgeKind kind, string? note = null,
@@ -319,6 +365,7 @@ public static class Indexer
                                 var mNode = g.ById(mId)!;
                                 foreach (var t in MethodTags(md)) AddTag(mNode, t);
                                 if (typeNode.Tags.Contains("controller")) AddTag(mNode, "action");
+                                if (mNode.Tags.Contains("test")) AddTag(typeNode, "test");
                                 break;
                             }
                             case ConstructorDeclarationSyntax cd when model.GetDeclaredSymbol(cd) is { } cs:
@@ -329,6 +376,17 @@ public static class Indexer
                                 break;
                         }
                     }
+                }
+            }
+
+            // A [Fact] on one method marks the whole class, and the class mark has to reach the
+            // methods declared before it was applied. Without this pass a test class's members
+            // look like production callers in blast-radius and diff.
+            foreach (var node in g.Nodes.Where(n => n.Kind is "type" or "interface" && n.Tags.Contains("test")))
+            {
+                foreach (var e in g.Edges.Where(x => x.From == node.Id && x.Kind == EdgeKind.TypeUse))
+                {
+                    if (g.ById(e.To) is { } member) AddTag(member, "test");
                 }
             }
 
@@ -402,6 +460,17 @@ public static class Indexer
                 yield return "hosted";
 
             if (type.Name.EndsWith("Repository", StringComparison.Ordinal)) yield return "repository";
+
+            // Test code is in the graph on purpose -- a test is a real caller and dropping it
+            // would understate a blast radius. But it is not production, and the two must be
+            // separable: a test double should never outrank a registered implementation, and
+            // "who calls this" means something different for a test than for a controller.
+            if (type.Name.EndsWith("Tests", StringComparison.Ordinal) ||
+                type.Name.EndsWith("Test", StringComparison.Ordinal) ||
+                type.Name.EndsWith("Spec", StringComparison.Ordinal) ||
+                type.Name.EndsWith("Specs", StringComparison.Ordinal) ||
+                type.Name.EndsWith("Fixture", StringComparison.Ordinal))
+                yield return "test";
             if (type.IsAbstract && type.TypeKind == TypeKind.Class) yield return "abstract";
 
             var route = AttrArg(decl.AttributeLists, "Route");
@@ -428,6 +497,14 @@ public static class Indexer
                   .Any(a => a.Name.ToString().Contains("Obsolete")))
             {
                 yield return "obsolete";
+            }
+
+            // xUnit, NUnit and MSTest, by attribute rather than by naming convention.
+            if (md.AttributeLists.SelectMany(al => al.Attributes)
+                  .Any(a => TestAttributes.Contains(a.Name.ToString().Split('.').Last()
+                                                     .Replace("Attribute", ""), StringComparer.Ordinal)))
+            {
+                yield return "test";
             }
         }
 
@@ -649,7 +726,17 @@ public static class Indexer
                 var target = info.Symbol as IMethodSymbol ?? info.CandidateSymbols.FirstOrDefault() as IMethodSymbol;
 
                 TotalCallSites++;
-                if (target == null && info.CandidateSymbols.Length == 0) UnresolvedCallSites++;
+                if (target == null && info.CandidateSymbols.Length == 0)
+                {
+                    UnresolvedCallSites++;
+                    RecordUnresolved("call", inv, inv.Expression.ToString(), "no-candidate-symbol");
+                }
+                else if (info.Symbol == null && info.CandidateSymbols.Length > 1)
+                {
+                    // An edge is still drawn, to the first candidate. That is a coin toss between
+                    // overloads, so say where it happened rather than let it pass as a fact.
+                    RecordUnresolved("call", inv, inv.Expression.ToString(), "ambiguous-overload");
+                }
 
                 if (target != null && target.Locations.Any(l => l.IsInSource))
                 {
@@ -794,8 +881,17 @@ public static class Indexer
                     return;
                 }
 
-                if (_requestKeysByShort.ContainsKey(shortName)) AmbiguousMessageDispatches++;
-                else UnmatchedMessageDispatches++;
+                if (_requestKeysByShort.ContainsKey(shortName))
+                {
+                    AmbiguousMessageDispatches++;
+                    RecordUnresolved("mediatr", inv, inv.ToString(), "ambiguous-request-name");
+                }
+                else
+                {
+                    UnmatchedMessageDispatches++;
+                    RecordUnresolved("mediatr", inv, inv.ToString(), "no-handler");
+                }
+
                 return;
             }
 
@@ -807,12 +903,14 @@ public static class Indexer
             if (!_requestKeysByShort.TryGetValue(shortName, out var candidates))
             {
                 UnmatchedMessageDispatches++;
+                RecordUnresolved("mediatr", inv, inv.ToString(), "no-handler");
                 return;
             }
 
             if (candidates.Count > 1)
             {
                 AmbiguousMessageDispatches++;
+                RecordUnresolved("mediatr", inv, inv.ToString(), "ambiguous-request-name");
                 Dbg.Log($"mediator: '{shortName}' matches {candidates.Count} request types; dispatch skipped");
                 return;
             }
@@ -992,6 +1090,7 @@ public static class Indexer
                 if (match != null)
                 {
                     AmbiguousDiRegistrations++;
+                    RecordUnresolved("di", syntax, syntax.ToString(), "ambiguous-type-name");
                     Dbg.Log($"di: '{shortName}' is ambiguous across namespaces; registration skipped");
                     return null;
                 }

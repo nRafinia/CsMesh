@@ -150,6 +150,30 @@ public sealed class GraphFixture : IDisposable
          }
          """),
 
+        ("Tests.cs",
+         """
+         using Shared;
+         using Infrastructure;
+
+         namespace Suite
+         {
+             public sealed class FactAttribute : System.Attribute { }
+
+             public sealed class OrderStoreTests
+             {
+                 [Fact]
+                 public void Save_returns_the_id()
+                 {
+                     var store = new SqlOrderStore();
+                     store.Save(1);
+                 }
+
+                 // No attribute; it must still count as test code because the class does.
+                 public void Helper() { new FakeOrderStore().Save(2); }
+             }
+         }
+         """),
+
         ("Loop.cs",
          """
          namespace Loop
