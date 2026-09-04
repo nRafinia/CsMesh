@@ -32,12 +32,17 @@ public static class QueryCommand
         Telemetry.Telemetry.Current.Edges = graph.Edges.Count;
         Dbg.Log($"index built {graph.BuiltAt:u} commit={graph.BuiltFromCommit} dirty={dirty.Count}");
 
+        // Narrowing by subtree is what saves the budget on a large solution: an agent working in
+        // one project should not pay for the other seven.
+        var under = opt.Value("under");
+
         var depth = opt.Int("depth", kind switch
         {
             "blast" => 3,
             "context" => 3,
             "path" => 12,
             "diff" => 3,
+            "silence" => 12,
             _ => 6
         });
 
@@ -52,11 +57,52 @@ public static class QueryCommand
 
         if (kind == "entrypoints")
         {
-            exitCode = Queries.Entrypoints(graph, opt.Positional.FirstOrDefault(), writer, dirtySet);
+            exitCode = Queries.Entrypoints(graph, opt.Positional.FirstOrDefault(), under, writer, dirtySet);
+        }
+        else if (kind == "map")
+        {
+            exitCode = Queries.Map(graph, under, writer, dirtySet);
+        }
+        else if (kind == "silence")
+        {
+            if (opt.Positional.Count == 0)
+            {
+                var message = "usage: csmesh silence <symbol> [<target>]";
+                if (json) return EmitJson(result, writer, Exit.Usage, message);
+                Console.Error.WriteLine(message);
+                return Exit.Usage;
+            }
+
+            var origin = Single(graph, opt.Positional[0], writer, result, json, dirtySet, out var originExit);
+            if (origin == null) return originExit;
+
+            Models.Node? destination = null;
+            if (opt.Positional.Count > 1)
+            {
+                destination = Single(graph, opt.Positional[1], writer, result, json, dirtySet, out var destinationExit);
+                if (destination == null) return destinationExit;
+                result.Query = $"{opt.Positional[0]} -> {opt.Positional[1]}";
+            }
+
+            exitCode = Queries.Silence(graph, origin, destination, depth, writer, dirtySet);
+        }
+        else if (kind == "changes")
+        {
+            var previous = GraphStore.LoadPrevious(root);
+            if (previous == null)
+            {
+                var message = "no previous index to compare against. Run 'csmesh index' twice, "
+                              + "with your change in between.";
+                if (json) return EmitJson(result, writer, Exit.NoIndex, message);
+                Console.Error.WriteLine(message);
+                return Exit.NoIndex;
+            }
+
+            exitCode = Queries.Changes(graph, previous, opt.Flag("calls"), writer, dirtySet);
         }
         else if (kind == "unresolved")
         {
-            exitCode = Queries.Unresolved(graph, opt.Value("kind"), writer, dirtySet);
+            exitCode = Queries.Unresolved(graph, opt.Value("kind"), under, writer, dirtySet);
         }
         else if (kind == "diff")
         {
@@ -70,8 +116,10 @@ public static class QueryCommand
         }
         else if (kind == "cycles")
         {
-            var scope = opt.Flag("namespace") ? "namespace" : "type";
-            exitCode = Queries.Cycles(graph, scope, writer, dirtySet);
+            var scope = opt.Flag("project") ? "project"
+                : opt.Flag("namespace") ? "namespace"
+                : "type";
+            exitCode = Queries.Cycles(graph, scope, under, writer, dirtySet);
         }
         else if (kind == "path")
         {
@@ -117,7 +165,9 @@ public static class QueryCommand
             var node = wanted[0];
             exitCode = kind switch
             {
-                "trace" => Queries.Trace(graph, node, depth, writer, dirtySet),
+                // The suggestion on overflow is a command the caller can paste, not advice.
+                "trace" => Queries.Trace(graph, node, depth, writer, dirtySet,
+                                         $"csmesh trace {query} --budget {budget}"),
                 "impl" => Queries.Impl(graph, node, writer, dirtySet),
                 "blast" => Queries.BlastRadius(graph, node, depth, writer, dirtySet),
                 "context" => Queries.Context(graph, node, depth, writer, dirtySet),
@@ -141,7 +191,10 @@ public static class QueryCommand
         "context" => 800,
         "cycles" => 800,
         "unresolved" => 600,
+        "changes" => 800,
         "diff" => 800,
+        "silence" => 700,
+        "map" => 700,
         "path" => 400,
         _ => 600
     };
@@ -185,9 +238,44 @@ public static class QueryCommand
         bool json,
         HashSet<string> dirty)
     {
-        writer.Force($"not found: {query}");
-
         var leaf = query.Split('.').Last();
+
+        // Before claiming the symbol does not exist, check whether it exists somewhere this
+        // indexer does not read. "not found" and "not declared here" are different answers, and
+        // only one of them means the caller mistyped something.
+        var external = graph.ExternalTypes
+            .FirstOrDefault(x => string.Equals(x.Name, leaf, StringComparison.OrdinalIgnoreCase));
+
+        if (external != null)
+        {
+            writer.Force($"{external.Name} is not declared in this repository.");
+            writer.Force($"It comes from {external.Assembly}; csmesh indexes source, not assemblies.");
+
+            if (external.Sites.Count > 0)
+            {
+                writer.Force($"used at {external.Sites.Count} site(s):");
+                foreach (var site in external.Sites)
+                {
+                    writer.Add($"  {site}");
+                    result.Rows.Add(new QueryRow
+                    {
+                        Symbol = external.Name,
+                        Kind = "external",
+                        Relation = "usage",
+                        Note = external.Assembly,
+                        File = site.Split(':').First(),
+                        Line = int.TryParse(site.Split(':').Last(), out var n) ? n : 0
+                    });
+                }
+            }
+
+            if (json) return EmitJson(result, writer, Exit.NotFound, null, keepRows: true);
+
+            writer.Flush();
+            return Exit.NotFound;
+        }
+
+        writer.Force($"not found: {query}");
         var near = graph.Nodes
             .Where(n => n.Short.Contains(leaf, StringComparison.OrdinalIgnoreCase))
             .Take(5)

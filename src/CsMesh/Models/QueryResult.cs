@@ -36,6 +36,12 @@ public sealed class QueryRow
     /// <summary>What produced the edge, when it was not a plain compiler symbol lookup.</summary>
     public string? Source { get; set; }
 
+    /// <summary>Where the edge was declared, as file:line. Null for definition-only rows.</summary>
+    public string? Site { get; set; }
+
+    /// <summary>Owning project, without extension.</summary>
+    public string? Project { get; set; }
+
     public List<string>? Tags { get; set; }
 }
 

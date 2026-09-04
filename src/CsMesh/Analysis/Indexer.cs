@@ -98,12 +98,57 @@ public static class Indexer
         builder.Pass2_Bodies(progress);
         builder.Pass3_Indirection(progress);
 
+        AssignProjects(graph);
+
         graph.UnresolvedCallSites = builder.UnresolvedCallSites;
         graph.TotalCallSites = builder.TotalCallSites;
         graph.AmbiguousDiRegistrations = builder.AmbiguousDiRegistrations;
         graph.AmbiguousMessageDispatches = builder.AmbiguousMessageDispatches;
         graph.UnmatchedMessageDispatches = builder.UnmatchedMessageDispatches;
         return graph;
+    }
+
+    /// <summary>
+    /// Stamps each node with the nearest .csproj above its source file. Resolved once per
+    /// directory rather than once per node; a large solution has thousands of nodes and dozens of
+    /// directories.
+    /// </summary>
+    private static void AssignProjects(Graph graph)
+    {
+        var byDirectory = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var node in graph.Nodes)
+        {
+            if (node.File.Length == 0) continue;
+
+            var relative = Path.GetDirectoryName(node.File) ?? "";
+            if (byDirectory.TryGetValue(relative, out var cached))
+            {
+                node.Project = cached;
+                continue;
+            }
+
+            var project = "";
+            var dir = new DirectoryInfo(Path.Combine(graph.Root, relative));
+            var stop = Path.GetFullPath(graph.Root);
+
+            while (dir != null && dir.FullName.StartsWith(stop, StringComparison.OrdinalIgnoreCase))
+            {
+                FileInfo? found = null;
+                try { found = dir.EnumerateFiles("*.csproj").FirstOrDefault(); } catch { }
+
+                if (found != null)
+                {
+                    project = Path.GetFileNameWithoutExtension(found.Name);
+                    break;
+                }
+
+                dir = dir.Parent;
+            }
+
+            byDirectory[relative] = project;
+            node.Project = project;
+        }
     }
 
     private static List<MetadataReference> ReferenceSet(string root)
@@ -140,6 +185,12 @@ public static class Indexer
     private sealed class Builder(Graph g, CSharpCompilation comp)
     {
         private static readonly SymbolDisplayFormat KeyFormat = SymbolDisplayFormat.FullyQualifiedFormat;
+
+        /// <summary>
+        /// A scan says a family is wired, not which pair. Below <see cref="Edge.TrustThreshold"/>
+        /// so it is reported as inferred and never ranks above an explicit AddScoped.
+        /// </summary>
+        private const double ScanConfidence = 0.75;
 
         private static readonly string[] TestAttributes =
         {
@@ -183,6 +234,7 @@ public static class Indexer
         private static readonly Dictionary<string, int> UnresolvedCaps = new(StringComparer.Ordinal)
         {
             ["call"] = 250,
+            ["type"] = 100,
             ["di"] = 75,
             ["mediatr"] = 75
         };
@@ -274,10 +326,28 @@ public static class Indexer
             return container + "::" + self + "|" + s.Kind;
         }
 
+        /// <summary>
+        /// Nullable annotations are kept: whether a property is Guid or Guid? is usually the exact
+        /// thing the caller opened the file to find out.
+        /// </summary>
+        private static readonly SymbolDisplayFormat SignatureFormat = SymbolDisplayFormat
+            .MinimallyQualifiedFormat
+            .AddMiscellaneousOptions(SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
+        private static string Display(ITypeSymbol? t) => t?.ToDisplayString(SignatureFormat) ?? "";
+
+        private static string SignatureOf(IMethodSymbol? m)
+        {
+            if (m == null) return "";
+
+            var parameters = string.Join(", ", m.Parameters.Select(p => $"{Display(p.Type)} {p.Name}"));
+            return $"({parameters}) : {Display(m.ReturnType)}";
+        }
+
         private static string FullName(ISymbol s)
         {
             if (s is INamedTypeSymbol) return s.ToDisplayString();
-            if (s is IMethodSymbol or IPropertySymbol)
+            if (s is IMethodSymbol or IPropertySymbol or IFieldSymbol)
                 return $"{s.ContainingType?.ToDisplayString() ?? "?"}.{s.Name}";
             return s.ToDisplayString();
         }
@@ -285,10 +355,87 @@ public static class Indexer
         private static string ShortName(ISymbol s)
         {
             if (s is INamedTypeSymbol t) return t.Name;
-            if (s is IMethodSymbol or IPropertySymbol)
+            if (s is IMethodSymbol or IPropertySymbol or IFieldSymbol)
                 return $"{s.ContainingType?.Name ?? "?"}.{s.Name}";
             return s.Name;
         }
+
+        /// <summary>
+        /// Types the code uses that are not declared here.
+        ///
+        /// "not found: PrivateKeyFile" is a false statement when the codebase constructs one on
+        /// three lines. The symbol exists; its declaration is in a package. Saying so, with the
+        /// call sites, is the difference between a typo and a boundary -- and only one of those is
+        /// something the caller can fix.
+        ///
+        /// Framework assemblies are excluded: nobody runs 'csmesh trace string'.
+        /// </summary>
+        /// <summary>
+        /// Walks a type and its generic arguments, recording any part that is declared elsewhere.
+        /// A dependency named only as a parameter type is still a dependency the caller will ask
+        /// about; List&lt;PrivateKeyFile&gt; must not hide it.
+        /// </summary>
+        private void RecordExternalIn(ITypeSymbol? type, SyntaxNode at, int depth = 0)
+        {
+            if (type == null || depth > 2) return;
+
+            if (type is IArrayTypeSymbol array)
+            {
+                RecordExternalIn(array.ElementType, at, depth + 1);
+                return;
+            }
+
+            if (type is not INamedTypeSymbol named) return;
+
+            if (!named.Locations.Any(l => l.IsInSource))
+            {
+                // An error type is a type the compiler could not bind. Reporting it as a package
+                // dependency would be a guess dressed as a fact; it is an indexing failure and
+                // belongs with the other ones.
+                if (named.TypeKind == TypeKind.Error)
+                {
+                    RecordUnresolved("type", at, named.Name, "unbound-type");
+                }
+                else
+                {
+                    RecordExternal(named, at);
+                }
+            }
+
+            foreach (var argument in named.TypeArguments) RecordExternalIn(argument, at, depth + 1);
+        }
+
+        private void RecordExternal(INamedTypeSymbol type, SyntaxNode at)
+        {
+            // string, int, object: never what someone is looking for.
+            if (type.SpecialType != SpecialType.None) return;
+
+            var assembly = type.ContainingAssembly?.Name ?? "";
+            if (assembly.Length == 0) return;
+            if (assembly == comp.AssemblyName) return;
+            if (FrameworkAssemblyPrefixes.Any(p => assembly.StartsWith(p, StringComparison.Ordinal))) return;
+
+            var name = type.OriginalDefinition.Name;
+            if (name.Length == 0) return;
+
+            var existing = g.ExternalTypes.FirstOrDefault(x => x.Name == name);
+            if (existing == null)
+            {
+                if (g.ExternalTypes.Count >= 150) return;
+                existing = new ExternalType { Name = name, Assembly = assembly };
+                g.ExternalTypes.Add(existing);
+            }
+
+            if (existing.Sites.Count >= 6) return;
+
+            var site = SiteOf(at);
+            if (!existing.Sites.Contains(site, StringComparer.Ordinal)) existing.Sites.Add(site);
+        }
+
+        private static readonly string[] FrameworkAssemblyPrefixes =
+        {
+            "System", "Microsoft", "netstandard", "mscorlib", "WindowsBase", "PresentationCore"
+        };
 
         /// <summary>
         /// Records where an edge was wanted and not made. Silence is the failure mode this exists
@@ -315,7 +462,7 @@ public static class Indexer
         }
 
         private void Link(int from, int to, EdgeKind kind, string? note = null,
-                          double confidence = 1.0, string? source = null)
+                          double confidence = 1.0, string? source = null, SyntaxNode? at = null)
         {
             if (from == to) return;
             if (!_dedupe.Add((from, to, kind))) return;
@@ -327,8 +474,19 @@ public static class Indexer
                 Note = note,
                 // Left null at full confidence so the on-disk graph does not grow a field per edge.
                 Confidence = confidence >= 1.0 ? null : confidence,
-                Source = source
+                Source = source,
+                Site = at == null ? null : SiteOf(at)
             });
+        }
+
+        /// <summary>Where an edge was declared, as a repo-relative file:line.</summary>
+        private string SiteOf(SyntaxNode at)
+        {
+            var file = at.SyntaxTree.FilePath.Length > 0
+                ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
+                : "";
+
+            return $"{file}:{at.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
         }
 
         // ---------------------------------------------------------------- pass 1
@@ -340,6 +498,37 @@ public static class Indexer
             foreach (var tree in comp.SyntaxTrees)
             {
                 var model = comp.GetSemanticModel(tree);
+
+                // Enums and delegates derive from BaseTypeDeclarationSyntax / MemberDeclarationSyntax,
+                // not from TypeDeclarationSyntax, so a loop over TypeDeclarationSyntax alone leaves
+                // them out of the graph entirely. In C# an enum is where behaviour is decided --
+                // a switch over OrderStatus is the branch point of a feature -- and "what breaks if
+                // I add a member" is unanswerable for a symbol that does not exist.
+                foreach (var enumDecl in tree.GetRoot().DescendantNodes().OfType<EnumDeclarationSyntax>())
+                {
+                    if (model.GetDeclaredSymbol(enumDecl) is not INamedTypeSymbol enumType) continue;
+
+                    var enumId = NodeFor(enumType, "enum", enumDecl.GetLocation());
+                    var enumNode = g.ById(enumId)!;
+                    enumNode.Signature = $"enum : {enumType.EnumUnderlyingType?.Name ?? "int"}";
+
+                    foreach (var member in enumDecl.Members)
+                    {
+                        if (model.GetDeclaredSymbol(member) is not IFieldSymbol field) continue;
+
+                        var memberId = NodeFor(field, "enum-member", member.GetLocation());
+                        g.ById(memberId)!.Signature = field.ConstantValue?.ToString() ?? "";
+                        Link(enumId, memberId, EdgeKind.TypeUse, "member");
+                    }
+                }
+
+                foreach (var delegateDecl in tree.GetRoot().DescendantNodes().OfType<DelegateDeclarationSyntax>())
+                {
+                    if (model.GetDeclaredSymbol(delegateDecl) is not INamedTypeSymbol del) continue;
+
+                    var delegateId = NodeFor(del, "delegate", delegateDecl.GetLocation());
+                    g.ById(delegateId)!.Signature = SignatureOf(del.DelegateInvokeMethod);
+                }
 
                 foreach (var typeDecl in tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
                 {
@@ -354,6 +543,19 @@ public static class Indexer
                     RegisterBaseTypes(type, typeId);
                     _pendingHandlers.Add((type, typeDecl, typeId));
 
+                    // Primary constructor parameters are declared on the type, not in a member.
+                    if (typeDecl.ParameterList != null)
+                    {
+                        foreach (var parameter in typeDecl.ParameterList.Parameters)
+                        {
+                            if (parameter.Type != null &&
+                                model.GetSymbolInfo(parameter.Type).Symbol is ITypeSymbol pt)
+                            {
+                                RecordExternalIn(pt, parameter.Type);
+                            }
+                        }
+                    }
+
                     foreach (var member in typeDecl.Members)
                     {
                         switch (member)
@@ -363,6 +565,9 @@ public static class Indexer
                                 var mId = NodeFor(ms, "method", md.GetLocation());
                                 Link(typeId, mId, EdgeKind.TypeUse, "member");
                                 var mNode = g.ById(mId)!;
+                                mNode.Signature = SignatureOf(ms);
+                                RecordExternalIn(ms.ReturnType, md.ReturnType);
+                                foreach (var parameter in ms.Parameters) RecordExternalIn(parameter.Type, md);
                                 foreach (var t in MethodTags(md)) AddTag(mNode, t);
                                 if (typeNode.Tags.Contains("controller")) AddTag(mNode, "action");
                                 if (mNode.Tags.Contains("test")) AddTag(typeNode, "test");
@@ -370,10 +575,31 @@ public static class Indexer
                             }
                             case ConstructorDeclarationSyntax cd when model.GetDeclaredSymbol(cd) is { } cs:
                                 Link(typeId, NodeFor(cs, "method", cd.GetLocation()), EdgeKind.TypeUse, "ctor");
+                                foreach (var parameter in cs.Parameters) RecordExternalIn(parameter.Type, cd);
                                 break;
                             case PropertyDeclarationSyntax pd when model.GetDeclaredSymbol(pd) is { } ps:
-                                Link(typeId, NodeFor(ps, "property", pd.GetLocation()), EdgeKind.TypeUse, "member");
+                            {
+                                var pId = NodeFor(ps, "property", pd.GetLocation());
+                                Link(typeId, pId, EdgeKind.TypeUse, "member");
+                                g.ById(pId)!.Signature = Display(ps.Type);
+                                RecordExternalIn(ps.Type, pd.Type);
                                 break;
+                            }
+                            // Entities and records often carry plain fields. Without them a caller
+                            // asking what a type holds gets half the answer.
+                            case FieldDeclarationSyntax fd:
+                            {
+                                foreach (var variable in fd.Declaration.Variables)
+                                {
+                                    if (model.GetDeclaredSymbol(variable) is not IFieldSymbol fs) continue;
+                                    var fId = NodeFor(fs, "field", variable.GetLocation());
+                                    Link(typeId, fId, EdgeKind.TypeUse, "member");
+                                    g.ById(fId)!.Signature = Display(fs.Type);
+                                    RecordExternalIn(fs.Type, fd.Declaration.Type);
+                                }
+
+                                break;
+                            }
                         }
                     }
                 }
@@ -729,13 +955,17 @@ public static class Indexer
                 if (target == null && info.CandidateSymbols.Length == 0)
                 {
                     UnresolvedCallSites++;
-                    RecordUnresolved("call", inv, inv.Expression.ToString(), "no-candidate-symbol");
+
+                    // The whole invocation, not just the callee. Arguments are where a
+                    // source-generated or otherwise unbound symbol usually appears, and the point
+                    // of recording a failure is to be able to find what it was about.
+                    RecordUnresolved("call", inv, inv.ToString(), "no-candidate-symbol");
                 }
                 else if (info.Symbol == null && info.CandidateSymbols.Length > 1)
                 {
                     // An edge is still drawn, to the first candidate. That is a coin toss between
                     // overloads, so say where it happened rather than let it pass as a fact.
-                    RecordUnresolved("call", inv, inv.Expression.ToString(), "ambiguous-overload");
+                    RecordUnresolved("call", inv, inv.ToString(), "ambiguous-overload");
                 }
 
                 if (target != null && target.Locations.Any(l => l.IsInSource))
@@ -745,13 +975,25 @@ public static class Indexer
 
                 TryMediator(inv, model, owner);
                 TryDiRegistration(inv, model);
+                TryConventionRegistration(inv, model);
             }
 
             foreach (var ma in body.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
             {
-                if (model.GetSymbolInfo(ma).Symbol is IPropertySymbol prop && prop.Locations.Any(l => l.IsInSource))
+                var symbol = model.GetSymbolInfo(ma).Symbol;
+
+                if (symbol is IPropertySymbol prop && prop.Locations.Any(l => l.IsInSource))
                 {
                     Link(OwnerOf(ma), NodeFor(prop.OriginalDefinition, "property"), EdgeKind.Call, "prop");
+                    continue;
+                }
+
+                // OrderStatus.Cancelled read in a switch arm. This is the edge that answers
+                // "if I add a member to this enum, which switches do I have to revisit".
+                if (symbol is IFieldSymbol field && field.Locations.Any(l => l.IsInSource))
+                {
+                    var kind = field.ContainingType?.TypeKind == TypeKind.Enum ? "enum-member" : "field";
+                    Link(OwnerOf(ma), NodeFor(field.OriginalDefinition, kind), EdgeKind.Call, kind);
                 }
             }
 
@@ -767,10 +1009,24 @@ public static class Indexer
 
             foreach (var oc in body.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
             {
-                if (model.GetSymbolInfo(oc.Type).Symbol is INamedTypeSymbol t && t.Locations.Any(l => l.IsInSource))
+                if (model.GetSymbolInfo(oc.Type).Symbol is not INamedTypeSymbol t) continue;
+
+                if (t.Locations.Any(l => l.IsInSource))
                 {
                     var kind = t.TypeKind == TypeKind.Interface ? "interface" : "type";
                     Link(OwnerOf(oc), NodeFor(t.OriginalDefinition, kind), EdgeKind.Construct);
+                    continue;
+                }
+
+                RecordExternal(t, oc.Type);
+            }
+
+            foreach (var declaration in body.DescendantNodes().OfType<VariableDeclarationSyntax>())
+            {
+                if (model.GetSymbolInfo(declaration.Type).Symbol is INamedTypeSymbol vt &&
+                    !vt.Locations.Any(l => l.IsInSource))
+                {
+                    RecordExternal(vt, declaration.Type);
                 }
             }
         }
@@ -922,7 +1178,7 @@ public static class Indexer
             {
                 foreach (var handlerId in handlers)
                 {
-                    Link(fromId, handlerId, EdgeKind.Mediatr, $"via {name}({display})", confidence, source);
+                    Link(fromId, handlerId, EdgeKind.Mediatr, $"via {name}({display})", confidence, source, inv);
                 }
             }
         }
@@ -1032,7 +1288,7 @@ public static class Indexer
                 if (service == impl) return;
 
                 var note = key == null ? lifetime : $"{lifetime} keyed:{key}";
-                Link(service, impl, EdgeKind.DiBinding, note, confidence, source);
+                Link(service, impl, EdgeKind.DiBinding, note, confidence, source, inv);
 
                 // Only a confident binding is allowed to rank an implementation first in 'impl'
                 // and in a trace; a name-matched guess should not outrank the real registration.
@@ -1098,6 +1354,154 @@ public static class Indexer
             }
 
             return match == null ? null : (match.Id, false);
+        }
+
+        /// <summary>
+        /// Registration by convention rather than by name.
+        ///
+        /// Scrutor's Scan, MediatR's assembly registration, FluentValidation and AutoMapper all
+        /// bind whole families of types with a single call that names none of them. On a Clean
+        /// Architecture solution this is not an edge case -- it is how the container is wired, and
+        /// an indexer that only reads AddScoped&lt;A, B&gt;() reports "no DI bindings resolved" for
+        /// the entire codebase. That reads as a project with no dependency injection rather than
+        /// one this tool could not follow, which is the worse of the two failures.
+        ///
+        /// These bindings are recorded at reduced confidence on purpose: the assembly filter, the
+        /// lifetime and the exclusion rules are evaluated at startup, not here. What is asserted is
+        /// "this interface is wired to its implementations by a scan", not "this exact pair was
+        /// registered".
+        /// </summary>
+        private void TryConventionRegistration(InvocationExpressionSyntax inv, SemanticModel model)
+        {
+            if (inv.Expression is not MemberAccessExpressionSyntax ma) return;
+            if (ma.Name is not SimpleNameSyntax simple) return;
+
+            var name = simple.Identifier.Text;
+
+            if (name == "Scan")
+            {
+                RegisterScrutorScan(inv, model);
+                return;
+            }
+
+            if (name.StartsWith("AddValidatorsFrom", StringComparison.Ordinal))
+            {
+                Note(name, inv);
+                BindFamily(["AbstractValidator", "IValidator"], "transient", inv);
+                return;
+            }
+
+            if (name == "AddAutoMapper")
+            {
+                Note(name, inv);
+                BindFamily(["Profile"], "singleton", inv);
+                return;
+            }
+
+            if (name is "AddMediatR" or "AddMassTransit" or "AddRebus")
+            {
+                // No binding to add: dispatch is resolved from request types, not from the
+                // container. Recorded only so doctor can say the container is wired by scanning.
+                Note(name, inv);
+            }
+        }
+
+        private void Note(string helper, SyntaxNode at)
+        {
+            var entry = $"{helper} @ {SiteOf(at)}";
+            if (!g.ScanRegistrations.Contains(entry, StringComparer.Ordinal))
+                g.ScanRegistrations.Add(entry);
+        }
+
+        /// <summary>
+        /// services.Scan(s =&gt; s.FromAssemblyOf&lt;T&gt;().AddClasses(c =&gt; c.AssignableTo&lt;IFoo&gt;())
+        ///                     .AsImplementedInterfaces().WithScopedLifetime())
+        ///
+        /// The lambda is a fluent chain, so the parts are read out of it independently rather than
+        /// matched as a shape: builders vary, and a chain that does not match a template exactly
+        /// should still contribute what it does say.
+        /// </summary>
+        private void RegisterScrutorScan(InvocationExpressionSyntax inv, SemanticModel model)
+        {
+            Note("Scan", inv);
+
+            var lifetime = "scoped";
+            var filters = new List<TypeSyntax>();
+
+            foreach (var call in inv.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                if (call.Expression is not MemberAccessExpressionSyntax inner) continue;
+
+                var member = inner.Name;
+                var memberName = member is GenericNameSyntax gn ? gn.Identifier.Text
+                    : (member as SimpleNameSyntax)?.Identifier.Text;
+
+                switch (memberName)
+                {
+                    case "WithSingletonLifetime": lifetime = "singleton"; break;
+                    case "WithTransientLifetime": lifetime = "transient"; break;
+                    case "WithScopedLifetime": lifetime = "scoped"; break;
+                    case "AssignableTo" when member is GenericNameSyntax g1:
+                        filters.AddRange(g1.TypeArgumentList.Arguments);
+                        break;
+                    case "AssignableTo":
+                        filters.AddRange(call.ArgumentList.Arguments
+                            .Select(a => a.Expression).OfType<TypeOfExpressionSyntax>().Select(t => t.Type));
+                        break;
+                }
+            }
+
+            if (filters.Count == 0)
+            {
+                // AsImplementedInterfaces() over a whole assembly with no AssignableTo filter binds
+                // everything to everything. Guessing here would be worse than admitting the gap.
+                RecordUnresolved("di", inv, inv.Expression.ToString(), "assembly-scan-unfiltered");
+                return;
+            }
+
+            foreach (var filter in filters)
+            {
+                if (ResolveTypeNode(filter, model) is not { } resolved) continue;
+                BindImplementors(resolved.Id, lifetime, inv, "assembly-scan");
+            }
+        }
+
+        /// <summary>
+        /// Binds every implementor of any base type whose simple name matches one of the given
+        /// prefixes. Used for helpers that register a family identified by a well-known base type
+        /// rather than by a type argument.
+        /// </summary>
+        private void BindFamily(string[] baseNames, string lifetime, SyntaxNode at)
+        {
+            foreach (var baseId in _implementorsByBase.Keys.ToList())
+            {
+                var node = g.ById(baseId);
+                if (node == null) continue;
+
+                var simple = node.Short.Split('<')[0];
+                if (!baseNames.Contains(simple, StringComparer.Ordinal)) continue;
+
+                BindImplementors(baseId, lifetime, at, "assembly-scan");
+            }
+        }
+
+        private void BindImplementors(int baseId, string lifetime, SyntaxNode at, string source)
+        {
+            if (!_implementorsByBase.TryGetValue(baseId, out var implementors)) return;
+
+            foreach (var implId in implementors)
+            {
+                var impl = g.ById(implId);
+                if (impl == null || impl.Kind == "interface") continue;
+                if (impl.Tags.Contains("abstract")) continue;
+
+                AddTag(impl, "di:" + lifetime);
+
+                // A scan does not name a pair, so it must not outrank an explicit registration.
+                // ScanConfidence sits below TrustThreshold on purpose: _diBoundPairs stays reserved
+                // for bindings the compiler confirmed.
+                Link(baseId, implId, EdgeKind.DiBinding, lifetime, ScanConfidence, source, at);
+            }
         }
 
         // ---------------------------------------------------------------- pass 3

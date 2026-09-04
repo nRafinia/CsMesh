@@ -11,17 +11,23 @@ public static partial class Queries
     /// is ordinary recursion; a cycle between two classes, or two namespaces, is a design problem,
     /// which is why nothing below type level is reported.
     /// </summary>
-    public static int Cycles(Graph g, string scope, BudgetWriter w, HashSet<string> dirty)
+    public static int Cycles(Graph g, string scope, string? under, BudgetWriter w, HashSet<string> dirty)
     {
         var groupOf = new Dictionary<int, string>();
         var sample = new Dictionary<string, Node>(StringComparer.Ordinal);
 
         foreach (var node in g.Nodes)
         {
+            if (!Under(node, under)) continue;
             var owner = OwnerType(g, node);
             if (owner == null) continue;
 
-            var group = scope == "namespace" ? Namespace(owner) : owner.Short;
+            var group = scope switch
+            {
+                "namespace" => Namespace(owner),
+                "project" => owner.Project,
+                _ => owner.Short
+            };
             if (group.Length == 0) continue;
 
             groupOf[node.Id] = group;

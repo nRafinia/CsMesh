@@ -122,7 +122,7 @@ public sealed class ChangeIntelligenceTests : IClassFixture<GraphFixture>
     public void Unresolved_reports_cleanly_when_the_kind_has_no_sites()
     {
         var w = Writer();
-        var exit = Queries.Unresolved(_f.Graph, "nonsense-kind", w, []);
+        var exit = Queries.Unresolved(_f.Graph, "nonsense-kind", null, w, []);
 
         Assert.True(exit is Exit.NotFound or Exit.Ok);
         Assert.DoesNotContain("Unhandled", Text(w));
@@ -132,7 +132,7 @@ public sealed class ChangeIntelligenceTests : IClassFixture<GraphFixture>
     public void Unresolved_groups_by_kind_and_reason()
     {
         var w = Writer();
-        var exit = Queries.Unresolved(_f.Graph, null, w, []);
+        var exit = Queries.Unresolved(_f.Graph, null, null, w, []);
 
         Assert.Equal(Exit.Ok, exit);
 

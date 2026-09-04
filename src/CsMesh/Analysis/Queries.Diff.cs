@@ -236,7 +236,7 @@ public static partial class Queries
         var reached = new List<Reach>();
         var frontier = new List<Reach> { new(target, 0, 1.0, null) };
 
-        if (target.Kind is "type" or "interface")
+        if (target.Kind is "type" or "interface" or "enum")
         {
             foreach (var e in g.Out(target.Id).Where(x => x.Kind == EdgeKind.TypeUse))
             {

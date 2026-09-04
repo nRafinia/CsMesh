@@ -13,7 +13,7 @@ public sealed class Graph
     /// A graph written by an older version is rejected on load so the user is told to re-index
     /// instead of silently querying a graph built with different rules.
     /// </summary>
-    public const int CurrentFormatVersion = 4;
+    public const int CurrentFormatVersion = 6;
 
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }
@@ -60,6 +60,20 @@ public sealed class Graph
     /// Capped during indexing -- this is a sample to act on, not an exhaustive log.
     /// </summary>
     public List<UnresolvedSite> Unresolved { get; set; } = [];
+
+    /// <summary>
+    /// Registration helpers that bind by convention rather than by name: Scrutor's Scan, MediatR's
+    /// assembly registration, FluentValidation, AutoMapper. Recorded so 'doctor' can say the
+    /// container is wired by scanning instead of reporting no bindings at all, which reads as a
+    /// codebase with no DI rather than one the indexer could not follow.
+    /// </summary>
+    public List<string> ScanRegistrations { get; set; } = [];
+
+    /// <summary>
+    /// Types used here but declared in a referenced assembly. Kept so a lookup that finds nothing
+    /// can say why rather than reporting the symbol as absent.
+    /// </summary>
+    public List<ExternalType> ExternalTypes { get; set; } = [];
 
     public List<Node> Nodes { get; set; } = [];
     public List<Edge> Edges { get; set; } = [];

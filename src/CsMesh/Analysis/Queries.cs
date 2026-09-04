@@ -67,6 +67,7 @@ public static partial class Queries
         File = n.File.Length > 0 ? n.File : null,
         Line = n.Line,
         Stale = IsStale(n, dirty),
+        Project = n.Project.Length > 0 ? n.Project : null,
         Tags = n.Tags.Count > 0 ? n.Tags : null
     };
 
@@ -75,6 +76,7 @@ public static partial class Queries
         var row = Row(n, depth, Relation(e.Kind), e.Note, dirty);
         row.Confidence = e.Confidence;
         row.Source = e.Source;
+        row.Site = e.Site;
         return row;
     }
 
@@ -87,7 +89,8 @@ public static partial class Queries
     /// <summary>
     /// Performs a forward call-graph walk tracing outbound invocations and indirection.
     /// </summary>
-    public static int Trace(Graph g, Node start, int depth, BudgetWriter w, HashSet<string> dirty)
+    public static int Trace(Graph g, Node start, int depth, BudgetWriter w, HashSet<string> dirty,
+                            string? rerun = null)
     {
         // A node reached first at depth 5 must still be expanded when a shorter path reaches it,
         // otherwise whole branches of the tree silently disappear. onPath guards against cycles.
@@ -95,6 +98,11 @@ public static partial class Queries
         var onPath = new HashSet<int>();
         var truncatedAt = new List<string>();
         var emitted = 0;
+
+        // Cost per level, so an overflow can name a depth that fits instead of telling the caller
+        // to guess. An agent that has to try --depth 3, then --depth 2, has spent the round trips
+        // the budget was meant to save.
+        var costByLevel = new Dictionary<int, int>();
 
         w.Force($"{start.Short}{TagSuffix(start)}{Loc(start)}{StaleTag(start, dirty)}",
                 Row(start, 0, "root", null, dirty));
@@ -128,6 +136,7 @@ public static partial class Queries
                         return false;
                     }
 
+                    costByLevel[level + 1] = costByLevel.GetValueOrDefault(level + 1) + BudgetWriter.Estimate(line);
                     emitted++;
                     if (!Walk(to, level + 1, prefix + "  ")) return false;
                 }
@@ -146,13 +155,47 @@ public static partial class Queries
         {
             w.Force("");
             w.Force($"OVER BUDGET at {string.Join(", ", truncatedAt.Distinct().Take(3))}.");
-            w.Force("Narrow it: --depth 3, or trace one of the callees above directly.");
+
+            var fits = DepthThatFits(costByLevel, w.Budget);
+            if (fits > 0 && rerun != null)
+            {
+                w.Force($"depth {fits} fits. Re-run: {rerun} --depth {fits}");
+            }
+            else if (fits > 0)
+            {
+                w.Force($"depth {fits} fits within this budget.");
+            }
+            else
+            {
+                w.Force("Even depth 1 does not fit. Raise --budget, or trace a narrower symbol.");
+            }
+
             return Exit.OverBudget;
         }
 
         if (emitted == 0) w.Force("  (no outgoing calls resolved in source)");
 
         return Exit.Ok;
+    }
+
+    /// <summary>
+    /// The deepest level whose cumulative cost still fits the budget, leaving room for the header
+    /// and the closing lines. Zero when nothing fits.
+    /// </summary>
+    private static int DepthThatFits(Dictionary<int, int> costByLevel, int budget)
+    {
+        var allowance = (int)(budget * 0.85);
+        var running = 0;
+        var best = 0;
+
+        foreach (var level in costByLevel.Keys.Order())
+        {
+            running += costByLevel[level];
+            if (running > allowance) break;
+            best = level;
+        }
+
+        return best;
     }
 
     /// <summary>
@@ -197,7 +240,13 @@ public static partial class Queries
             row.Relation = e.Kind == EdgeKind.Override ? "override" : "impl";
             row.Note = e.Note ?? di;
 
-            if (!w.Add($"  {to.Short}{mark}{Loc(to)}{StaleTag(to, dirty)}", row))
+            // Two locations, and both are wanted: where the class lives, and where it was wired.
+            // Without the second, "now change the binding" starts with a grep.
+            var wiring = WiringSite(g, target.Id, to.Id);
+            row.Site = wiring;
+            var site = wiring != null ? $"  @ {wiring}" : "";
+
+            if (!w.Add($"  {to.Short}{mark}{Loc(to)}{site}{StaleTag(to, dirty)}", row))
             {
                 w.Force("");
                 w.Force($"OVER BUDGET: {impls.Count} implementations. Raise --budget or query a narrower type.");
@@ -223,7 +272,7 @@ public static partial class Queries
         var reached = new List<Reach>();
         var entrypoints = new List<Reach>();
 
-        if (target.Kind is "type" or "interface")
+        if (target.Kind is "type" or "interface" or "enum")
         {
             foreach (var e in g.Out(target.Id).Where(x => x.Kind == EdgeKind.TypeUse))
             {
@@ -261,6 +310,20 @@ public static partial class Queries
 
         w.Force($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}", Row(target, 0, "root", null, dirty));
         w.Force($"reached by {reached.Count} member(s), {entrypoints.Count} entrypoint(s), {tests.Count} test(s)");
+
+        // How far the change spreads across assemblies says more about its size than forty type
+        // names do, and costs one line.
+        var projects = reached
+            .Where(r => r.Node.Project.Length > 0)
+            .GroupBy(r => r.Node.Project, StringComparer.Ordinal)
+            .OrderByDescending(x => x.Count())
+            .ToList();
+
+        if (projects.Count > 1)
+        {
+            w.Force("across " + projects.Count + " project(s): " +
+                    string.Join("  ", projects.Take(6).Select(p => $"{p.Key} ({p.Count()})")));
+        }
 
         if (entrypoints.Count > 0)
         {
@@ -337,6 +400,12 @@ public static partial class Queries
 
     internal static bool IsTest(Node n) => n.Tags.Contains("test");
 
+    /// <summary>Where the container was told about this pair, if anywhere.</summary>
+    private static string? WiringSite(Graph g, int serviceId, int implementationId) =>
+        g.Out(serviceId)
+            .FirstOrDefault(e => e.Kind == EdgeKind.DiBinding && e.To == implementationId && e.Site != null)?
+            .Site;
+
     private static int Overflow(BudgetWriter w, int total)
     {
         w.Force("");
@@ -347,9 +416,10 @@ public static partial class Queries
     private static bool IsEntrypoint(Node n) =>
         n.Tags.Any(t => t.StartsWith("http:") || t is "handler" or "consumer" or "hosted" or "action");
 
-    public static int Entrypoints(Graph g, string? filter, BudgetWriter w, HashSet<string> dirty)
+    public static int Entrypoints(Graph g, string? filter, string? under, BudgetWriter w, HashSet<string> dirty)
     {
         var eps = g.Nodes.Where(IsEntrypoint)
+            .Where(n => Under(n, under))
             .Where(n => filter == null || n.Short.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
                         n.Tags.Any(t => t.Contains(filter, StringComparison.OrdinalIgnoreCase)))
             .ToList();

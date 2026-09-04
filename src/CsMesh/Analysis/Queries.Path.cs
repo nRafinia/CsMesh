@@ -57,8 +57,7 @@ public static partial class Queries
         if (landed == null)
         {
             w.Force($"no path: {from.Short} -> {to.Short} within depth {depth}.");
-            w.Force("The call may cross an unindexed boundary, or the direction may be reversed.");
-            w.Force($"Try: csmesh path {to.Short} {from.Short}, or raise --depth.");
+            w.Force($"For where the walk broke and why: csmesh silence {from.Short} {to.Short}");
             return Exit.NotFound;
         }
 

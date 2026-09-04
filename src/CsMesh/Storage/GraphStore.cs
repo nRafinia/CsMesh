@@ -13,11 +13,51 @@ public static class GraphStore
     public static string DirFor(string root) => Path.Combine(root, ".csmesh");
     public static string PathFor(string root) => Path.Combine(DirFor(root), "graph.json");
 
+    /// <summary>
+    /// The graph as it was before the current index. Kept so 'changes' can answer what the shape
+    /// of the codebase did, not just what its text did.
+    /// </summary>
+    public static string PreviousPathFor(string root) => Path.Combine(DirFor(root), "graph.prev.json");
+
     public static void Save(Graph g)
     {
         Directory.CreateDirectory(DirFor(g.Root));
-        using var stream = File.Create(PathFor(g.Root));
+
+        var current = PathFor(g.Root);
+        if (File.Exists(current))
+        {
+            try { File.Copy(current, PreviousPathFor(g.Root), overwrite: true); }
+            catch (Exception ex) { Dbg.Log($"could not keep previous graph: {ex.Message}"); }
+        }
+
+        using var stream = File.Create(current);
         JsonSerializer.Serialize(stream, g, AppJsonContext.Default.Graph);
+    }
+
+    /// <summary>
+    /// Loads the snapshot from before the last index, or null when there is none or it was written
+    /// by an incompatible version. Comparing across format versions would report every edge as
+    /// both added and removed.
+    /// </summary>
+    public static Graph? LoadPrevious(string root)
+    {
+        var path = PreviousPathFor(root);
+        if (!File.Exists(path)) return null;
+
+        try
+        {
+            using var stream = File.OpenRead(path);
+            var graph = JsonSerializer.Deserialize(stream, AppJsonContext.Default.Graph);
+            if (graph == null || graph.FormatVersion != Graph.CurrentFormatVersion) return null;
+
+            graph.Freeze();
+            return graph;
+        }
+        catch (Exception ex)
+        {
+            Dbg.Log($"previous graph load failed: {ex.Message}");
+            return null;
+        }
     }
 
     public static Graph? Load(string root) => Load(root, out _);
