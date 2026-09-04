@@ -15,6 +15,9 @@ public static class HelpCommand
             "impl" => ImplHelp,
             "blast-radius" or "blast" => BlastRadiusHelp,
             "entrypoints" => EntrypointsHelp,
+            "context" => ContextHelp,
+            "path" or "why" => PathHelp,
+            "cycles" => CyclesHelp,
             "usage" => UsageHelp,
             "doctor" => DoctorHelp,
             "skill" => SkillHelp,
@@ -38,6 +41,9 @@ public static class HelpCommand
             impl           Find implementations of an interface or base class, DI-bound first
             blast-radius   Discover callers and entrypoints affected by changing a symbol
             entrypoints    Find HTTP endpoints, message handlers, consumers, and jobs
+            context        Everything structural about one symbol, in a single call
+            path           Shortest route from one symbol to another (alias: why)
+            cycles         Circular dependencies between types or namespaces
             usage          Display local invocation metrics and caller attribution
             doctor         Diagnose index freshness, skill installation, and environment
             skill          Display skill markdown or install agent skill/rule files
@@ -47,7 +53,7 @@ public static class HelpCommand
         GLOBAL OPTIONS:
             --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
             --budget <N>       Maximum output tokens (trace 600, impl 300, blast-radius 800)
-            --depth <N>        Traversal depth limit (trace: 6, blast-radius: 3)
+            --depth <N>        Traversal depth limit (trace 6, blast-radius 3, context 3, path 12)
             --json             Output results as a structured JSON envelope
             --debug            Enable verbose diagnostics on stderr
             --no-telemetry     Do not record this invocation in usage telemetry
@@ -56,6 +62,11 @@ public static class HelpCommand
         EXIT CODES:
             0 ok   1 not-found   2 over-budget   3 ambiguous   4 no-index
             64 usage-error   70 internal-error
+
+        CONFIDENCE:
+            A row marked [... ?0.70 short-name-match] came from a name match, not a compiler
+            symbol. Treat anything below 0.80 as a lead to verify, not a fact. 'csmesh doctor'
+            reports how many such edges the graph holds.
 
         Run 'csmesh help <COMMAND>' or 'csmesh <COMMAND> --help' for command-specific options.
         """;
@@ -192,6 +203,85 @@ public static class HelpCommand
             csmesh entrypoints
             csmesh entrypoints payments
             csmesh entrypoints "POST /orders"
+        """;
+
+    public const string ContextHelp =
+        """
+        csmesh context - Everything structural about one symbol, in a single call
+
+        USAGE:
+            csmesh context <Type.Member> [OPTIONS]
+
+        ARGUMENTS:
+            <Type.Member>      Target symbol (e.g. PaymentService.Process)
+
+        OPTIONS:
+            --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
+            --depth <N>        Reverse traversal depth for impact and entrypoints (default: 3)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            Replaces chaining trace + impl + blast-radius + entrypoints when the question is
+            "what is this thing and what touches it". Sections are ordered by usefulness, so an
+            exhausted budget drops the tail rather than the answer.
+
+        EXAMPLES:
+            csmesh context PaymentService.Process --budget 800
+            csmesh context IPaymentGateway --depth 2
+        """;
+
+    public const string PathHelp =
+        """
+        csmesh path - Shortest route from one symbol to another
+
+        USAGE:
+            csmesh path <From> <To> [OPTIONS]
+            csmesh why <From> <To> [OPTIONS]
+
+        ARGUMENTS:
+            <From>             Where the request starts (e.g. PaymentController.Post)
+            <To>               Where you want to know it arrives (e.g. StripeGateway.Authorize)
+
+        OPTIONS:
+            --budget <N>       Maximum output tokens (default: 400, exits code 2 on overflow)
+            --depth <N>        Maximum hops to search (default: 12)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            Answers "why is this class involved in this request". Mediator dispatch, container
+            bindings and interface calls each count as one hop, so the path crosses them like any
+            other edge. Exits 1 when no route exists within the depth limit.
+
+        EXAMPLES:
+            csmesh path PaymentController.Post StripeGateway.Authorize
+            csmesh why OrderEndpoint OrderRepository --depth 6
+        """;
+
+    public const string CyclesHelp =
+        """
+        csmesh cycles - Circular dependencies between types or namespaces
+
+        USAGE:
+            csmesh cycles [OPTIONS]
+
+        OPTIONS:
+            --namespace        Collapse to namespace level instead of type level
+            --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            Recursion inside one type is not reported; only loops between types, or between
+            namespaces, which are design problems rather than control flow.
+
+        EXAMPLES:
+            csmesh cycles
+            csmesh cycles --namespace --budget 400
         """;
 
     public const string UsageHelp =

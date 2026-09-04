@@ -6,8 +6,21 @@ namespace CsMesh.Analysis;
 /// <summary>
 /// Graph query algorithms for execution tracing, implementation lookups, blast radius analysis, and entrypoint discovery.
 /// </summary>
-public static class Queries
+public static partial class Queries
 {
+    /// <summary>
+    /// Appends the confidence of an edge when it is not certain, so an agent can tell a compiler
+    /// fact from a name match without asking for JSON.
+    /// </summary>
+    private static string Marker(Edge e)
+    {
+        var text = Marker(e.Kind, e.Note);
+        if (e.Score >= 1.0) return text;
+
+        var suffix = $"?{e.Score:0.00}{(e.Source != null ? " " + e.Source : "")}";
+        return text.Length == 0 ? $"  [{suffix}]" : text[..^1] + " " + suffix + "]";
+    }
+
     private static string Marker(EdgeKind k, string? note) => k switch
     {
         EdgeKind.Mediatr => note != null ? $"  [mediatr {note}]" : "  [mediatr]",
@@ -57,6 +70,20 @@ public static class Queries
         Tags = n.Tags.Count > 0 ? n.Tags : null
     };
 
+    private static QueryRow Row(Node n, int depth, Edge e, HashSet<string> dirty)
+    {
+        var row = Row(n, depth, Relation(e.Kind), e.Note, dirty);
+        row.Confidence = e.Confidence;
+        row.Source = e.Source;
+        return row;
+    }
+
+    /// <summary>Edges that represent "what runs next" rather than structure or ownership.</summary>
+    private static bool IsFlow(Edge e) =>
+        e.Kind is EdgeKind.Call or EdgeKind.Mediatr or EdgeKind.Interface
+                or EdgeKind.Override or EdgeKind.Construct or EdgeKind.Route
+        && e.Note != "prop";
+
     /// <summary>
     /// Performs a forward call-graph walk tracing outbound invocations and indirection.
     /// </summary>
@@ -82,10 +109,9 @@ public static class Queries
             try
             {
                 var edges = g.Out(node.Id)
-                    .Where(e => e.Kind is EdgeKind.Call or EdgeKind.Mediatr or EdgeKind.Interface
-                                       or EdgeKind.Override or EdgeKind.Construct or EdgeKind.Route)
-                    .Where(e => e.Note != "prop")
+                    .Where(IsFlow)
                     .OrderByDescending(e => e.Note == "di-bound")
+                    .ThenByDescending(e => e.Score)
                     .ThenBy(e => e.Kind == EdgeKind.Construct ? 1 : 0)
                     .ToList();
 
@@ -95,8 +121,8 @@ public static class Queries
                     if (to == null) continue;
                     if (to.Kind == "type" && e.Kind == EdgeKind.Construct && level > 1) continue;
 
-                    var line = $"{prefix}-> {to.Short}{Marker(e.Kind, e.Note)}{TagSuffix(to)}{Loc(to)}{StaleTag(to, dirty)}";
-                    if (!w.Add(line, Row(to, level + 1, Relation(e.Kind), e.Note, dirty)))
+                    var line = $"{prefix}-> {to.Short}{Marker(e)}{TagSuffix(to)}{Loc(to)}{StaleTag(to, dirty)}";
+                    if (!w.Add(line, Row(to, level + 1, e, dirty)))
                     {
                         truncatedAt.Add(node.Short);
                         return false;
@@ -148,17 +174,26 @@ public static class Queries
         w.Force($"{target.Short}{Loc(target)}  -- {impls.Count} implementation(s)",
                 Row(target, 0, "root", null, dirty));
 
-        foreach (var e in impls.OrderByDescending(x => x.Note == "di-bound"))
+        foreach (var e in impls.OrderByDescending(x => x.Note == "di-bound").ThenByDescending(x => x.Score))
         {
             var to = g.ById(e.To);
             if (to == null) continue;
 
             var di = to.Tags.FirstOrDefault(t => t.StartsWith("di:"));
+            var keyed = to.Tags.FirstOrDefault(t => t.StartsWith("keyed:"));
             var bound = e.Note == "di-bound" || di != null;
-            var mark = bound ? $"  [{di ?? "di-bound"}]" : "";
 
-            if (!w.Add($"  {to.Short}{mark}{Loc(to)}{StaleTag(to, dirty)}",
-                       Row(to, 1, e.Kind == EdgeKind.Override ? "override" : "impl", e.Note ?? di, dirty)))
+            var parts = new List<string>();
+            if (bound) parts.Add(di ?? "di-bound");
+            if (keyed != null) parts.Add(keyed);
+            if (e.Score < 1.0) parts.Add($"?{e.Score:0.00}{(e.Source != null ? " " + e.Source : "")}");
+            var mark = parts.Count == 0 ? "" : "  [" + string.Join(", ", parts) + "]";
+
+            var row = Row(to, 1, e, dirty);
+            row.Relation = e.Kind == EdgeKind.Override ? "override" : "impl";
+            row.Note = e.Note ?? di;
+
+            if (!w.Add($"  {to.Short}{mark}{Loc(to)}{StaleTag(to, dirty)}", row))
             {
                 w.Force("");
                 w.Force($"OVER BUDGET: {impls.Count} implementations. Raise --budget or query a narrower type.");

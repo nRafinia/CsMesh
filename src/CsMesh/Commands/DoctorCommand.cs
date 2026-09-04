@@ -44,6 +44,8 @@ public static class DoctorCommand
             {
                 Console.WriteLine("  note: no DI bindings resolved; interface implementations will not have di-bound ranking.");
             }
+
+            Quality(graph);
         }
 
         var installedLocal = SkillCommand.SkillTargets(root).Where(File.Exists).Distinct().ToList();
@@ -77,5 +79,58 @@ public static class DoctorCommand
         }
 
         return Exit.Ok;
+    }
+
+    /// <summary>
+    /// What the graph does not know, stated plainly.
+    ///
+    /// A structural tool that answers confidently from an 88%-resolved graph is worse than one
+    /// that answers and says 88%, because silence reads as "there is nothing there" rather than
+    /// "I could not see it". Everything here is a count of edges that were wanted and not made.
+    /// </summary>
+    private static void Quality(Graph graph)
+    {
+        Console.WriteLine("graph quality");
+
+        if (graph.TotalCallSites > 0)
+        {
+            var bound = graph.TotalCallSites - graph.UnresolvedCallSites;
+            var rate = 100.0 * bound / graph.TotalCallSites;
+            Console.WriteLine($"  calls resolved  {rate:F1}%  ({bound}/{graph.TotalCallSites})");
+            if (rate < 90) Console.WriteLine("                  low -> run 'dotnet build' so bin/ assemblies are available, then re-index");
+        }
+
+        var inferred = graph.Edges.Where(e => e.Confidence != null).ToList();
+        var guesses = inferred.Where(e => e.Score < Edge.TrustThreshold).ToList();
+
+        Console.WriteLine(inferred.Count == 0
+            ? "  inferred edges  none; every edge came from a compiler symbol"
+            : $"  inferred edges  {inferred.Count} of {graph.Edges.Count} were not read straight off a symbol");
+
+        foreach (var group in inferred.GroupBy(e => e.Source ?? "unknown").OrderByDescending(x => x.Count()))
+        {
+            var worst = group.Min(e => e.Score);
+            Console.WriteLine($"    {group.Key,-22} {group.Count(),4}  (lowest {worst:0.00})");
+        }
+
+        if (guesses.Count > 0)
+        {
+            Console.WriteLine($"  verify these    {guesses.Count} edge(s) below {Edge.TrustThreshold:0.00}; rows carry ?score in output");
+        }
+
+        if (graph.AmbiguousDiRegistrations > 0)
+        {
+            Console.WriteLine($"  ambiguous DI    {graph.AmbiguousDiRegistrations} registration(s) skipped: type name matched more than one type");
+        }
+
+        if (graph.AmbiguousMessageDispatches > 0)
+        {
+            Console.WriteLine($"  ambiguous msgs  {graph.AmbiguousMessageDispatches} Send/Publish site(s) skipped: request name matched more than one request type");
+        }
+
+        if (graph.UnmatchedMessageDispatches > 0)
+        {
+            Console.WriteLine($"  unhandled msgs  {graph.UnmatchedMessageDispatches} Send/Publish site(s) had no handler in this repository");
+        }
     }
 }

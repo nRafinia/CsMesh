@@ -8,14 +8,11 @@ namespace CsMesh.Common;
 /// Every text line may carry a parallel <see cref="QueryRow"/> so the same answer can be emitted
 /// as JSON without a second traversal.
 /// </summary>
-public sealed class BudgetWriter
+public sealed class BudgetWriter(int budgetTokens)
 {
     private readonly List<string> _lines = [];
     private readonly List<QueryRow> _rows = [];
-    private readonly int _budget;
     private int _tokens;
-
-    public BudgetWriter(int budgetTokens) => _budget = budgetTokens;
 
     public int Tokens => _tokens;
     public bool Overflowed { get; private set; }
@@ -33,7 +30,7 @@ public sealed class BudgetWriter
     public bool Add(string line, QueryRow? row = null)
     {
         var cost = Estimate(line);
-        if (_tokens + cost > _budget)
+        if (_tokens + cost > budgetTokens)
         {
             Overflowed = true;
             return false;
