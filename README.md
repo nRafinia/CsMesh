@@ -13,8 +13,12 @@ Built for AI coding agents and developers who are tired of multi-turn "file-hopp
 [![Latency](https://img.shields.io/badge/Query%20Latency-~100ms-blue)](https://github.com/nRafinia/CsMesh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
----
 </div>
+
+![logo](docs/readme.jpg)
+
+
+---
 
 ```bash
 $ csmesh trace PaymentController.Post --budget 600
