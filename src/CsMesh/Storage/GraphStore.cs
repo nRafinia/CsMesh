@@ -198,6 +198,22 @@ public static class GraphStore
     }
 
     /// <summary>
+    /// Filesystems disagree about how precisely they keep a write time. exFAT rounds to two
+    /// seconds, and several network and container mounts round or drift by similar amounts, so an
+    /// exact tick comparison reports files as edited that nobody has touched -- which shows up as
+    /// a permanent [STALE] on every query and a heal that never finishes healing.
+    ///
+    /// Size is checked first and exactly, so this only ever forgives a timestamp that moved while
+    /// the byte count stayed identical. Set CSMESH_MTIME_EXACT=1 to compare ticks strictly.
+    /// </summary>
+    private static readonly long MTimeToleranceTicks =
+        Environment.GetEnvironmentVariable("CSMESH_MTIME_EXACT") == "1"
+            ? 0
+            : TimeSpan.TicksPerSecond * 2;
+
+    private static bool TimesDiffer(long a, long b) => Math.Abs(a - b) > MTimeToleranceTicks;
+
+    /// <summary>
     /// Identifies files that have been modified, removed, or added since the index was created.
     /// The full tree walk only runs when a tracked directory's timestamp moved, which is what
     /// keeps a query at a few milliseconds on a large solution.
@@ -216,7 +232,7 @@ public static class GraphStore
             }
 
             var info = new FileInfo(fullPath);
-            if (info.Length != file.Size || info.LastWriteTimeUtc.Ticks != file.Ticks)
+            if (info.Length != file.Size || TimesDiffer(info.LastWriteTimeUtc.Ticks, file.Ticks))
             {
                 dirty.Add(file.Path);
             }
@@ -250,7 +266,7 @@ public static class GraphStore
 
             try
             {
-                if (Directory.GetLastWriteTimeUtc(full).Ticks != dir.Ticks) return true;
+                if (TimesDiffer(Directory.GetLastWriteTimeUtc(full).Ticks, dir.Ticks)) return true;
             }
             catch
             {
