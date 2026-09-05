@@ -53,7 +53,10 @@ public static partial class Queries
 
         var callees = g.Out(node.Id)
             .Where(IsFlow)
-            .OrderByDescending(e => e.Note == "di-bound")
+            // Same reason as in Impl: a DiBinding notes its lifetime, not the marker, so matching
+            // on the marker alone ranked the container's own answer by score against everything
+            // else and let a tie decide.
+            .OrderByDescending(e => e.Kind == EdgeKind.DiBinding || e.Note == "di-bound")
             .ThenByDescending(e => e.Score)
             .Select(e => (Edge: e, Node: g.ById(e.To)))
             .Where(x => x.Node != null)

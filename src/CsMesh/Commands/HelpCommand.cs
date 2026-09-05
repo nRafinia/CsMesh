@@ -23,6 +23,7 @@ public static class HelpCommand
             "changes" => ChangesHelp,
             "silence" or "why-not" => SilenceHelp,
             "map" => MapHelp,
+            "where" or "find" => WhereHelp,
             "usage" => UsageHelp,
             "doctor" => DoctorHelp,
             "skill" => SkillHelp,
@@ -42,6 +43,7 @@ public static class HelpCommand
 
         COMMANDS:
             map            Where the weight is: projects, entrypoints, hotspots
+            where          Find the symbols a word belongs to, ranked by what reaches them
             index          Build or refresh the symbol graph for the repository
             trace          Trace execution paths through DI, MediatR, and interfaces
             impl           Find implementations of an interface or base class, DI-bound first
@@ -67,6 +69,7 @@ public static class HelpCommand
             --depth <N>        Traversal depth limit (trace 6, blast-radius 3, context 3, path 12)
             --json             Output results as a structured JSON envelope
             --debug            Enable verbose diagnostics on stderr
+            --heal             Rebind changed files before answering instead of marking rows [STALE]
             --no-telemetry     Do not record this invocation in usage telemetry
             -h, --help         Print help information
 
@@ -379,6 +382,45 @@ public static class HelpCommand
         EXAMPLES:
             csmesh changes
             csmesh changes --calls --budget 1200
+        """;
+
+    public const string WhereHelp =
+        """
+        csmesh where - Find the symbols a word belongs to, ranked by what reaches them
+
+        USAGE:
+            csmesh where <term> [<term> ...] [OPTIONS]
+            csmesh find <term> [OPTIONS]
+
+        OPTIONS:
+            --under <PATH>     Restrict to a subtree, e.g. --under src/Api
+            --budget <N>       Maximum output tokens (default: 400, exits code 2 on overflow)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            Every other command takes a symbol. This is the one that finds it. Start here when the
+            task is described in words -- "the discount rules", "checkout" -- and end with a name
+            the other commands accept.
+
+            Symbol names, namespaces, file paths and route templates are all searched. Results are
+            ordered by how many entrypoints reach each symbol, not alphabetically: a request DTO
+            and the handler that consumes it match the same word, and only one of them has three
+            routes above it. Test code is ranked down, not hidden.
+
+            The last line is the command to run next, already filled in.
+
+            String literals, config values, TODOs and non-.cs files are not in the graph. Use grep
+            for those.
+
+        EXIT CODES:
+            0 matches found   1 nothing matched   2 over budget
+
+        EXAMPLES:
+            csmesh where discount
+            csmesh where checkout refund --under src/Application
+            csmesh find "POST /orders"
         """;
 
     public const string MapHelp =

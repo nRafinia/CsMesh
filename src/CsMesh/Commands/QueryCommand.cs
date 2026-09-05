@@ -46,6 +46,22 @@ public static class QueryCommand
             _ => 6
         });
 
+        // Answering from a graph that is known to be behind, when catching it up costs less than
+        // the round trip that reports it is behind, is a worse default than it looks.
+        if (dirty.Count > 0 &&
+            (opt.Flag("heal") || Environment.GetEnvironmentVariable("CSMESH_AUTO_INDEX") == "1"))
+        {
+            if (Indexer.BuildIncremental(graph, dirty, message => Dbg.Log(message)) is { } healed)
+            {
+                GraphStore.SaveInPlace(healed);
+                graph = healed;
+                dirty = GraphStore.DirtyFiles(graph);
+                dirtySet = dirty.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                result.StaleFiles = dirty.Count;
+                Dbg.Log($"healed index in place; {dirty.Count} file(s) still behind");
+            }
+        }
+
         if (dirty.Count > 0)
         {
             var note = $"# index is {dirty.Count} file(s) behind working tree; rows from those files are marked [STALE]. run: csmesh index";
@@ -58,6 +74,19 @@ public static class QueryCommand
         if (kind == "entrypoints")
         {
             exitCode = Queries.Entrypoints(graph, opt.Positional.FirstOrDefault(), under, writer, dirtySet);
+        }
+        else if (kind == "where")
+        {
+            if (opt.Positional.Count == 0)
+            {
+                var message = "usage: csmesh where <term> [<term> ...]";
+                if (json) return EmitJson(result, writer, Exit.Usage, message);
+                Console.Error.WriteLine(message);
+                return Exit.Usage;
+            }
+
+            result.Query = string.Join(" ", opt.Positional);
+            exitCode = Queries.Where(graph, opt.Positional.ToArray(), under, writer, dirtySet);
         }
         else if (kind == "map")
         {
@@ -196,6 +225,7 @@ public static class QueryCommand
         "silence" => 700,
         "map" => 700,
         "path" => 400,
+        "where" => 400,
         _ => 600
     };
 

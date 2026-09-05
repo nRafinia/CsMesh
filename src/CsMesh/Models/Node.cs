@@ -8,6 +8,24 @@ public sealed class Node
     public int Id { get; set; }
 
     /// <summary>
+    /// The compiler-derived identity of the symbol: container, name, arity and fully qualified
+    /// parameter types. Stable across re-indexes, which <see cref="Id"/> historically was not.
+    ///
+    /// This existing without being persisted was the reason nothing could be patched in place.
+    /// Ids were positional -- taken from the node count at insertion time -- so one added
+    /// declaration renumbered everything after it and invalidated every edge in the graph. That
+    /// forced a full rebuild for any change, and forced 'changes' to compare edges by symbol name
+    /// rather than by identity, which cannot tell a rename from a delete plus an add.
+    ///
+    /// With the key on disk, an incremental pass can drop the nodes declared in an edited file and
+    /// recreate them under their original ids, so every edge from an untouched file into that file
+    /// survives the edit untouched.
+    ///
+    /// Empty only for graphs written before format v12.
+    /// </summary>
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>
     /// Fully qualified display name (e.g. Acme.Api.PaymentController.Post).
     /// </summary>
     public string Name { get; set; } = string.Empty;

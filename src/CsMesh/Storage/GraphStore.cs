@@ -39,6 +39,21 @@ public static class GraphStore
     /// by an incompatible version. Comparing across format versions would report every edge as
     /// both added and removed.
     /// </summary>
+    /// <summary>
+    /// Writes the graph without rotating the previous snapshot.
+    ///
+    /// Save keeps a copy so 'changes' can report what the shape of the codebase did. An
+    /// incremental refresh runs often and touches little, and rotating on each one would leave
+    /// 'changes' comparing a graph against a near-copy of itself and reporting that no binding
+    /// moved -- the one answer it must never give wrongly.
+    /// </summary>
+    public static void SaveInPlace(Graph g)
+    {
+        Directory.CreateDirectory(DirFor(g.Root));
+        using var stream = File.Create(PathFor(g.Root));
+        JsonSerializer.Serialize(stream, g, AppJsonContext.Default.Graph);
+    }
+
     public static Graph? LoadPrevious(string root)
     {
         var path = PreviousPathFor(root);
