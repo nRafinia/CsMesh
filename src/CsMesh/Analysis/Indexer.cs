@@ -998,6 +998,26 @@ public static partial class Indexer
                                 Link(typeId, pId, EdgeKind.TypeUse, "member");
                                 g.ById(pId)!.Signature = Display(ps.Type);
                                 RecordExternalIn(ps.Type, pd.Type);
+
+                                // DbSet<Order> is the only place a context and an entity are
+                                // named together. Without this edge, "what does this context
+                                // touch" answers with property names -- Orders, Customers -- and
+                                // the entity types they expose are reachable only by reading the
+                                // declarations, which is the lookup the graph exists to remove.
+                                //
+                                // Deliberately stops here. Which columns a LINQ query reads is an
+                                // expression-tree question, not a symbol one, and guessing at it
+                                // would put false edges in a graph whose value is that its edges
+                                // are real.
+                                if (ps.Type is INamedTypeSymbol { Name: "DbSet" or "DbQuery" } set &&
+                                    set.TypeArguments.Length == 1 &&
+                                    set.TypeArguments[0] is INamedTypeSymbol entity &&
+                                    entity.Locations.Any(l => l.IsInSource))
+                                {
+                                    Link(typeId, NodeFor(entity, "type"), EdgeKind.TypeUse, "entity");
+                                    AddTag(g.ById(typeId)!, "dbcontext");
+                                }
+
                                 break;
                             }
                             // Entities and records often carry plain fields. Without them a caller
@@ -1587,15 +1607,36 @@ public static partial class Indexer
         {
             if (inv.Expression is not MemberAccessExpressionSyntax ma) return;
             var name = ma.Name.Identifier.Text;
-            if (name is not ("Send" or "Publish" or "SendAsync" or "PublishAsync")) return;
+
+            // Invoke/InvokeAsync is Wolverine's request-response form; the rest are MediatR's and
+            // MassTransit's. Adding them costs nothing, because the argument still has to be a
+            // type declared in this repository before anything is linked.
+            if (name is not ("Send" or "Publish" or "SendAsync" or "PublishAsync"
+                             or "Invoke" or "InvokeAsync")) return;
+
+            // A generic argument on the call names the message directly, and it outranks the type
+            // of what was passed. MassTransit's message-initializer form is the reason:
+            //   bus.Publish<OrderSubmitted>(new { OrderId = id })
+            // passes an anonymous type, so reading the argument's type yields the anonymous type
+            // and the dispatch resolves to nothing -- silently, since an anonymous type is not
+            // declared in source and the guard below simply returns.
+            INamedTypeSymbol? requestSymbol = null;
+            if (ma.Name is GenericNameSyntax generic &&
+                generic.TypeArgumentList.Arguments.Count == 1 &&
+                model.GetSymbolInfo(generic.TypeArgumentList.Arguments[0]).Symbol is INamedTypeSymbol explicitMessage)
+            {
+                requestSymbol = explicitMessage;
+            }
 
             var arg = inv.ArgumentList.Arguments.FirstOrDefault();
-            if (arg == null) return;
+            if (arg == null && requestSymbol == null) return;
 
-            INamedTypeSymbol? requestSymbol = null;
-            if (arg.Expression is ObjectCreationExpressionSyntax oc)
-                requestSymbol = model.GetSymbolInfo(oc.Type).Symbol as INamedTypeSymbol;
-            requestSymbol ??= model.GetTypeInfo(arg.Expression).Type as INamedTypeSymbol;
+            if (requestSymbol == null && arg != null)
+            {
+                if (arg.Expression is ObjectCreationExpressionSyntax oc)
+                    requestSymbol = model.GetSymbolInfo(oc.Type).Symbol as INamedTypeSymbol;
+                requestSymbol ??= model.GetTypeInfo(arg.Expression).Type as INamedTypeSymbol;
+            }
 
             // HttpClient.SendAsync, HttpMessageHandler.SendAsync, a channel's Publish: the method
             // name is not the signal. A mediator dispatch carries a request type declared in this
@@ -1640,9 +1681,11 @@ public static partial class Indexer
                 return;
             }
 
-            shortName = arg.Expression is ObjectCreationExpressionSyntax raw
-                ? raw.Type.ToString().Split('.').Last().Split('<').First()
-                : "";
+            shortName = ma.Name is GenericNameSyntax bare && bare.TypeArgumentList.Arguments.Count == 1
+                ? bare.TypeArgumentList.Arguments[0].ToString().Split('.').Last().Split('<').First()
+                : arg?.Expression is ObjectCreationExpressionSyntax raw
+                    ? raw.Type.ToString().Split('.').Last().Split('<').First()
+                    : "";
             if (shortName.Length == 0) return;
 
             if (!_requestKeysByShort.TryGetValue(shortName, out var candidates))
