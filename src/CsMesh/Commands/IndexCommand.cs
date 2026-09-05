@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Diagnostics;
 using CsMesh.Analysis;
 using CsMesh.Common;
@@ -11,23 +12,35 @@ public static class IndexCommand
     public static int Execute(string root, Options opt)
     {
         var clock = Stopwatch.StartNew();
+        var e = new Emit(opt.Flag("json"));
+        var report = new IndexReport { Root = root };
 
-        if (!opt.Flag("full") && TryIncremental(root, opt, clock, out var patched))
+        if (!opt.Flag("full") && TryIncremental(root, opt, clock, e, report, out var patched))
         {
+            Finish(report, e, patched);
             return patched;
         }
 
         var graph = Indexer.Build(root, message => Dbg.Log(message), opt.Flag("all"));
         GraphStore.Save(graph);
 
-        Console.WriteLine($"indexed {graph.Files.Count} files -> {graph.Nodes.Count} nodes, " +
+        report.Mode = "full";
+        report.Nodes = graph.Nodes.Count;
+        report.Edges = graph.Edges.Count;
+        report.Files = graph.Files.Count;
+        report.UnresolvedCallSites = graph.UnresolvedCallSites;
+        report.ReferenceCount = graph.ReferenceCount;
+        report.BuiltByVersion = graph.BuiltByVersion;
+        report.ElapsedSeconds = clock.Elapsed.TotalSeconds;
+
+        e.Line($"indexed {graph.Files.Count} files -> {graph.Nodes.Count} nodes, " +
                           $"{graph.Edges.Count} edges in {clock.Elapsed.TotalSeconds:F1}s");
 
-        ReportStandingConditions(graph, fromFullIndex: true);
+        ReportStandingConditions(graph, fromFullIndex: true, e);
 
         if (Dbg.On)
         {
-            foreach (var group in graph.Edges.GroupBy(e => e.Kind).OrderByDescending(x => x.Count()))
+            foreach (var group in graph.Edges.GroupBy(edge => edge.Kind).OrderByDescending(x => x.Count()))
             {
                 Dbg.Log($"edges {group.Key}: {group.Count()}");
             }
@@ -38,7 +51,24 @@ public static class IndexCommand
             }
         }
 
+        Finish(report, e, Exit.Ok);
         return Exit.Ok;
+    }
+
+    /// <summary>
+    /// Serialises the report when the caller asked for JSON. Called on every return path, because
+    /// an index that took the incremental branch is exactly the run a caller most wants the
+    /// numbers from.
+    /// </summary>
+    private static void Finish(IndexReport report, Emit e, int exit)
+    {
+        report.Exit = exit;
+        report.Text.AddRange(e.Lines);
+
+        if (e.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(report, AppJsonContext.Default.IndexReport));
+        }
     }
 
     /// <summary>
@@ -51,7 +81,7 @@ public static class IndexCommand
     /// worst -- two or three files edited since the last index, and a full solution rebuild as the
     /// only way to clear [STALE].
     /// </summary>
-    private static bool TryIncremental(string root, Options opt, Stopwatch clock, out int exit)
+    private static bool TryIncremental(string root, Options opt, Stopwatch clock, Emit e, IndexReport report, out int exit)
     {
         exit = Exit.Ok;
 
@@ -75,16 +105,25 @@ public static class IndexCommand
         // querying the old binary's answers from the new binary. Rebuild and say so.
         if (GraphStore.BuiltByOtherVersion(existing))
         {
-            Console.WriteLine($"re-indexing in full: {GraphStore.VersionGap(existing)}");
+            e.Line($"re-indexing in full: {GraphStore.VersionGap(existing)}");
             return false;
         }
 
         var dirty = GraphStore.DirtyFiles(existing);
         if (dirty.Count == 0)
         {
-            Console.WriteLine($"index is current: {existing.Nodes.Count} nodes, {existing.Edges.Count} edges, " +
+            report.Mode = "current";
+            report.Nodes = existing.Nodes.Count;
+            report.Edges = existing.Edges.Count;
+            report.Files = existing.Files.Count;
+            report.UnresolvedCallSites = existing.UnresolvedCallSites;
+            report.ReferenceCount = existing.ReferenceCount;
+            report.BuiltByVersion = existing.BuiltByVersion;
+            report.ElapsedSeconds = clock.Elapsed.TotalSeconds;
+
+            e.Line($"index is current: {existing.Nodes.Count} nodes, {existing.Edges.Count} edges, " +
                               $"built {Ago(existing.BuiltAt)}");
-            ReportStandingConditions(existing, fromFullIndex: existing.IncrementalRefreshes == 0);
+            ReportStandingConditions(existing, fromFullIndex: existing.IncrementalRefreshes == 0, e);
             return true;
         }
 
@@ -101,10 +140,22 @@ public static class IndexCommand
         var dn = patched.Nodes.Count - before.Nodes;
         var de = patched.Edges.Count - before.Edges;
 
-        Console.WriteLine($"rebound {dirty.Count} file(s) -> {patched.Nodes.Count} nodes ({Delta(dn)}), " +
+        report.Mode = "incremental";
+        report.Nodes = patched.Nodes.Count;
+        report.Edges = patched.Edges.Count;
+        report.Files = patched.Files.Count;
+        report.NodeDelta = dn;
+        report.EdgeDelta = de;
+        report.ReboundFiles = dirty.Count;
+        report.UnresolvedCallSites = patched.UnresolvedCallSites;
+        report.ReferenceCount = patched.ReferenceCount;
+        report.BuiltByVersion = patched.BuiltByVersion;
+        report.ElapsedSeconds = clock.Elapsed.TotalSeconds;
+
+        e.Line($"rebound {dirty.Count} file(s) -> {patched.Nodes.Count} nodes ({Delta(dn)}), " +
                           $"{patched.Edges.Count} edges ({Delta(de)}) in {clock.Elapsed.TotalSeconds:F1}s");
 
-        ReportStandingConditions(patched, fromFullIndex: false);
+        ReportStandingConditions(patched, fromFullIndex: false, e);
         return true;
     }
 
@@ -117,22 +168,22 @@ public static class IndexCommand
     /// a single line saying the index was current, which is a much weaker claim than it reads as:
     /// the index is as complete as it was, and it was never complete.
     /// </summary>
-    private static void ReportStandingConditions(Graph graph, bool fromFullIndex)
+    private static void ReportStandingConditions(Graph graph, bool fromFullIndex, Emit e)
     {
         if (graph.SkippedProjects.Count > 0)
         {
-            Console.WriteLine($"skipped {graph.SkippedProjects.Count} project(s): {graph.SkippedProjectsReason}");
+            e.Line($"skipped {graph.SkippedProjects.Count} project(s): {graph.SkippedProjectsReason}");
             foreach (var project in graph.SkippedProjects.Take(5))
             {
-                Console.WriteLine($"  {project}");
+                e.Line($"  {project}");
             }
 
             if (graph.SkippedProjects.Count > 5)
             {
-                Console.WriteLine($"  ... and {graph.SkippedProjects.Count - 5} more; see csmesh doctor");
+                e.Line($"  ... and {graph.SkippedProjects.Count - 5} more; see csmesh doctor");
             }
 
-            Console.WriteLine("  index them anyway with: csmesh index --all");
+            e.Line("  index them anyway with: csmesh index --all");
         }
 
         // Unbound call sites are missing edges, not cosmetic warnings. Say so at index time rather
@@ -140,12 +191,12 @@ public static class IndexCommand
         if (graph.UnresolvedCallSites == 0) return;
 
         var age = fromFullIndex ? "" : " (from the last full index)";
-        Console.WriteLine($"warning: {graph.UnresolvedCallSites} call site(s) could not be bound " +
+        e.Line($"warning: {graph.UnresolvedCallSites} call site(s) could not be bound " +
                           $"against {graph.ReferenceCount} references{age}.");
 
         // Naming the build as the cause when bin/ already holds hundreds of assemblies is a wrong
         // diagnosis stated with confidence, and it sent one investigation down the wrong path.
-        Console.WriteLine(graph.OutputReferences == 0
+        e.Line(graph.OutputReferences == 0
             ? "         Nothing was loaded from bin/. Run 'dotnet build', then index again."
             : "         Run 'csmesh doctor' for what the compiler said about them.");
     }
