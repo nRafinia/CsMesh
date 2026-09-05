@@ -25,6 +25,12 @@ public static class DoctorCommand
             Console.WriteLine($"index           {graph.Nodes.Count} nodes, {graph.Edges.Count} edges, built {age.TotalHours:F1}h ago (commit {commitDisplay})");
             Console.WriteLine($"freshness       {(dirty.Count == 0 ? "clean" : $"{dirty.Count} file(s) changed since index -> answers will be marked [STALE]")}");
 
+            // Freshness above only compares the graph against the working tree. It says nothing
+            // about whether the rules that built it are the rules this binary would apply now.
+            Console.WriteLine(GraphStore.BuiltByOtherVersion(graph)
+                ? $"built by        {GraphStore.VersionGap(graph)} -> run: csmesh index --full"
+                : $"built by        csmesh {AppVersion.Get()}");
+
             var resolution = graph.UnresolvedCallSites == 0
                 ? $"clean ({graph.ReferenceCount} references)"
                 : $"{graph.UnresolvedCallSites} unbound call site(s) against {graph.ReferenceCount} references";

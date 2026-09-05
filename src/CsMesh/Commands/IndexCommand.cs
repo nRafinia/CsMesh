@@ -68,6 +68,17 @@ public static class IndexCommand
         // to exclude, and every later run agreed with it because nothing had changed on disk.
         if (opt.Flag("all") != existing.IndexedAllProjects) return false;
 
+        // A graph written by a different build is not patchable and, more importantly, is not
+        // current. Most releases change what the indexer notices -- a DI shape it now recognises,
+        // a false positive it no longer emits -- without moving FormatVersion, so this file would
+        // otherwise deserialize cleanly and be announced as up to date, and the user would go on
+        // querying the old binary's answers from the new binary. Rebuild and say so.
+        if (GraphStore.BuiltByOtherVersion(existing))
+        {
+            Console.WriteLine($"re-indexing in full: {GraphStore.VersionGap(existing)}");
+            return false;
+        }
+
         var dirty = GraphStore.DirtyFiles(existing);
         if (dirty.Count == 0)
         {

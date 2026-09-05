@@ -69,6 +69,17 @@ public static class QueryCommand
             if (!json) writer.Force(note);
         }
 
+        // A version gap is invisible in the rows themselves -- every line looks as confident as
+        // any other -- so it has to be said out loud. The graph is still answered from, because
+        // the old binary's answers are usually right and a hard refusal after every upgrade would
+        // be worse than a warned one.
+        if (GraphStore.BuiltByOtherVersion(graph))
+        {
+            var note = $"# {GraphStore.VersionGap(graph)}; detections added since then are missing. run: csmesh index --full";
+            result.Notes.Add(note);
+            if (!json) writer.Force(note);
+        }
+
         int exitCode;
 
         if (kind == "entrypoints")

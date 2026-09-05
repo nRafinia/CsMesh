@@ -198,6 +198,27 @@ public static class GraphStore
     }
 
     /// <summary>
+    /// Whether this graph was written by a different csmesh build than the one now running.
+    ///
+    /// Deliberately not a load failure. The file is readable and its answers are the answers the
+    /// older binary would have given, which is usually fine to look at. What it must not do is
+    /// claim to be current: most releases change what the indexer notices without touching the
+    /// schema, so the fix a user upgraded for would otherwise stay invisible behind a graph that
+    /// reports itself as up to date. Callers use this to force a rebuild and to say why.
+    ///
+    /// An empty stamp means the graph predates this field, which is the same situation.
+    /// </summary>
+    public static bool BuiltByOtherVersion(Graph g) =>
+        !string.Equals(g.BuiltByVersion, AppVersion.Get(), StringComparison.Ordinal);
+
+    /// <summary>Describes the version gap in one clause, for the line that reports it.</summary>
+    public static string VersionGap(Graph g)
+    {
+        var built = string.IsNullOrEmpty(g.BuiltByVersion) ? "an older build" : $"csmesh {g.BuiltByVersion}";
+        return $"index was built by {built}, this is {AppVersion.Get()}";
+    }
+
+    /// <summary>
     /// Filesystems disagree about how precisely they keep a write time. exFAT rounds to two
     /// seconds, and several network and container mounts round or drift by similar amounts, so an
     /// exact tick comparison reports files as edited that nobody has touched -- which shows up as

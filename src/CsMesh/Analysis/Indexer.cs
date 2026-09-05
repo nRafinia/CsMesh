@@ -188,6 +188,7 @@ public static partial class Indexer
             Root = root,
             FormatVersion = Graph.CurrentFormatVersion,
             BuiltAt = DateTimeOffset.UtcNow,
+            BuiltByVersion = AppVersion.Get(),
             BuiltFromCommit = RepositoryLocator.GitHead(root),
             Files = stamps,
             GlobalUsingSources = globalUsings.Count,
