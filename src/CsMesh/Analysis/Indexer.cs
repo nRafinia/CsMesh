@@ -1094,6 +1094,15 @@ public static partial class Indexer
 
             if (bases.Any(b => b.Contains("DbContext"))) yield return "dbcontext";
 
+            // A validator already reaches its command in the graph -- AbstractValidator<CreateOrder>
+            // is a real type reference and the constructor edge follows from it. What was missing
+            // was any way to tell that edge apart from an ordinary caller, so 'who touches this
+            // command' listed the validator beside the handler with nothing to say which runs
+            // first, or that one of them can reject the request before the other ever sees it.
+            if (bases.Any(b => b.StartsWith("AbstractValidator", StringComparison.Ordinal) ||
+                               b.StartsWith("IValidator", StringComparison.Ordinal)))
+                yield return "validator";
+
             if (bases.Any(b => b.StartsWith("IConsumer") || b.StartsWith("IHandleMessages")))
                 yield return "consumer";
 
@@ -1477,30 +1486,62 @@ public static partial class Indexer
             if (!MapVerbs.TryGetValue(ma.Name.Identifier.Text, out var verb)) return;
 
             var args = inv.ArgumentList.Arguments;
-            if (args.Count < 2) return;
-            if (args[0].Expression is not LiteralExpressionSyntax lit) return;
+            if (args.Count == 0) return;
 
-            var pattern = lit.Token.ValueText;
-            if (pattern.Length == 0) return;
-            var tag = $"http:{verb} {pattern}";
+            // The framework signature is Map*(pattern, handler), and the old code read exactly
+            // that: two arguments, a literal first. Codebases routinely wrap it. The Clean
+            // Architecture template -- and anything modelled on it -- declares its own
+            // Map*(this IEndpointRouteBuilder, Delegate handler, string pattern = "") so that the
+            // OpenAPI operation id comes from the method name, and calls it as
+            // groupBuilder.MapPost(CreateTodoItem). One argument, no literal, both checks fail, and
+            // an entire HTTP surface goes missing without a single unresolved site to show for it.
+            //
+            // So neither position is assumed. The pattern is whichever argument is a string
+            // literal, the handler is whichever resolves to something callable, and either may be
+            // absent.
+            var literal = args
+                .Select(a => a.Expression)
+                .OfType<LiteralExpressionSyntax>()
+                .FirstOrDefault(l => l.IsKind(SyntaxKind.StringLiteralExpression));
 
-            var handler = args[1].Expression;
+            var pattern = literal?.Token.ValueText ?? string.Empty;
+
+            var handler = args
+                .Select(a => a.Expression)
+                .FirstOrDefault(x => x is AnonymousFunctionExpressionSyntax
+                                     || (x is not LiteralExpressionSyntax && IsCallable(x, model)));
+
+            if (handler == null) return;
+
+            // A pattern only describes a URL when it is the whole of one. Inside a group the
+            // prefix lives on the MapGroup call, and templates like this one build it by
+            // reflection over the type -- app.MapGroup(type.GetProperty("RoutePrefix") ?? default)
+            // -- so there is no string to read at any point in the source.
+            //
+            // Rather than print a path that is a guess, the verb is recorded and the path is not.
+            // The endpoint still becomes an entrypoint, which is what blast-radius and entrypoints
+            // actually need; a route tag would look identical to one that was read off a literal,
+            // and a confident wrong URL is worse here than an absent one.
+            var routed = pattern.StartsWith('/');
+            var tag = routed ? $"http:{verb} {pattern}" : $"endpoint:{verb}";
+            var note = routed ? $"{verb} {pattern}" : verb;
 
             if (handler is AnonymousFunctionExpressionSyntax lambda)
             {
                 var stem = Path.GetFileNameWithoutExtension(inv.SyntaxTree.FilePath);
                 if (stem.Length == 0) stem = "Endpoints";
 
+                var label = $"{stem}.{note}";
                 var span = inv.GetLocation().SourceSpan;
                 var routeId = SyntheticNode(
                     $"route::{inv.SyntaxTree.FilePath}:{span.Start}",
-                    $"{stem}.{verb} {pattern}",
-                    $"{stem}.{verb} {pattern}",
+                    label,
+                    label,
                     "method",
                     inv);
 
                 AddTag(g.ById(routeId)!, tag);
-                Link(owner, routeId, EdgeKind.Route, $"{verb} {pattern}");
+                Link(owner, routeId, EdgeKind.Route, note);
 
                 claims ??= new Dictionary<SyntaxNode, int>();
                 claims[lambda] = routeId;
@@ -1513,7 +1554,24 @@ public static partial class Indexer
 
             var targetId = NodeFor(method.OriginalDefinition, "method");
             AddTag(g.ById(targetId)!, tag);
-            Link(owner, targetId, EdgeKind.Route, $"{verb} {pattern}");
+            Link(owner, targetId, EdgeKind.Route, note);
+        }
+
+        /// <summary>
+        /// Whether an expression names something that could be an endpoint handler.
+        ///
+        /// A method group binds to a method symbol; a local or field holding a delegate binds to
+        /// something whose type is a delegate. Both are handlers. Deliberately narrow: without
+        /// this, any Map* overload taking a string and an options object would look like a route.
+        /// </summary>
+        private static bool IsCallable(ExpressionSyntax expression, SemanticModel model)
+        {
+            var info = model.GetSymbolInfo(expression);
+            var symbol = info.Symbol ?? info.CandidateSymbols.FirstOrDefault();
+
+            if (symbol is IMethodSymbol) return true;
+
+            return model.GetTypeInfo(expression).Type?.TypeKind == TypeKind.Delegate;
         }
 
         /// <summary>

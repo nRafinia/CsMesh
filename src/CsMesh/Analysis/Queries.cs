@@ -48,8 +48,8 @@ public static partial class Queries
     private static string TagSuffix(Node n)
     {
         var interesting = n.Tags.Where(t =>
-            t.StartsWith("http:") || t.StartsWith("route:") || t == "handler" ||
-            t == "dbcontext" || t == "consumer" || t == "obsolete").ToList();
+            t.StartsWith("http:") || t.StartsWith("route:") || t.StartsWith("endpoint:") || t == "handler" ||
+            t == "dbcontext" || t == "consumer" || t == "validator" || t == "obsolete").ToList();
         return interesting.Count == 0 ? "" : "  {" + string.Join(" ", interesting) + "}";
     }
 
@@ -431,7 +431,7 @@ public static partial class Queries
     }
 
     private static bool IsEntrypoint(Node n) =>
-        n.Tags.Any(t => t.StartsWith("http:") || t is "handler" or "consumer" or "hosted" or "action");
+        n.Tags.Any(t => t.StartsWith("http:") || t.StartsWith("endpoint:") || t is "handler" or "consumer" or "hosted" or "action");
 
     public static int Entrypoints(Graph g, string? filter, string? under, BudgetWriter w, HashSet<string> dirty)
     {
