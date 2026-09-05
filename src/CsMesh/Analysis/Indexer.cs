@@ -368,22 +368,34 @@ public static partial class Indexer
             }
         }
 
-        var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
-        AddDir(runtimeDir, 400, runtime: true);
+        var runtimeDir = RuntimeLocator.FindSharedFramework();
 
-        // The runtime directory is Microsoft.NETCore.App and nothing else. A web project's
-        // ASP.NET Core types live in a sibling shared framework, and because the app is
-        // framework-dependent they are never copied to bin/ either -- so without this they are
-        // absent from the compilation entirely.
-        //
-        // What that looks like from the outside is not an error. Roslyn still binds most of the
-        // file; it just cannot pick between overloads whose parameter types it has never seen, so
-        // it returns candidates and no symbol. The index comes out with high call-resolution and
-        // a pile of 'ambiguous-overload' concentrated in one project, which reads like a quirk of
-        // that project's code rather than a missing reference.
-        foreach (var dir in SiblingSharedFrameworks(runtimeDir))
+        if (runtimeDir == null)
         {
-            AddDir(dir, 400, runtime: true);
+            // Worth saying out loud. Every symptom downstream -- unbound calls, missing edges,
+            // traces that stop early -- looks like a problem with the code being indexed.
+            Console.Error.WriteLine(
+                "warning: no .NET shared framework found, so framework types are absent from the " +
+                "compilation and many calls will not bind. Set DOTNET_ROOT to your .NET install.");
+        }
+        else
+        {
+            AddDir(runtimeDir, 400, runtime: true);
+
+            // The runtime directory is Microsoft.NETCore.App and nothing else. A web project's
+            // ASP.NET Core types live in a sibling shared framework, and because the app is
+            // framework-dependent they are never copied to bin/ either -- so without this they are
+            // absent from the compilation entirely.
+            //
+            // What that looks like from the outside is not an error. Roslyn still binds most of the
+            // file; it just cannot pick between overloads whose parameter types it has never seen, so
+            // it returns candidates and no symbol. The index comes out with high call-resolution and
+            // a pile of 'ambiguous-overload' concentrated in one project, which reads like a quirk of
+            // that project's code rather than a missing reference.
+            foreach (var dir in SiblingSharedFrameworks(runtimeDir))
+            {
+                AddDir(dir, 400, runtime: true);
+            }
         }
 
         foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories).Take(80))
