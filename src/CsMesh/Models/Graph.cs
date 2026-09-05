@@ -13,12 +13,46 @@ public sealed class Graph
     /// A graph written by an older version is rejected on load so the user is told to re-index
     /// instead of silently querying a graph built with different rules.
     /// </summary>
-    public const int CurrentFormatVersion = 11;
+    public const int CurrentFormatVersion = 12;
 
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }
     public string BuiltFromCommit { get; set; } = string.Empty;
     public int FormatVersion { get; set; } = CurrentFormatVersion;
+
+    /// <summary>
+    /// The next id to hand out. Persisted because ids are now stable across re-indexes: an
+    /// incremental pass recreates edited symbols under their original ids and must never reuse an
+    /// id that a surviving edge still points at.
+    /// </summary>
+    public int NextNodeId { get; set; }
+
+    /// <summary>
+    /// Whether the last full index used --all. An incremental pass has to know which projects were
+    /// in scope; widening the scope is a rebuild, not a patch.
+    /// </summary>
+    public bool IndexedAllProjects { get; set; }
+
+    /// <summary>
+    /// Incremental passes since the last full index. Reference counts, unresolved totals and
+    /// compiler diagnostics all describe a whole-solution bind and are not recomputed by a partial
+    /// one, so this is how 'doctor' knows how old those numbers are.
+    /// </summary>
+    public int IncrementalRefreshes { get; set; }
+
+    /// <summary>
+    /// Fully qualified request type -> handler entry point node ids, as pass 1 last built it.
+    ///
+    /// Persisted because pass 2 reads it and pass 1 writes it from every file in the solution. An
+    /// incremental pass that runs pass 1 over three edited files would find this nearly empty, so
+    /// a Send() in one of them would match nothing, UnmatchedMessageDispatches would go up and the
+    /// mediatr edge would vanish -- with the output looking exactly like a codebase that has no
+    /// handler. Seeding it back is what makes editing a controller safe.
+    /// </summary>
+    public Dictionary<string, List<int>> HandlersByRequest { get; set; } = new();
+
+    /// <summary>Request short name -> the request keys sharing it. Fallback lookup, same reason.</summary>
+    public Dictionary<string, List<string>> RequestKeysByShort { get; set; } = new();
 
     /// <summary>
     /// Metadata assemblies the indexer managed to load. Low numbers mean poor symbol resolution.
@@ -75,6 +109,13 @@ public sealed class Graph
 
     /// <summary>Assemblies that could not be opened. Silent failures here look like nothing.</summary>
     public int ReferencesFailed { get; set; }
+
+    /// <summary>
+    /// Build outputs of the projects in scope, kept out of the reference set. Reported because the
+    /// bin/ count drops by exactly this much and an unexplained drop looks like references going
+    /// missing rather than duplicates being removed.
+    /// </summary>
+    public int ShadowedOutputs { get; set; }
 
     /// <summary>
     /// Call sites the indexer attempted to bind, resolved or not. The ratio against
@@ -147,7 +188,8 @@ public sealed class Graph
 
     [JsonIgnore] private FrozenDictionary<int, Edge[]>? _out;
     [JsonIgnore] private FrozenDictionary<int, Edge[]>? _in;
-    [JsonIgnore] private FrozenDictionary<int, Node>? _byId;
+    [JsonIgnore] private Dictionary<int, Node>? _byId;
+    [JsonIgnore] private FrozenDictionary<string, int>? _byKey;
 
     /// <summary>
     /// Retrieves a node by its unique ID.
@@ -157,8 +199,36 @@ public sealed class Graph
         if (id >= 0 && id < Nodes.Count && Nodes[id].Id == id)
             return Nodes[id];
 
-        _byId ??= Nodes.ToFrozenDictionary(n => n.Id);
+        _byId ??= Nodes.ToDictionary(n => n.Id);
         return _byId.GetValueOrDefault(id);
+    }
+
+    /// <summary>
+    /// Appends a node and keeps the id lookup usable while the graph is still being written to.
+    ///
+    /// Nodes used to be appended straight onto the list, which was safe only because ids were
+    /// positional: ById's fast path hit every time and the dictionary behind it was never built.
+    /// With recycled ids the list is sparse, the fast path misses, and a dictionary cached before
+    /// the node existed answers null for a symbol created one line earlier -- which surfaced as a
+    /// NullReferenceException in pass 1 rather than as a wrong answer, by luck rather than design.
+    /// </summary>
+    public void Add(Node node)
+    {
+        Nodes.Add(node);
+        _byId?.TryAdd(node.Id, node);
+        _byKey = null;
+    }
+
+    /// <summary>
+    /// Drops every cached lookup. Required after the node or edge list is replaced wholesale, as
+    /// an incremental pass does when it retires the symbols an edited file declared.
+    /// </summary>
+    public void InvalidateLookups()
+    {
+        _out = null;
+        _in = null;
+        _byId = null;
+        _byKey = null;
     }
 
     /// <summary>
@@ -168,6 +238,25 @@ public sealed class Graph
     {
         _out = Edges.GroupBy(e => e.From).ToFrozenDictionary(g => g.Key, g => g.ToArray());
         _in = Edges.GroupBy(e => e.To).ToFrozenDictionary(g => g.Key, g => g.ToArray());
+
+        // Rebuilt rather than left to ById's lazy path, because an incremental pass leaves the
+        // node list sparse and unordered: the positional fast path stops hitting and every lookup
+        // would otherwise pay for the dictionary to be built on first miss anyway.
+        _byId = Nodes.ToDictionary(n => n.Id);
+
+        // First wins. Two nodes claiming one key is something the keying rules are meant to make
+        // impossible; if it ever happens, answering from one of them beats throwing on load.
+        _byKey = Nodes
+            .Where(n => n.Key.Length > 0)
+            .GroupBy(n => n.Key, StringComparer.Ordinal)
+            .ToFrozenDictionary(x => x.Key, x => x.First().Id, StringComparer.Ordinal);
+    }
+
+    /// <summary>The node carrying this symbol key, or -1.</summary>
+    public int IdForKey(string key)
+    {
+        if (_byKey == null) Freeze();
+        return _byKey!.GetValueOrDefault(key, -1);
     }
 
     public IReadOnlyList<Edge> Out(int id)

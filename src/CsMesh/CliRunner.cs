@@ -55,6 +55,8 @@ public static class CliRunner
         return cmd switch
         {
             "index" => IndexCommand.Execute(root, opt),
+            // 'find' is what people type when they do not know the tool has a name for this.
+            "where" or "find" => QueryCommand.Execute(root, opt, "where"),
             "trace" => QueryCommand.Execute(root, opt, "trace"),
             "impl" => QueryCommand.Execute(root, opt, "impl"),
             "blast-radius" or "blast" => QueryCommand.Execute(root, opt, "blast"),

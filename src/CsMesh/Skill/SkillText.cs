@@ -170,8 +170,9 @@ public static class SkillText
           name match or from container scanning, not from a compiler symbol. **Below `0.80` is a lead, not
           a fact**: open the file before acting on it. A row with no `?score` was read straight off a
           symbol and is exact.
-        - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Re-run
-          `csmesh index`, or open that one file to confirm.
+        - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Add `--heal`
+          and run the same command again: the changed files are rebound in place first. `csmesh index` on
+          its own is incremental too, and only rebinds what moved.
 
         ## Exit codes -- branch on these, do not parse the text
 
@@ -228,13 +229,24 @@ public static class SkillText
         A subagent is for what csmesh cannot know: intent, naming, business rules, why a decision was made.
         Not for where things are and what connects to what.
 
+        ## When you have words, not a symbol name
+
+        Every other command takes a symbol. `csmesh where <term>` is the one that finds it. Do not grep
+        first. It searches names, namespaces, file paths and route templates, ranks by how many entrypoints
+        reach each hit, and prints the next command already filled in.
+
+        ```
+        csmesh where discount        # -> CheckoutService.ApplyDiscount, then trace it
+        csmesh where "POST /orders"
+        ```
+
         ## When something comes back empty
 
         - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
           whether the symbol was mistyped, lives in a package, was never bound because the solution was not
           built, or is reached only through a container scan. Only one of those is fixed by searching here.
         - **Thinner than expected**: `csmesh unresolved` reports where the indexer failed and why.
-        - **`[STALE]` rows**: run `csmesh index`.
+        - **`[STALE]` rows**: re-run with `--heal`. The changed files are rebound before the answer.
 
         Keep using grep for string literals, config values, TODOs, error messages, and non-`.cs` files.
 
@@ -295,13 +307,24 @@ public static class SkillText
         A subagent is for what csmesh cannot know: intent, naming, business rules, why a decision was made.
         Not for where things are and what connects to what.
 
+        ## When you have words, not a symbol name
+
+        Every other command takes a symbol. `csmesh where <term>` is the one that finds it. Do not grep
+        first. It searches names, namespaces, file paths and route templates, ranks by how many entrypoints
+        reach each hit, and prints the next command already filled in.
+
+        ```
+        csmesh where discount        # -> CheckoutService.ApplyDiscount, then trace it
+        csmesh where "POST /orders"
+        ```
+
         ## When something comes back empty
 
         - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
           whether the symbol was mistyped, lives in a package, was never bound because the solution was not
           built, or is reached only through a container scan. Only one of those is fixed by searching here.
         - **Thinner than expected**: `csmesh unresolved` reports where the indexer failed and why.
-        - **`[STALE]` rows**: run `csmesh index`.
+        - **`[STALE]` rows**: re-run with `--heal`. The changed files are rebound before the answer.
 
         Keep using grep for string literals, config values, TODOs, error messages, and non-`.cs` files.
 

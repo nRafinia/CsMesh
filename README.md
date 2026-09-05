@@ -121,11 +121,12 @@ Tested on a production-grade multi-project .NET backend (~1,600 nodes, ~3,000 ed
 
 - **🚀 Native AOT & .NET 10 Ready:** Instantaneous sub-millisecond execution, zero JIT warm-up, and zero-allocation queries via `System.Collections.Frozen`.
 - **🛡️ Token-Budget Enforcement (`--budget N`):** Hard limits on output tokens. Prevents agent context exhaustion by exiting with actionable tips when a query is too broad.
-- **💉 DI & IoC Container Intelligence:** Automatically parses service registrations (`AddScoped`, `AddSingleton`, `AddTransient`) and ranks active runtime classes ahead of test mocks.
+- **💉 DI & IoC Container Intelligence:** Reads service registrations in every form they take — two-argument, `typeof` pairs, keyed, factory lambdas, and alias registrations such as `sp => sp.GetRequiredService<Concrete>()` — and ranks the class the container actually returns ahead of the ones nobody registered.
 - **📨 MediatR & CQRS Linking:** Resolves `_mediator.Send(...)` and `Publish(...)` calls to their concrete request handlers across decoupled project boundaries.
 - **💥 Blast Radius & Impact Analysis:** Computes the reverse call graph to surface all direct/indirect callers, affected controllers, and background consumers before modifying a symbol.
 - **🌐 Universal AI Agent Integration:** Installs native prompt rules and skills for **12+ AI tools** (Claude Code, Cursor, Antigravity, OpenCode, Windsurf, Cline, Copilot, MiMo Code, etc.) with both local and `--global` machine-wide support.
-- **🔄 Staleness Detection:** Tracks file system timestamps against index metadata. When files change, outputs are transparently tagged with `[STALE]` and suggest running `csmesh index`.
+- **🔄 Incremental Re-indexing:** Node identity is a compiler symbol key, not an array position, so an edit re-binds only the files that moved and every edge into them survives. Rows from files the index has not caught up with are tagged `[STALE]`; `--heal` re-binds them before answering. Falls back to a full pass when an edit touches something that binds across files.
+- **🧭 Entry by Description, Not by Name:** `csmesh where <term>` searches names, namespaces, file paths and route templates, then ranks by how many entrypoints reach each hit — so the handler outranks the DTO that shares its name.
 
 ---
 
@@ -199,6 +200,9 @@ csmesh skill --install --global
 
 ### 3. Ask Structural Questions
 ```bash
+# I have words, not a symbol name.
+csmesh where discount
+
 # What does this method call down the line?
 csmesh trace OrderService.SubmitOrder --budget 600
 
@@ -244,21 +248,42 @@ csmesh entrypoints orders
 | Option | Description |
 |:---|:---|
 | `--repo <PATH>` | Target repository root (default: nearest `.sln`, `.slnx`, or `.git` above cwd) |
-| `--budget <N>` | Hard token limit for stdout (default: 600). Exits code `2` on overflow. |
-| `--depth <N>` | Graph traversal depth limit (default: 6 for `trace`, 3 for `blast-radius`) |
+| `--under <PATH>` | Restrict the answer to a subtree, e.g. `--under src/Api`. Narrow before raising the budget. |
+| `--budget <N>` | Hard token limit for stdout. Exits code `2` on overflow. Defaults per command below. |
+| `--depth <N>` | Traversal depth limit (`trace` 6, `blast-radius` 3, `context` 3, `path` 12, `diff` 3) |
+| `--heal` | Re-bind changed files before answering, instead of marking rows `[STALE]` |
 | `--json` | Output results in structured JSON format |
 | `--debug` | Print verbose diagnostics to stderr |
 | `--no-telemetry` | Skip recording the invocation in local usage metrics |
 | `-h, --help` | Display command help and usage examples |
 
+Default budgets: `impl` 300, `path`/`where` 400, `trace`/`unresolved` 600, `map`/`silence` 700, everything else 800.
+
 ---
 
 ### Commands
 
+#### `csmesh map`
+Where the weight is: which projects lean on which, where the entrypoints cluster, and the handful of members everything runs through. The first command to run in a repository you do not know — `ls` answers "where are the files", which is the wrong axis.
+```bash
+csmesh map
+csmesh map --under src/Application --budget 400
+```
+
+#### `csmesh where <term>` (alias: `find`)
+Finds the symbols a word belongs to, ranked by how many entrypoints reach them. Start here when the task is described in words rather than symbol names; the last line is the next command, already filled in.
+```bash
+csmesh where discount
+csmesh where checkout refund --under src/Application
+csmesh find "POST /orders"
+```
+
 #### `csmesh index`
-Builds or refreshes the Roslyn symbol graph stored in `.csmesh/graph.json`.
+Builds or refreshes the Roslyn symbol graph stored in `.csmesh/graph.json`. Incremental by default: only the files that changed since the last index are re-bound, and their symbols keep their existing identity so every edge into them survives the edit. Falls back to a full pass when an edit touches something that binds across files — an interface declaration, a handler, a container registration.
 ```bash
 csmesh index
+csmesh index --full          # force a whole-solution rebuild
+csmesh index --all           # include projects no solution file builds
 csmesh index --repo ./src
 ```
 
@@ -289,6 +314,57 @@ Finds HTTP endpoints (`[HttpGet]`, `[HttpPost]`), message handlers, consumers, a
 csmesh entrypoints
 csmesh entrypoints payments
 csmesh entrypoints "POST /orders"
+```
+
+#### `csmesh context <Type.Member>`
+Everything structural about one symbol in a single call: signature, members, callers, callees, implementations and the entrypoints above it. Replaces a `trace` plus an `impl` plus a `blast-radius`.
+```bash
+csmesh context OrderService --budget 800
+csmesh context IPaymentGateway.Authorize --depth 2
+```
+
+#### `csmesh path <From> <To>` (alias: `why`)
+The shortest route between two symbols, across DI bindings and MediatR dispatch. Answers "how does this controller ever reach that repository".
+```bash
+csmesh path PaymentController.Post SqlOrderStore.Save
+csmesh why OrderController.Post CreateOrderHandler.Handle --budget 400
+```
+
+#### `csmesh cycles`
+Circular dependencies between types, namespaces or projects. Reports one concrete loop per component rather than an unordered set.
+```bash
+csmesh cycles
+csmesh cycles --project
+csmesh cycles --namespace --under src/Domain
+```
+
+#### `csmesh diff [ref]`
+The symbols a git change touched, and what they reach. Defaults to the working tree against `HEAD`.
+```bash
+csmesh diff
+csmesh diff --staged
+csmesh diff origin/main --budget 800
+```
+
+#### `csmesh changes`
+Bindings, dispatches and implementations that appeared or vanished since the previous index — the structural change, not the textual one. Warns when a DI binding or a MediatR dispatch no longer resolves, which the compiler will not catch and mocked unit tests will not fail on.
+```bash
+csmesh changes
+csmesh changes --calls --budget 1200
+```
+
+#### `csmesh silence <symbol> [<target>]` (alias: `why-not`)
+Why a query came back empty. Exit `1` from any other command means the graph had nothing; it does not say whether the symbol was mistyped, lives in a package, was never bound because the solution was not built, or is reached only through a container scan. Those call for four different next actions.
+```bash
+csmesh silence IPaymentGateway
+csmesh why-not OrderController.Post SqlOrderStore.Save
+```
+
+#### `csmesh unresolved`
+Where the indexer failed, grouped by reason. Run this when an answer is thinner than expected.
+```bash
+csmesh unresolved
+csmesh unresolved --kind di
 ```
 
 #### `csmesh usage`
@@ -370,6 +446,7 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 | `3` | **Ambiguous** | Multiple symbols match query. | Re-run with qualified `Type.Member` instead of bare member name. |
 | `4` | **No Index** | Symbol graph has not been generated. | Execute `csmesh index` and retry. |
 | `64`| **Usage Error** | Invalid flags, syntax, or arguments. | Run `csmesh <cmd> --help`. |
+| `70`| **Internal Error** | Unhandled failure inside csmesh. | Re-run with `--debug` and open an issue. |
 
 ---
 

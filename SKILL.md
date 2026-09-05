@@ -155,8 +155,9 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
   name match or from container scanning, not from a compiler symbol. **Below `0.80` is a lead, not
   a fact**: open the file before acting on it. A row with no `?score` was read straight off a
   symbol and is exact.
-- `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Re-run
-  `csmesh index`, or open that one file to confirm.
+- `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Add `--heal`
+  and run the same command again: the changed files are rebound in place first. `csmesh index` on
+  its own is incremental too, and only rebinds what moved.
 
 ## Exit codes -- branch on these, do not parse the text
 

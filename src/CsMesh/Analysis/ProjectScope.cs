@@ -78,6 +78,12 @@ public sealed class ProjectScope
     public bool ExcludesAnything => Excluded.Count > 0;
 
     /// <summary>
+    /// Directories of the projects being compiled from source, one per project in scope. Used to
+    /// keep their own build output out of the reference set.
+    /// </summary>
+    public IReadOnlyCollection<string> LiveDirectories => _live;
+
+    /// <summary>
     /// True when a file belongs to a project that is part of the build, or to no project at all.
     /// A loose .cs file with no csproj above it is kept: there is nothing to judge it by, and
     /// silently dropping it would be worse than including it.
@@ -109,9 +115,32 @@ public sealed class ProjectScope
         return !sawProject;
     }
 
-    /// <summary>Everything, with no filtering. Used by --all and when no project files exist.</summary>
-    public static ProjectScope Everything(string root, string decision = "no project files; indexing every source file") =>
-        new(root, [], [], "", decision);
+    /// <summary>
+    /// Everything, with no filtering. Used by --all and when no project files exist.
+    ///
+    /// The project list is still collected even though nothing is excluded by it. Passing an empty
+    /// one left <see cref="LiveDirectories"/> empty, so no build output was kept out of the
+    /// reference set and every one of the repository's own types was in the compilation twice --
+    /// exactly the state the filtered path had just been fixed out of. --all widens what is
+    /// indexed; it does not mean nothing is known about what is being indexed.
+    /// </summary>
+    public static ProjectScope Everything(string root, string decision = "no project files; indexing every source file")
+    {
+        List<string> projects;
+        try
+        {
+            projects = Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories)
+                .Where(p => !p.Replace('\\', '/').Contains("/bin/", StringComparison.OrdinalIgnoreCase))
+                .Where(p => !p.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        catch
+        {
+            projects = [];
+        }
+
+        return new ProjectScope(root, projects, [], "", decision);
+    }
 
     public static ProjectScope Discover(string root)
     {

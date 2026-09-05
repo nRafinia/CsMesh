@@ -10,13 +10,33 @@ namespace CsMesh.Analysis;
 /// Builds the symbol graph directly from source files using Roslyn compilation
 /// without requiring full MSBuild workspace evaluation.
 /// </summary>
-public static class Indexer
+public static partial class Indexer
 {
-    private static readonly string[] NativeSuffixes =
+    /// <summary>
+    /// Whether a file on disk is a managed assembly.
+    ///
+    /// This used to be a list of file names known to be native shims, which meant it was only ever
+    /// as complete as the last runtime someone looked inside. Adding the sibling shared frameworks
+    /// to the reference set immediately proved the point: WindowsDesktop ships wpfgfx_cor3.dll and
+    /// four more like it, none of them on the list, and eight fresh CS0009 diagnostics appeared.
+    ///
+    /// Reading the PE header answers the question directly and costs one open per file. A native
+    /// DLL has no metadata directory; CreateFromFile does not notice, because it defers, so the
+    /// failure surfaces later as a compiler diagnostic about a file the caller never chose.
+    /// </summary>
+    private static bool IsManagedAssembly(string path)
     {
-        ".Native.dll", "clrjit.dll", "clrgc.dll", "coreclr.dll", "hostfxr.dll", "hostpolicy.dll",
-        "mscordaccore.dll", "mscordbi.dll", "msquic.dll"
-    };
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
+            return pe.HasMetadata;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static readonly string[] SkipDirs =
     {
@@ -152,7 +172,7 @@ public static class Indexer
             trees.Add(CSharpSyntaxTree.ParseText(globalUsings[i], parseOptions, path: $"<global-usings-{i}>"));
         }
 
-        var references = ReferenceSet(root, out var referenceReport);
+        var references = ReferenceSet(root, scope, out var referenceReport);
         progress?.Invoke($"compiling against {references.Count} references");
 
         // ConsoleApplication so that top-level statements bind to a real entry point instead of
@@ -171,6 +191,7 @@ public static class Indexer
             BuiltFromCommit = RepositoryLocator.GitHead(root),
             Files = stamps,
             GlobalUsingSources = globalUsings.Count,
+            IndexedAllProjects = includeAllProjects,
             SkippedProjects = scope.Excluded,
             SkippedProjectsReason = scope.Reason,
             ScopeDecision = scope.Decision,
@@ -181,7 +202,8 @@ public static class Indexer
             OutputReferences = referenceReport.Output,
             OutputDirectories = referenceReport.OutputDirectories,
             ReferencesCapped = referenceReport.Capped > 0,
-            ReferencesFailed = referenceReport.Failed
+            ReferencesFailed = referenceReport.Failed,
+            ShadowedOutputs = referenceReport.Shadowed
         };
 
         CaptureDiagnostics(compilation, graph);
@@ -191,6 +213,7 @@ public static class Indexer
         builder.Pass2_Bodies(progress);
         builder.Pass3_Indirection(progress);
 
+        builder.ExportDispatchTables();
         graph.UnresolvedCallSites = builder.UnresolvedCallSites;
         graph.TotalCallSites = builder.TotalCallSites;
         graph.AmbiguousDiRegistrations = builder.AmbiguousDiRegistrations;
@@ -282,11 +305,32 @@ public static class Indexer
         }
     }
 
-    private static List<MetadataReference> ReferenceSet(string root, out ReferenceReport report)
+    private static List<MetadataReference> ReferenceSet(string root, ProjectScope scope, out ReferenceReport report)
     {
         var list = new List<MetadataReference>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var tally = new ReferenceReport();
+
+        // Every bin/ under the repository is scanned for references, and every project in the
+        // repository also builds into one of them. Left alone, the compilation ends up holding each
+        // of the repository's own types twice: once from the source being indexed and once from the
+        // assembly that source was compiled into.
+        //
+        // For ordinary calls the source declaration usually wins and nothing looks wrong. Extension
+        // methods are where it shows, because their lookup gathers candidates from every assembly
+        // in scope: the compiler finds AddFleetdeckData in the source and again in the reference,
+        // cannot prefer either, and returns candidates with no symbol. What arrives in the index is
+        // 'ambiguous-overload' clustered in whichever file calls the most extension methods --
+        // which is always the composition root, so it reads like a problem with that one file.
+        //
+        // Only the projects actually being compiled are shadowed. A project the scope left out is
+        // not in the compilation at all, so its assembly in bin/ is the only way anything that
+        // calls into it can bind -- dropping that would trade one silent gap for a larger one.
+        foreach (var name in OwnAssemblyNames(scope.LiveDirectories))
+        {
+            seen.Add(name);
+            tally.Shadowed++;
+        }
 
         void AddDir(string dir, int cap, bool runtime)
         {
@@ -296,12 +340,14 @@ public static class Indexer
             {
                 var name = Path.GetFileName(dll);
 
-                // Native shims sit next to managed assemblies and are not PE images with metadata.
-                // CreateFromFile throws on each one; the exception used to be swallowed, so
-                // thirteen failures per index went unmentioned and looked like nothing at all.
-                if (NativeSuffixes.Any(x => name.EndsWith(x, StringComparison.OrdinalIgnoreCase))) continue;
-
+                // Deduplicate before reading the header: a shared framework and a bin/ copy of the
+                // same assembly are the same file twice, and the header read is the expensive part.
                 if (!seen.Add(name)) continue;
+
+                // Native shims sit next to managed assemblies. Skipping them here rather than
+                // letting the compiler complain later keeps the diagnostics in 'doctor' about the
+                // caller's code instead of about the runtime's layout.
+                if (!IsManagedAssembly(dll)) { tally.Native++; continue; }
 
                 try
                 {
@@ -321,7 +367,23 @@ public static class Indexer
             }
         }
 
-        AddDir(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), 400, runtime: true);
+        var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+        AddDir(runtimeDir, 400, runtime: true);
+
+        // The runtime directory is Microsoft.NETCore.App and nothing else. A web project's
+        // ASP.NET Core types live in a sibling shared framework, and because the app is
+        // framework-dependent they are never copied to bin/ either -- so without this they are
+        // absent from the compilation entirely.
+        //
+        // What that looks like from the outside is not an error. Roslyn still binds most of the
+        // file; it just cannot pick between overloads whose parameter types it has never seen, so
+        // it returns candidates and no symbol. The index comes out with high call-resolution and
+        // a pile of 'ambiguous-overload' concentrated in one project, which reads like a quirk of
+        // that project's code rather than a missing reference.
+        foreach (var dir in SiblingSharedFrameworks(runtimeDir))
+        {
+            AddDir(dir, 400, runtime: true);
+        }
 
         foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories).Take(80))
         {
@@ -336,6 +398,83 @@ public static class Indexer
         return list;
     }
 
+    /// <summary>
+    /// The other shared frameworks installed beside the running one, at the same version where
+    /// possible and the highest available otherwise. ASP.NET Core and WindowsDesktop ship this way.
+    /// </summary>
+    internal static IEnumerable<string> SiblingSharedFrameworks(string runtimeDirectory)
+    {
+        var version = new DirectoryInfo(runtimeDirectory.TrimEnd(Path.DirectorySeparatorChar, '/'));
+        var sharedRoot = version.Parent?.Parent;
+
+        // The name check is not decoration. A runtime directory that is not laid out as
+        // shared/<framework>/<version> -- a single-file publish, a self-contained deployment, an
+        // unusual install -- walks two levels up to something arbitrary, and without this every
+        // directory beside it would be handed to the compiler as a framework. On Linux, two levels
+        // above a temp directory is the filesystem root.
+        if (sharedRoot is not { Exists: true } ||
+            !sharedRoot.Name.Equals("shared", StringComparison.OrdinalIgnoreCase))
+        {
+            yield break;
+        }
+
+        foreach (var framework in sharedRoot.EnumerateDirectories())
+        {
+            if (framework.Name.Equals("Microsoft.NETCore.App", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // Exact version match first, so the reference set matches the runtime the caller is on.
+            var exact = Path.Combine(framework.FullName, version.Name);
+            if (Directory.Exists(exact)) { yield return exact; continue; }
+
+            var newest = framework.EnumerateDirectories()
+                .OrderByDescending(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+
+            if (newest != null) yield return newest.FullName;
+        }
+    }
+
+    /// <summary>
+    /// The output file names of the projects in this repository, so they can be kept out of the
+    /// reference set. Taken from &lt;AssemblyName&gt; when the project sets one and from the file
+    /// name otherwise, which is what MSBuild does.
+    /// </summary>
+    private static IEnumerable<string> OwnAssemblyNames(IEnumerable<string> projectDirectories)
+    {
+        foreach (var directory in projectDirectories)
+        {
+            string[] found;
+            try { found = Directory.GetFiles(directory, "*.csproj"); }
+            catch { continue; }
+
+            foreach (var project in found) yield return AssemblyNameOf(project);
+        }
+    }
+
+    /// <summary>
+    /// A project's output file name: &lt;AssemblyName&gt; when it declares one, otherwise the
+    /// project file name, which is what MSBuild falls back to.
+    /// </summary>
+    private static string AssemblyNameOf(string project)
+    {
+        var name = Path.GetFileNameWithoutExtension(project);
+
+        string? text;
+        try { text = File.ReadAllText(project); }
+        catch { text = null; }
+
+        var open = text?.IndexOf("<AssemblyName>", StringComparison.OrdinalIgnoreCase) ?? -1;
+        if (open < 0) return name + ".dll";
+
+        var close = text!.IndexOf("</AssemblyName>", open, StringComparison.OrdinalIgnoreCase);
+        if (close <= open) return name + ".dll";
+
+        var declared = text[(open + "<AssemblyName>".Length)..close].Trim();
+
+        // An MSBuild property reference is not a name; fall back rather than guess at it.
+        return declared.Length > 0 && !declared.Contains('$') ? declared + ".dll" : name + ".dll";
+    }
+
     /// <summary>Where the reference set came from, and whether it was truncated.</summary>
     private sealed class ReferenceReport
     {
@@ -344,6 +483,8 @@ public static class Indexer
         public int OutputDirectories;
         public int Capped;
         public int Failed;
+        public int Native;
+        public int Shadowed;
     }
 
     private sealed class Builder(Graph g, CSharpCompilation comp, ProjectLocator projects)
@@ -409,6 +550,77 @@ public static class Indexer
             ["mediatr"] = 75
         };
 
+        /// <summary>
+        /// Files the passes are allowed to read. Null means all of them, which is a full index.
+        /// </summary>
+        public HashSet<string>? OnlyFiles { get; set; }
+
+        /// <summary>
+        /// Symbol key to the id it held before an incremental pass retired it. Empty on a full
+        /// index, where every id is fresh anyway.
+        /// </summary>
+        public Dictionary<string, int> Recycle { get; set; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Loads what the surviving graph already knows, so an edited file can be bound against it
+        /// without re-reading the files it depends on.
+        ///
+        /// The dedupe set is seeded too, and that is not optional. It is per-Builder, so on an
+        /// incremental pass it starts empty while the edges it guards are still in the graph. Pass
+        /// 3 re-derives interface and override edges from _implementorsByBase, whose base type is
+        /// usually a node that was never retired, and every one of those would be appended twice.
+        /// </summary>
+        public void Seed()
+        {
+            foreach (var n in g.Nodes)
+            {
+                if (n.Key.Length == 0) continue;
+                _idByKey[n.Key] = n.Id;
+                if (n.Id >= g.NextNodeId) g.NextNodeId = n.Id + 1;
+            }
+
+            foreach (var id in Recycle.Values)
+            {
+                if (id >= g.NextNodeId) g.NextNodeId = id + 1;
+            }
+
+            foreach (var e in g.Edges) _dedupe.Add((e.From, e.To, e.Kind));
+
+            foreach (var (request, handlers) in g.HandlersByRequest)
+            {
+                _handlersByRequest[request] = new List<int>(handlers);
+            }
+
+            foreach (var (shortName, keys) in g.RequestKeysByShort)
+            {
+                _requestKeysByShort[shortName] = new HashSet<string>(keys, StringComparer.Ordinal);
+            }
+        }
+
+        /// <summary>
+        /// Writes the dispatch tables back onto the graph so the next incremental pass can seed
+        /// from them. Called at the end of a full index and of a partial one.
+        /// </summary>
+        public void ExportDispatchTables()
+        {
+            g.HandlersByRequest = _handlersByRequest
+                .ToDictionary(x => x.Key, x => new List<int>(x.Value), StringComparer.Ordinal);
+
+            g.RequestKeysByShort = _requestKeysByShort
+                .ToDictionary(x => x.Key, x => x.Value.ToList(), StringComparer.Ordinal);
+        }
+
+        /// <summary>
+        /// True for a tree an incremental pass has no reason to bind. Synthetic trees -- the
+        /// global-using sets, whose paths are bracketed -- carry no declarations and no bodies.
+        /// </summary>
+        private bool Skip(SyntaxTree tree)
+        {
+            if (OnlyFiles == null) return false;
+            if (tree.FilePath.Length == 0 || tree.FilePath[0] == '<') return true;
+            return !OnlyFiles.Contains(Path.GetRelativePath(g.Root, tree.FilePath).Replace('\\', '/'));
+        }
+
         public int UnresolvedCallSites { get; private set; }
         public int TotalCallSites { get; private set; }
         public int AmbiguousDiRegistrations { get; private set; }
@@ -454,9 +666,13 @@ public static class Indexer
 
         private int AddNode(string key, string name, string shortName, string kind, string file, int line, int endLine)
         {
+            // A symbol that survived an edit gets its old id back, which is what keeps every edge
+            // reaching it from an untouched file valid. Otherwise take the next free id -- never
+            // the node count, which is only correct while nothing has ever been removed.
             var node = new Node
             {
-                Id = g.Nodes.Count,
+                Id = Recycle.TryGetValue(key, out var reused) ? reused : g.NextNodeId++,
+                Key = key,
                 Project = projects.For(file),
                 Name = name,
                 Short = shortName,
@@ -466,7 +682,7 @@ public static class Indexer
                 EndLine = endLine
             };
 
-            g.Nodes.Add(node);
+            g.Add(node);
             _idByKey[key] = node.Id;
             return node.Id;
         }
@@ -478,6 +694,14 @@ public static class Indexer
         /// </summary>
         private static string Key(ISymbol s)
         {
+            // An extension method has two symbols. The declaration gives the original, whose first
+            // parameter is the receiver; a call site gives the reduced form, where the receiver has
+            // moved out of the parameter list. Keyed as written they differ, so pass 1 declared the
+            // method and pass 2 created a second node for the same code -- and hung the call edge
+            // on the phantom, leaving the real declaration with no callers and blast-radius with
+            // nothing to report. ReducedFrom collapses them back onto one symbol.
+            if (s is IMethodSymbol { ReducedFrom: { } original }) s = original;
+            
             var container = s.ContainingType?.ToDisplayString(KeyFormat)
                             ?? s.ContainingNamespace?.ToDisplayString() ?? "";
 
@@ -686,6 +910,7 @@ public static class Indexer
 
             foreach (var tree in comp.SyntaxTrees)
             {
+                if (Skip(tree)) continue;
                 var model = comp.GetSemanticModel(tree);
 
                 // Enums and delegates derive from BaseTypeDeclarationSyntax / MemberDeclarationSyntax,
@@ -1061,6 +1286,7 @@ public static class Indexer
 
             foreach (var tree in comp.SyntaxTrees)
             {
+                if (Skip(tree)) continue;
                 var model = comp.GetSemanticModel(tree);
                 var root = tree.GetRoot();
 
@@ -1429,7 +1655,13 @@ public static class Indexer
                 ? gen.TypeArgumentList.Arguments.ToList()
                 : args.Select(a => a.Expression).OfType<TypeOfExpressionSyntax>().Select(t => t.Type).ToList();
 
-            if (types.Count == 0) return;
+            // AddSingleton(new Cache()) and AddScoped(sp => Build(sp)) name no type anywhere the
+            // syntax can reach. The container still gets a service; csmesh cannot say which.
+            if (types.Count == 0)
+            {
+                RecordUnresolved("di", inv, inv.Expression.ToString(), "no-type-argument");
+                return;
+            }
 
             if (lifetime == "hosted")
             {
@@ -1450,9 +1682,9 @@ public static class Indexer
                 // services.AddScoped<IStore>(sp => new SqlStore(...)): the service is the type
                 // argument and the implementation only exists inside the lambda.
                 var produced = FactoryImplementation(args, model);
-                if (produced is { } impl && impl != self.Value.Id)
+                if (produced is { } impl && impl.Id != self.Value.Id)
                 {
-                    Bind(self.Value.Id, impl, 0.9, "factory-lambda");
+                    Bind(self.Value.Id, impl.Id, impl.Confidence, impl.Source);
                     return;
                 }
 
@@ -1464,6 +1696,9 @@ public static class Indexer
 
             var service = Resolve(types[0]);
             var implementation = Resolve(types[1]);
+
+            // Resolve already recorded why. Half a pair is still a binding that will not be drawn,
+            // and the implementation is tagged so it is at least visible as wired.
             if (implementation == null) return;
 
             if (service == null)
@@ -1500,29 +1735,83 @@ public static class Indexer
             }
         }
 
+        /// <summary>Provider methods whose type argument names the type that will come back.</summary>
+        private static readonly string[] ResolutionMethods =
+        {
+            "GetRequiredService", "GetService", "GetRequiredKeyedService", "GetKeyedService"
+        };
+
         /// <summary>
-        /// Pulls the constructed implementation out of a factory registration. Only a direct
-        /// object creation counts; sp =&gt; sp.GetRequiredService&lt;T&gt;() is an alias to another
-        /// registration, not a binding of its own.
+        /// Pulls the implementation out of a factory registration, from either shape it takes.
+        ///
+        /// A direct construction -- sp =&gt; new SqlStore(...) -- is unambiguous. The other shape is
+        /// the alias: register the concrete type once, then expose it through each interface with
+        /// sp =&gt; sp.GetRequiredService&lt;SqlStore&gt;(). This used to be refused on the grounds that
+        /// an alias points at another registration rather than being a binding of its own.
+        ///
+        /// True, and beside the point. The question csmesh exists to answer is which class runs
+        /// when the container is asked for the interface, and the alias states the answer outright.
+        /// Refusing to read it means 'impl ITenantContext' falls back to ranking every implementor
+        /// by name -- guessing at something written down two lines away. On a codebase that wires
+        /// itself this way it is not an edge case; it is most of the container.
+        ///
+        /// Scored the same as a direct construction, and for the same reason: both name the type
+        /// outright and both sit inside a lambda that could in principle branch. Below
+        /// <see cref="Edge.TrustThreshold"/> it would not rank first in 'impl', which would leave
+        /// the container's actual answer sitting third in an alphabetical list -- the exact failure
+        /// the edge was added to prevent. The source is recorded separately so the provenance
+        /// stays visible without costing the ranking.
         /// </summary>
-        private int? FactoryImplementation(SeparatedSyntaxList<ArgumentSyntax> args, SemanticModel model)
+        private (int Id, double Confidence, string Source)? FactoryImplementation(
+            SeparatedSyntaxList<ArgumentSyntax> args, SemanticModel model)
         {
             foreach (var arg in args)
             {
                 if (arg.Expression is not AnonymousFunctionExpressionSyntax lambda) continue;
 
-                var creation = lambda.ExpressionBody as ObjectCreationExpressionSyntax
-                               ?? lambda.Block?.DescendantNodes()
-                                   .OfType<ReturnStatementSyntax>()
-                                   .Select(r => r.Expression)
-                                   .OfType<ObjectCreationExpressionSyntax>()
-                                   .LastOrDefault();
+                var body = lambda.ExpressionBody
+                           ?? lambda.Block?.DescendantNodes()
+                               .OfType<ReturnStatementSyntax>()
+                               .Select(r => r.Expression)
+                               .LastOrDefault(e => e != null);
 
-                if (creation == null) continue;
-                if (ResolveTypeNode(creation.Type, model) is { } resolved) return resolved.Id;
+                if (body is ObjectCreationExpressionSyntax creation)
+                {
+                    if (ResolveTypeNode(creation.Type, model) is { } made)
+                    {
+                        return (made.Id, 0.9, "factory-lambda");
+                    }
+
+                    continue;
+                }
+
+                if (AliasTarget(body) is not { } alias) continue;
+                if (ResolveTypeNode(alias, model) is { } resolved)
+                {
+                    return (resolved.Id, 0.9, "factory-alias");
+                }
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// The type argument of a provider resolution call, or null when the expression is
+        /// something else. Handles ActivatorUtilities.CreateInstance&lt;T&gt;(sp) as well, which is
+        /// a construction dressed as a call.
+        /// </summary>
+        private static TypeSyntax? AliasTarget(ExpressionSyntax? body)
+        {
+            if (body is not InvocationExpressionSyntax call) return null;
+            if (call.Expression is not MemberAccessExpressionSyntax access) return null;
+            if (access.Name is not GenericNameSyntax generic) return null;
+            if (generic.TypeArgumentList.Arguments.Count != 1) return null;
+
+            var name = generic.Identifier.Text;
+            var known = ResolutionMethods.Contains(name, StringComparer.Ordinal)
+                        || name == "CreateInstance";
+
+            return known ? generic.TypeArgumentList.Arguments[0] : null;
         }
 
         /// <summary>
@@ -1533,12 +1822,24 @@ public static class Indexer
         /// </summary>
         private (int Id, bool Semantic)? ResolveTypeNode(TypeSyntax syntax, SemanticModel model)
         {
-            if (model.GetSymbolInfo(syntax).Symbol is INamedTypeSymbol sym &&
-                sym.OriginalDefinition.Locations.Any(l => l.IsInSource))
+            var symbol = model.GetSymbolInfo(syntax).Symbol as INamedTypeSymbol;
+
+            if (symbol != null && symbol.OriginalDefinition.Locations.Any(l => l.IsInSource))
             {
-                var definition = sym.OriginalDefinition;
+                var definition = symbol.OriginalDefinition;
                 var id = NodeFor(definition, definition.TypeKind == TypeKind.Interface ? "interface" : "type");
                 return (id, true);
+            }
+
+            // The compiler knows this type and it is not in the source being indexed: a package, or
+            // a project the scope left out. The registration is real, the binding cannot be drawn,
+            // and until now nothing said so -- 'unresolved --kind di' answered "none", which reads
+            // as "DI is fully understood" rather than "DI was never attempted here".
+            if (symbol != null)
+            {
+                RecordUnresolved("di", syntax, syntax.ToString(), "type-outside-index");
+                Dbg.Log($"di: '{syntax}' resolves to {symbol.ContainingAssembly?.Name ?? "an assembly"} outside the index");
+                return null;
             }
 
             var shortName = syntax.ToString().Split('.').Last().Split('<').First();
@@ -1557,7 +1858,12 @@ public static class Indexer
                 match = n;
             }
 
-            return match == null ? null : (match.Id, false);
+            if (match != null) return (match.Id, false);
+
+            // Neither the compiler nor a name match knew it. Usually a missing reference, which
+            // means the whole registration is invisible rather than merely unlinked.
+            RecordUnresolved("di", syntax, syntax.ToString(), "type-not-found");
+            return null;
         }
 
         /// <summary>

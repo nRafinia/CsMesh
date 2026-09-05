@@ -58,6 +58,12 @@ public static class DoctorCommand
                               + (graph.ReferencesCapped ? " (a directory scan hit its cap)" : "")
                               + (graph.ReferencesFailed > 0 ? $", {graph.ReferencesFailed} could not be opened" : ""));
 
+            if (graph.ShadowedOutputs > 0)
+            {
+                Console.WriteLine($"                {graph.ShadowedOutputs} project output(s) excluded: those types come from source,");
+                Console.WriteLine("                and referencing them as well makes every extension method call ambiguous.");
+            }
+
             if (graph.OutputReferences == 0 && graph.UnresolvedCallSites > 0)
             {
                 Console.WriteLine("                NOTHING FROM bin/. The solution was not built when this index was made,");

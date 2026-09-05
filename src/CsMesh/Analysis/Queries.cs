@@ -118,7 +118,9 @@ public static partial class Queries
             {
                 var edges = g.Out(node.Id)
                     .Where(IsFlow)
-                    .OrderByDescending(e => e.Note == "di-bound")
+                    // A DiBinding is the container's own answer to "what runs". Matching only on
+                    // the marker missed it, because a DiBinding edge notes its lifetime instead.
+                    .OrderByDescending(e => e.Kind == EdgeKind.DiBinding || e.Note == "di-bound")
                     .ThenByDescending(e => e.Score)
                     .ThenBy(e => e.Kind == EdgeKind.Construct ? 1 : 0)
                     .ToList();
@@ -203,9 +205,18 @@ public static partial class Queries
     /// </summary>
     public static int Impl(Graph g, Node target, BudgetWriter w, HashSet<string> dirty)
     {
+        // One implementation can arrive on two edges: the DiBinding written where it was
+        // registered, and the Interface edge written where it was declared. Deduplicating on
+        // arrival order kept whichever came first, which was the DiBinding -- and the DiBinding
+        // carries the lifetime in its note, not the "di-bound" marker the sort below looks for.
+        // The edge holding the ranking signal was the one being thrown away, so a registered class
+        // only led the list when its score happened to tie with everything else and insertion order
+        // broke the tie in its favour. Anything registered at less than full confidence -- a name
+        // match, an assembly scan, a factory -- sorted below classes nobody registered at all.
         var impls = g.Out(target.Id)
             .Where(e => e.Kind is EdgeKind.Interface or EdgeKind.Override or EdgeKind.DiBinding)
-            .DistinctBy(e => e.To)
+            .GroupBy(e => e.To)
+            .Select(x => x.OrderByDescending(e => e.Kind == EdgeKind.DiBinding).First())
             .ToList();
 
         if (impls.Count == 0)
@@ -218,7 +229,7 @@ public static partial class Queries
                 Row(target, 0, "root", null, dirty));
 
         foreach (var e in impls
-                     .OrderByDescending(x => x.Note == "di-bound")
+                     .OrderByDescending(x => x.Kind == EdgeKind.DiBinding || x.Note == "di-bound")
                      .ThenBy(x => g.ById(x.To) is { } n && IsTest(n) ? 1 : 0)
                      .ThenByDescending(x => x.Score))
         {

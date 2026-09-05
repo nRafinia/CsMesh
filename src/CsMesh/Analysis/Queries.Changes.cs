@@ -14,8 +14,17 @@ public static partial class Queries
     /// because they inject mocks, and the first container resolve at runtime throws. Nothing in
     /// the diff looks like anything but a moved line.
     ///
-    /// Edges are matched on symbol names rather than node ids: ids are positional and every
-    /// re-index reassigns them.
+    /// Edges are matched on the compiler's symbol key. They used to be matched on display names,
+    /// because node ids were positional and every re-index reassigned them -- but a display name
+    /// drops parameter types, so `Handle(CreateOrder)` and `Handle(CancelOrder)` shared one entry
+    /// and the second silently overwrote the first. On a MediatR codebase, where every handler is
+    /// called Handle, that is most of the dispatch edges in the solution. Node.Key is persisted
+    /// now, and it carries the container, arity and fully qualified parameter types.
+    ///
+    /// Three dimensions, not two. An edge can also stay in place and get worse: a binding the
+    /// indexer read off a compiler symbol last time and can only guess at now is not an edge that
+    /// changed, it is an edge that stopped being trustworthy, and it is almost always a reference
+    /// that went missing. Reporting it as unchanged is the wrong answer.
     /// </summary>
     public static int Changes(Graph current, Graph previous, bool includeCalls, BudgetWriter w, HashSet<string> dirty)
     {
@@ -25,7 +34,15 @@ public static partial class Queries
         var added = now.Keys.Except(before.Keys, StringComparer.Ordinal).ToList();
         var removed = before.Keys.Except(now.Keys, StringComparer.Ordinal).ToList();
 
-        if (added.Count == 0 && removed.Count == 0)
+        // Confidence noise is not a change. A drop of a hundredth is float drift; a drop from 1.00
+        // to 0.70 means the indexer went from reading a symbol to guessing at a name.
+        var degraded = now.Keys
+            .Intersect(before.Keys, StringComparer.Ordinal)
+            .Where(k => before[k].Score - now[k].Score > 0.05)
+            .OrderBy(k => now[k].Score)
+            .ToList();
+
+        if (added.Count == 0 && removed.Count == 0 && degraded.Count == 0)
         {
             w.Force("no structural change since the previous index.");
             w.Force(includeCalls
@@ -34,12 +51,44 @@ public static partial class Queries
             return Exit.Ok;
         }
 
-        w.Force($"{removed.Count} edge(s) removed, {added.Count} added since the previous index");
+        w.Force($"{removed.Count} edge(s) removed, {added.Count} added"
+                 + (degraded.Count > 0 ? $", {degraded.Count} degraded" : "")
+                 + " since the previous index");
 
         // Removals first, and deliberately: an edge that disappeared is the one that breaks
         // something. An edge that appeared is usually the feature being written.
         if (!Group("REMOVED", removed, before, "removed")) return Truncated(w);
         if (!Group("ADDED", added, now, "added")) return Truncated(w);
+
+        if (degraded.Count > 0)
+        {
+            if (!w.Add("")) return Truncated(w);
+            if (!w.Add("DEGRADED  the edge still exists; csmesh is less sure of it")) return Truncated(w);
+
+            foreach (var key in degraded.Take(20))
+            {
+                var fact = now[key];
+                var source = fact.Source != null ? $" {fact.Source}" : "";
+                var line = $"    {fact.From} -> {fact.To}  [{fact.Kind}]  "
+                           + $"{before[key].Score:0.00} -> {fact.Score:0.00}{source}";
+
+                var row = new QueryRow
+                {
+                    Depth = 1,
+                    Symbol = $"{fact.From} -> {fact.To}",
+                    Kind = fact.Kind.ToString(),
+                    Relation = "degraded",
+                    Note = $"{before[key].Score:0.00} -> {fact.Score:0.00}",
+                    Confidence = fact.Score,
+                    Source = fact.Source,
+                    Site = fact.Site
+                };
+
+                if (!w.Add(line, row)) return Truncated(w);
+            }
+
+            if (degraded.Count > 20 && !w.Add($"    ... {degraded.Count - 20} more")) return Truncated(w);
+        }
 
         var lostBindings = removed.Count(k => k.StartsWith("DiBinding", StringComparison.Ordinal));
         var lostDispatch = removed.Count(k => k.StartsWith("Mediatr", StringComparison.Ordinal));
@@ -49,6 +98,28 @@ public static partial class Queries
             w.Force("");
             w.Force($"WARNING  {lostBindings} binding(s) and {lostDispatch} dispatch(es) no longer resolve.");
             w.Force("         The compiler will not catch either. Check the registration site before merging.");
+        }
+
+        // A lifetime is not decoration. Moving a registration from scoped to singleton keeps every
+        // edge in place and changes when the object is built, which is where captive dependencies
+        // and cross-request state leaks come from. It shows up here as one removed edge and one
+        // added edge with a different note, and it is worth saying out loud.
+        var lifetimeShifts = removed
+            .Where(k => k.StartsWith("DiBinding", StringComparison.Ordinal))
+            .Select(k => (Key: k, Pair: PairOf(k)))
+            .Where(x => added.Any(a => a.StartsWith("DiBinding", StringComparison.Ordinal) && PairOf(a) == x.Pair))
+            .ToList();
+
+        foreach (var (key, _) in lifetimeShifts.Take(6))
+        {
+            var wasNote = before[key].Note ?? "?";
+            var nowKey = added.First(a => a.StartsWith("DiBinding", StringComparison.Ordinal) && PairOf(a) == PairOf(key));
+            var nowNote = now[nowKey].Note ?? "?";
+            if (wasNote == nowNote) continue;
+
+            w.Force("");
+            w.Force($"LIFETIME {before[key].From} -> {before[key].To} changed from {wasNote} to {nowNote}.");
+            w.Force("         Nothing in the diff or the compiler reports this.");
         }
 
         return Exit.Ok;
@@ -102,7 +173,18 @@ public static partial class Queries
         _ => 5
     };
 
-    private readonly record struct EdgeFact(string From, string To, EdgeKind Kind, string? Note, string? Site);
+    private readonly record struct EdgeFact(
+        string From, string To, EdgeKind Kind, string? Note, string? Site, double Score, string? Source);
+
+    /// <summary>The two symbol keys of an edge signature, without its kind or note.</summary>
+    private static string PairOf(string signature)
+    {
+        var first = signature.IndexOf('\u0001');
+        if (first < 0) return signature;
+        var second = signature.IndexOf('\u0001', first + 1);
+        var third = second < 0 ? -1 : signature.IndexOf('\u0001', second + 1);
+        return third < 0 ? signature[(first + 1)..] : signature[(first + 1)..third];
+    }
 
     /// <summary>
     /// Call edges are excluded by default. They churn on every refactor and would bury the handful
@@ -121,7 +203,19 @@ public static partial class Queries
             var to = g.ById(e.To);
             if (from == null || to == null) continue;
 
-            map[$"{e.Kind}|{from.Name}|{to.Name}"] = new EdgeFact(from.Short, to.Short, e.Kind, e.Note, e.Site);
+            // Key, not Name, and the note is part of the identity: a binding that moved from
+            // scoped to singleton is a different edge, and reporting it as unchanged hides the
+            // only trace the change leaves anywhere outside the registration line itself.
+            // A graph written before keys were persisted falls back to the display name.
+            var fromKey = from.Key.Length > 0 ? from.Key : from.Name;
+            var toKey = to.Key.Length > 0 ? to.Key : to.Name;
+
+            // \u0001 as the separator: a fully qualified generic parameter list is full of
+            // punctuation, and every printable delimiter tried appears inside real symbol keys.
+            var signature = $"{e.Kind}\u0001{fromKey}\u0001{toKey}\u0001{e.Note}";
+
+            map[signature] = new EdgeFact(
+                from.Short, to.Short, e.Kind, e.Note, e.Site, e.Score, e.Source);
         }
 
         return map;
