@@ -15,8 +15,32 @@ permissions:
   contents: write
 
 jobs:
+  # Gate every release on the test suite. A tag push or manual dispatch must
+  # never ship binaries for a tree the tests have not run against.
+  test:
+    name: Run Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore CsMesh.slnx
+
+      - name: Build (Release)
+        run: dotnet build CsMesh.slnx -c Release --no-restore
+
+      - name: Run tests
+        run: dotnet test src/tests/CsMesh.Tests/CsMesh.Tests.csproj -c Release --no-build --logger "console;verbosity=normal"
+
   build-aot:
     name: Build Native AOT (${{ matrix.target }})
+    needs: [test]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -73,6 +97,7 @@ jobs:
 
   pack-nuget:
     name: Pack NuGet Package
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -115,6 +140,15 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+
+      # The install scripts (install.sh / install.ps1) verify the downloaded
+      # archive against this file before extracting. Do not rename it without
+      # updating the installers.
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          sha256sum csmesh-win-x64.zip csmesh-linux-x64.tar.gz csmesh-osx-arm64.tar.gz > checksums.txt
+          cat checksums.txt
 
       - name: Determine Release Tag
         id: tag
