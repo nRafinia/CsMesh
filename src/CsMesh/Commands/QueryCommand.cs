@@ -317,26 +317,68 @@ public static class QueryCommand
         }
 
         writer.Force($"not found: {query}");
-        var near = graph.Nodes
-            .Where(n => n.Short.Contains(leaf, StringComparison.OrdinalIgnoreCase))
-            .Take(5)
-            .ToList();
+
+        var verdict = OutOfGraph.Classify(query, graph);
+
+        // Input that cannot be an identifier is answered before anything else. Token matching
+        // always finds something, and a plausible-looking symbol suggestion in response to a
+        // route or an env var is worse than silence: it reads as an answer.
+        if (verdict is { Decisive: true })
+        {
+            writer.Force(verdict.Reason);
+            result.Notes.Add(verdict.Reason);
+
+            foreach (var next in verdict.Next)
+            {
+                writer.Force($"  next: {next}");
+                result.Notes.Add($"next: {next}");
+            }
+
+            if (json) return EmitJson(result, writer, Exit.NotFound, null, keepRows: true);
+            writer.Flush();
+            return Exit.NotFound;
+        }
+
+        // Otherwise near misses come first. When the caller padded a real name --
+        // DeleteCredentialAsync for DeleteAsync -- the correct answer is one line away.
+        var near = SymbolSuggest.For(graph, query);
 
         if (near.Count > 0)
         {
-            writer.Force("did you mean: " + string.Join(", ", near.Select(n => n.Short)));
-            foreach (var n in near)
+            writer.Force("did you mean: " + string.Join(", ", near.Select(h => $"{h.Node.Short} [{h.Why}]")));
+            foreach (var hit in near)
             {
+                var n = hit.Node;
                 result.Rows.Add(new QueryRow
                 {
                     Symbol = n.Short,
                     Kind = n.Kind,
                     Relation = "suggestion",
+                    Note = hit.Why,
                     File = n.File.Length > 0 ? n.File : null,
                     Line = n.Line,
                     Stale = n.File.Length > 0 && dirty.Contains(n.File)
                 });
             }
+        }
+        else if (verdict != null)
+        {
+            // Nothing in the graph looks like this, so the useful question is no longer "which
+            // symbol did you mean" but "which tool answers this at all".
+            writer.Force(verdict.Reason);
+            result.Notes.Add(verdict.Reason);
+
+            foreach (var next in verdict.Next)
+            {
+                writer.Force($"  next: {next}");
+                result.Notes.Add($"next: {next}");
+            }
+        }
+        else
+        {
+            writer.Force("Names, namespaces and route templates were all searched.");
+            writer.Force("String literals, config values and non-.cs files are not in the graph.");
+            writer.Force("For those, grep is the right tool. For a symbol you expected here: csmesh unresolved");
         }
 
         if (json) return EmitJson(result, writer, Exit.NotFound, null, keepRows: true);

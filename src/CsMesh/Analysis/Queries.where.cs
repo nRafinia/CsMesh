@@ -62,6 +62,36 @@ public static partial class Queries
         if (candidates.Count == 0)
         {
             w.Force($"no symbol matches '{query}'.");
+
+            var verdict = OutOfGraph.Classify(query, g);
+
+            // A route, an env var or a file name cannot be an identifier, so the classifier is
+            // right by construction and the suggester would only add noise above it.
+            if (verdict is { Decisive: true })
+            {
+                w.Force(verdict.Reason);
+                foreach (var next in verdict.Next) w.Force($"  next: {next}");
+                return Exit.NotFound;
+            }
+
+            var near = SymbolSuggest.For(g, query);
+            if (near.Count > 0)
+            {
+                w.Force("did you mean: " + string.Join(", ", near.Select(h => $"{h.Node.Short} [{h.Why}]")));
+                w.Force($"next: csmesh context {near[0].Node.Short} --budget 800");
+                return Exit.NotFound;
+            }
+
+            // One generic paragraph for every kind of miss was cheap to write and expensive to
+            // act on: a config key and a route template got identical advice, and only one of
+            // them belonged anywhere near grep.
+            if (verdict != null)
+            {
+                w.Force(verdict.Reason);
+                foreach (var next in verdict.Next) w.Force($"  next: {next}");
+                return Exit.NotFound;
+            }
+
             w.Force("Names, namespaces, file paths and route templates were all searched.");
             w.Force("String literals, config values, TODOs and non-.cs files are not in the graph.");
             w.Force("For those, grep is the right tool. For a symbol you expected here: csmesh unresolved");
