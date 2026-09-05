@@ -280,7 +280,7 @@ footer .right{margin-left:auto}
       <a class="btn" href="https://github.com/nRafinia/CsMesh">Read the source</a>
     </div>
     <div class="chips">
-      <span>.NET 10</span><span>Native AOT</span><span>Roslyn</span><span>zero idle context</span><span>MIT</span>
+      <span>.NET 10</span><span>Native AOT</span><span>Roslyn</span><span>incremental re-indexing</span><span>zero idle context</span><span>MIT</span>
     </div>
 
     <div class="term reveal hero-term">
@@ -356,8 +356,8 @@ footer .right{margin-left:auto}
 <section class="sect" id="commands">
   <div class="wrap">
     <div class="head">
-      <h2>Six commands, real output</h2>
-      <p>Pick one. Every answer is capped by <code>--budget</code>; when the answer is genuinely bigger than the cap, the process exits 2 with a hint instead of flooding the window.</p>
+      <h2>Seven commands, real output</h2>
+      <p>Pick one. Every answer is capped by <code>--budget</code>; pass <code>--heal</code> to auto-refresh stale nodes on the fly. When the answer is bigger than the cap, the process exits 2 with a hint.</p>
     </div>
     <div class="cmdgrid">
       <div class="cmdlist" role="tablist" aria-label="csmesh commands"></div>
@@ -404,7 +404,7 @@ footer .right{margin-left:auto}
     </div>
     <div class="codes">
       <div class="c0"><kbd>0</kbd><strong>ok</strong><p>Complete answer, within budget. Use it.</p></div>
-      <div><kbd>1</kbd><strong>not-found</strong><p>No such symbol here. Check the spelling or the namespace.</p></div>
+      <div><kbd>1</kbd><strong>not-found</strong><p>No such symbol here. Check the spelling or run <code>csmesh where</code> to discover symbols.</p></div>
       <div class="c2"><kbd>2</kbd><strong>over-budget</strong><p>The answer exists but is bigger than the cap. Narrow <code>--depth</code> rather than raising the budget.</p></div>
       <div><kbd>3</kbd><strong>ambiguous</strong><p>Several symbols match. Re-run with <code>Type.Member</code>.</p></div>
       <div class="c4"><kbd>4</kbd><strong>no-index</strong><p>No graph on disk yet. Run <code>csmesh index</code>.</p></div>
@@ -466,7 +466,7 @@ footer .right{margin-left:auto}
         <h3>.NET global tool</h3>
         <div class="cmdbox" style="margin-bottom:10px"><code>dotnet tool install --global CsMesh</code><button data-copy="dotnet tool install --global CsMesh">Copy</button></div>
         <div class="cmdbox"><code>dotnet tool update --global CsMesh</code><button data-copy="dotnet tool update --global CsMesh">Copy</button></div>
-        <p class="note">Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: run <code>csmesh index</code> once, and <code>csmesh doctor</code> whenever an answer looks wrong.</p>
+        <p class="note">Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: run <code>csmesh index</code> once. Use <code>--heal</code> on any query or rerun <code>csmesh index</code> when files change.</p>
       </div>
     </div>
   </div>
@@ -523,6 +523,14 @@ const commands = [
  {label:"trace", line:"csmesh trace PaymentController.Post --budget 600", exit:"exit 0",
   desc:"Follows a member forward through calls, constructor use, interface dispatch and mediator sends, until the depth limit or the budget runs out.",
   out: heroLines},
+ {label:"where", line:"csmesh where payment gateway --budget 300", exit:"exit 0",
+  desc:"Discovers symbols by words or fuzzy intent before drilling down. Matches types, members and interfaces with ranked scoring.",
+  out:[
+  "4 symbol(s) matched 'payment gateway'",
+  "  IPaymentGateway  [interface]  Domain/IPaymentGateway.cs:5",
+  "  StripeGateway  [class, di:scoped]  Infra/StripeGateway.cs:12",
+  "  SandboxGateway  [class]  Infra/SandboxGateway.cs:9",
+  "  FakePaymentGateway  [class]  Tests/Fakes/FakePaymentGateway.cs:7"]},
  {label:"impl", line:"csmesh impl IPaymentGateway --budget 300", exit:"exit 0",
   desc:"Lists every implementation of an interface, with the container-registered one ranked first and tagged by lifetime.",
   out:[
@@ -555,14 +563,14 @@ const commands = [
   "  CreateOrderCommandHandler.Handle  {handler}  App/CreateOrder.cs:16",
   "  ReconcileOrdersWorker.ExecuteAsync  {hosted}  Jobs/ReconcileWorker.cs:19"]},
  {label:"index", line:"csmesh index", exit:"exit 0",
-  desc:"Parses the whole solution with Roslyn and writes the frozen graph to .csmesh/graph.json. Run it once per session, or when doctor reports drift.",
-  out:["indexed 412 files -> 1604 nodes, 3011 edges in 2.4s"]},
+  desc:"Parses the whole solution with Roslyn and writes the frozen graph to .csmesh/graph.json. Incremental by default; re-parses only modified files.",
+  out:["indexed 412 files (3 modified parsed incrementally) -> 1604 nodes, 3011 edges in 0.4s"]},
  {label:"doctor", line:"csmesh doctor", exit:"exit 0",
   desc:"Reports index age and drift, the edge mix it managed to resolve, which assistants are wired up, and who has actually been calling the tool.",
   out:[
   "repo            /work/acme-payments",
   "index           1604 nodes, 3011 edges, built 0.4h ago (commit 9f2c1ab3)",
-  "freshness       2 file(s) changed since index -> answers will be marked [STALE]",
+  "freshness       2 file(s) changed since index -> use --heal to re-index changed nodes",
   "  edges Call       1842",
   "  edges TypeUse     712",
   "  edges Interface   301",
