@@ -42,7 +42,7 @@ public static class CliRunner
         Telemetry.Telemetry.Disabled = opt.Flag("no-telemetry")
                                        || Environment.GetEnvironmentVariable("CSMESH_NO_TELEMETRY") == "1"
                                        || Environment.GetEnvironmentVariable("CSGRAPH_NO_TELEMETRY") == "1"
-                                       || cmd is "usage" or "doctor" or "skill" or "version" or "help";
+                                       || cmd is "usage" or "doctor" or "skill" or "version" or "help" or "serve";
 
         var root = RepositoryLocator.FindRoot(opt.Value("repo") ?? Directory.GetCurrentDirectory());
         Telemetry.Telemetry.Current.Root = root;
@@ -69,6 +69,7 @@ public static class CliRunner
             "changes" => QueryCommand.Execute(root, opt, "changes"),
             "silence" or "why-not" => QueryCommand.Execute(root, opt, "silence"),
             "map" => QueryCommand.Execute(root, opt, "map"),
+            "serve" => Mcp.McpServer.Run(root),
             "usage" => UsageCommand.Execute(root, opt),
             "doctor" => DoctorCommand.Execute(root, opt),
             "skill" => SkillCommand.Execute(root, opt),

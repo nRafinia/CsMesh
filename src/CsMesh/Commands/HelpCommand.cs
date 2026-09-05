@@ -27,6 +27,7 @@ public static class HelpCommand
             "usage" => UsageHelp,
             "doctor" => DoctorHelp,
             "skill" => SkillHelp,
+            "serve" => ServeHelp,
             "version" => VersionHelp,
             _ => MainHelp
         });
@@ -59,6 +60,7 @@ public static class HelpCommand
             usage          Display local invocation metrics and caller attribution
             doctor         Diagnose index freshness, skill installation, and environment
             skill          Display skill markdown or install agent skill/rule files
+            serve          Serve the same commands to an agent over MCP on stdio
             version        Print version information
             help           Print this message or the help of the given subcommand(s)
 
@@ -518,6 +520,38 @@ public static class HelpCommand
             csmesh usage
             csmesh usage --days 30
             csmesh usage --tail 20
+        """;
+
+    public const string ServeHelp =
+        """
+        csmesh serve -- expose csmesh to an agent over MCP.
+
+        USAGE:
+            csmesh serve [--repo <PATH>]
+
+        Speaks JSON-RPC 2.0 over stdio, one message per line. Every query command is offered as a
+        tool with a schema, so an agent selects one the way it selects any other tool rather than
+        having to know the CLI exists and spell its flags.
+
+        Tools return the same text the command prints. The structured envelope is available on the
+        CLI with --json and is deliberately not used here: it repeats the answer in a second form
+        and costs about three times the tokens, which is the opposite of the point.
+
+        The index is read from disk and nothing is held between calls. Run the 'index' tool once in
+        a fresh checkout; 'doctor' reports whether the index is usable.
+
+        Register with a client that supports MCP, for example:
+
+            {
+              "mcpServers": {
+                "csmesh": {
+                  "command": "csmesh",
+                  "args": ["serve", "--repo", "/path/to/solution"]
+                }
+              }
+            }
+
+        Diagnostics go to stderr; stdout carries the protocol and nothing else.
         """;
 
     public const string DoctorHelp =
