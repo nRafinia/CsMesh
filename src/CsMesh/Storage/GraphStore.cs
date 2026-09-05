@@ -19,9 +19,85 @@ public static class GraphStore
     /// </summary>
     public static string PreviousPathFor(string root) => Path.Combine(DirFor(root), "graph.prev.json");
 
+    /// <summary>
+    /// Held for the whole of a write so two csmesh processes cannot interleave one.
+    ///
+    /// This is not hypothetical: CSMESH_AUTO_INDEX makes any query a potential writer, so a query
+    /// in one terminal and an explicit 'csmesh index' in another are an ordinary pairing.
+    /// </summary>
+    private static string LockPathFor(string root) => Path.Combine(DirFor(root), "lock");
+
+    private const int LockAttempts = 50;
+    private const int LockWaitMs = 100;
+
+    /// <summary>
+    /// Takes the write lock, or returns null when it cannot be taken.
+    ///
+    /// Null is not a failure to report upward. A read-only checkout, an exotic filesystem or a
+    /// container mount without file locking would all land here, and refusing to write in those
+    /// cases would be a worse outcome than an unsynchronised write on a machine that has no
+    /// second writer anyway. The atomic rename below is what actually protects the file; the lock
+    /// is what stops two writers fighting over the rotation.
+    /// </summary>
+    private static FileStream? AcquireLock(string root)
+    {
+        var path = LockPathFor(root);
+
+        for (var attempt = 0; attempt < LockAttempts; attempt++)
+        {
+            try
+            {
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException)
+            {
+                // Another csmesh holds it. Wait rather than clobber.
+                Thread.Sleep(LockWaitMs);
+            }
+            catch (Exception ex)
+            {
+                Dbg.Log($"graph lock unavailable, writing unsynchronised: {ex.Message}");
+                return null;
+            }
+        }
+
+        Dbg.Log($"graph lock still held after {LockAttempts * LockWaitMs}ms, writing unsynchronised");
+        return null;
+    }
+
+    /// <summary>
+    /// Serialises to a sibling temp file and renames it into place.
+    ///
+    /// File.Create truncates first and fills afterwards, so any reader arriving mid-write saw a
+    /// half-written graph and any crash left one on disk permanently. A rename is atomic on both
+    /// NTFS and ext4: a reader sees either the whole old file or the whole new one.
+    /// </summary>
+    private static void WriteAtomic(Graph g, string destination)
+    {
+        var temp = destination + ".tmp-" + Environment.ProcessId;
+
+        try
+        {
+            using (var stream = File.Create(temp))
+            {
+                JsonSerializer.Serialize(stream, g, AppJsonContext.Default.Graph);
+            }
+
+            File.Move(temp, destination, overwrite: true);
+        }
+        catch
+        {
+            try { if (File.Exists(temp)) File.Delete(temp); }
+            catch (Exception ex) { Dbg.Log($"could not clean temp graph: {ex.Message}"); }
+            throw;
+        }
+    }
+
     public static void Save(Graph g)
     {
         Directory.CreateDirectory(DirFor(g.Root));
+
+        using var guard = AcquireLock(g.Root);
 
         var current = PathFor(g.Root);
         if (File.Exists(current))
@@ -30,15 +106,9 @@ public static class GraphStore
             catch (Exception ex) { Dbg.Log($"could not keep previous graph: {ex.Message}"); }
         }
 
-        using var stream = File.Create(current);
-        JsonSerializer.Serialize(stream, g, AppJsonContext.Default.Graph);
+        WriteAtomic(g, current);
     }
 
-    /// <summary>
-    /// Loads the snapshot from before the last index, or null when there is none or it was written
-    /// by an incompatible version. Comparing across format versions would report every edge as
-    /// both added and removed.
-    /// </summary>
     /// <summary>
     /// Writes the graph without rotating the previous snapshot.
     ///
@@ -50,10 +120,16 @@ public static class GraphStore
     public static void SaveInPlace(Graph g)
     {
         Directory.CreateDirectory(DirFor(g.Root));
-        using var stream = File.Create(PathFor(g.Root));
-        JsonSerializer.Serialize(stream, g, AppJsonContext.Default.Graph);
+
+        using var guard = AcquireLock(g.Root);
+        WriteAtomic(g, PathFor(g.Root));
     }
 
+    /// <summary>
+    /// Loads the snapshot from before the last index, or null when there is none or it was written
+    /// by an incompatible version. Comparing across format versions would report every edge as
+    /// both added and removed.
+    /// </summary>
     public static Graph? LoadPrevious(string root)
     {
         var path = PreviousPathFor(root);
