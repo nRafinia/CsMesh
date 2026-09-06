@@ -75,14 +75,23 @@ public static class SkillCommand
         var isGlobal = opt.Flag("global") || opt.Flag("g");
         var targetAgent = opt.Get("agent", "all").ToLowerInvariant();
 
+        // Opt-in rather than part of --install. These write into configuration the user shares
+        // with every other tool they have, and a server appearing in someone's client because
+        // they installed a skill file is not a welcome surprise.
+        var wantsMcp = opt.Flag("mcp");
+
         if (isGlobal)
         {
             var home = GetHomeDir();
             Console.WriteLine($"Installing csmesh skill globally to user config: {home}\n");
-            return Install(home, targetAgent, isGlobal: true);
+            var globalExit = Install(home, targetAgent, isGlobal: true);
+            if (wantsMcp) Integrate(home, root, isGlobal: true, remove: opt.Flag("uninstall"));
+            return globalExit;
         }
 
-        return Install(root, targetAgent, isGlobal: false);
+        var exit = Install(root, targetAgent, isGlobal: false);
+        if (wantsMcp) Integrate(root, root, isGlobal: false, remove: opt.Flag("uninstall"));
+        return exit;
     }
 
     private static readonly FrozenSet<string> ValidAgents = new[]
@@ -131,6 +140,89 @@ public static class SkillCommand
         }
 
         return Exit.Ok;
+    }
+
+    /// <summary>
+    /// Registers the MCP server and the grep hook, or takes them back out.
+    ///
+    /// Both edit files the user owns and shares with other tools, so both merge rather than
+    /// overwrite and both are reversible. Anything installed that cannot be uninstalled leaves a
+    /// dead entry behind the day csmesh is removed, pointing at a binary that is no longer there.
+    /// </summary>
+    private static void Integrate(string basePath, string repoRoot, bool isGlobal, bool remove)
+    {
+        var claudeDir = isGlobal
+            ? Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR") ?? Path.Combine(basePath, ".claude")
+            : Path.Combine(repoRoot, ".claude");
+
+        var targets = isGlobal
+            ? AgentIntegration.GlobalServerTargets(basePath)
+            : AgentIntegration.ProjectServerTargets(repoRoot);
+
+        // A machine-wide registration must not name a repository, or every other project's
+        // questions get answered from this one's graph.
+        string? pinned = isGlobal ? null : repoRoot;
+
+        var geminiSettings = isGlobal
+            ? Path.Combine(basePath, ".gemini", "settings.json")
+            : Path.Combine(repoRoot, ".gemini", "settings.json");
+
+        Console.WriteLine();
+
+        if (remove)
+        {
+            foreach (var target in targets)
+            {
+                if (AgentIntegration.UnregisterServer(target, out var gone))
+                {
+                    Console.WriteLine($"  mcp server   {gone} from {target}");
+                }
+            }
+
+            Console.WriteLine(AgentIntegration.UninstallHook(claudeDir, out var hookGone)
+                ? $"  grep hook    {hookGone}"
+                : "  grep hook    nothing to remove");
+
+            if (AgentIntegration.UninstallGeminiHook(geminiSettings, out var geminiGone))
+            {
+                Console.WriteLine($"  gemini hook  {geminiGone}");
+            }
+
+            return;
+        }
+
+        foreach (var target in targets)
+        {
+            // Only global config files that already exist are touched. Creating every one of them
+            // would leave configuration for clients the user has not installed, which is litter
+            // rather than help; a project file is different, since the repository is the point.
+            if (isGlobal && !File.Exists(target)) continue;
+
+            Console.WriteLine(AgentIntegration.RegisterServer(target, pinned, out var outcome)
+                ? $"  mcp server   {outcome} in {target}"
+                : $"  mcp server   FAILED {target}: {outcome}");
+        }
+
+        Console.WriteLine(AgentIntegration.InstallHook(claudeDir, out var hookOutcome)
+            ? $"  grep hook    {hookOutcome}"
+            : $"  grep hook    FAILED: {hookOutcome}");
+
+        if (File.Exists(geminiSettings) || !isGlobal)
+        {
+            Console.WriteLine(AgentIntegration.InstallGeminiHook(geminiSettings, out var geminiOutcome)
+                ? $"  gemini hook  {geminiOutcome} in {geminiSettings}"
+                : $"  gemini hook  FAILED: {geminiOutcome}");
+        }
+
+        Console.WriteLine($"  binary       {AgentIntegration.BinaryPath()}");
+
+        if (isGlobal)
+        {
+            Console.WriteLine("  scope        no --repo recorded; serve resolves the repository from where the client starts it");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  Restart your client to pick these up. Remove with: csmesh skill --install --mcp --uninstall");
     }
 
     private static void InstallClaude(string basePath, bool isGlobal)

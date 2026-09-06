@@ -13,4 +13,6 @@ namespace CsMesh.Common;
 [JsonSerializable(typeof(Invocation))]
 [JsonSerializable(typeof(List<Invocation>))]
 [JsonSerializable(typeof(QueryResult))]
+[JsonSerializable(typeof(DoctorReport))]
+[JsonSerializable(typeof(IndexReport))]
 internal partial class AppJsonContext : JsonSerializerContext;

@@ -119,6 +119,19 @@ public static partial class Indexer
         var trees = new SyntaxTree?[files.Count];
         var stamps = new FileStamp?[files.Count];
 
+        // A file this pass could not read must not be quietly forgotten.
+        //
+        // The parse loop used to swallow the failure and move on. Its stamp then never reached
+        // freshStamps, freshStamps replaced Files wholesale, and with the old stamp gone DirtyFiles
+        // had nothing left to compare against -- so the file was not merely skipped this run, it
+        // stopped being tracked at all. Its symbols stayed in the graph, frozen at whatever the
+        // last successful read said, and no later query ever reported them stale.
+        //
+        // Declining is the honest response: a compilation missing one tree binds the files that
+        // referenced it against nothing, and a partial graph that looks whole is the failure this
+        // tool exists to prevent. The caller falls back to a full index.
+        var unreadable = new System.Collections.Concurrent.ConcurrentBag<string>();
+
         // Parsing is embarrassingly parallel and is now the largest remaining cost, since binding
         // has been cut down to the edited files.
         Parallel.For(0, files.Count, i =>
@@ -126,7 +139,11 @@ public static partial class Indexer
             var file = files[i];
             string text;
             try { text = File.ReadAllText(file); }
-            catch { return; }
+            catch (Exception ex)
+            {
+                unreadable.Add($"{Path.GetRelativePath(root, file)} ({ex.Message})");
+                return;
+            }
 
             trees[i] = CSharpSyntaxTree.ParseText(text, parseOptions, path: file);
 
@@ -138,6 +155,12 @@ public static partial class Indexer
                 Size = info.Length
             };
         });
+
+        if (!unreadable.IsEmpty)
+        {
+            foreach (var failure in unreadable) Dbg.Log($"incremental declined: cannot read {failure}");
+            return null;
+        }
 
         var syntax = trees.Where(t => t != null).Select(t => t!).ToList();
         var freshStamps = stamps.Where(s => s != null).Select(s => s!).ToList();

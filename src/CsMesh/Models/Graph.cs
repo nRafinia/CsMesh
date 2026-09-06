@@ -21,6 +21,19 @@ public sealed class Graph
     public int FormatVersion { get; set; } = CurrentFormatVersion;
 
     /// <summary>
+    /// The csmesh build that wrote this graph.
+    ///
+    /// FormatVersion only moves when the on-disk shape changes, which is the rarer event. Most
+    /// releases change what the indexer *notices* -- a new DI registration shape, a dispatch
+    /// pattern, a false positive removed -- without touching the schema at all. An upgraded binary
+    /// reading such a graph finds a well-formed v12 file and reports it as current, so the very
+    /// fix the user upgraded for stays invisible until something else happens to force a rebuild.
+    ///
+    /// Recorded rather than inferred: an index is only trustworthy from the binary that built it.
+    /// </summary>
+    public string BuiltByVersion { get; set; } = string.Empty;
+
+    /// <summary>
     /// The next id to hand out. Persisted because ids are now stable across re-indexes: an
     /// incremental pass recreates edited symbols under their original ids and must never reuse an
     /// id that a surviving edge still points at.

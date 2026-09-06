@@ -15,8 +15,6 @@ permissions:
   contents: write
 
 jobs:
-  # Gate every release on the test suite. A tag push or manual dispatch must
-  # never ship binaries for a tree the tests have not run against.
   test:
     name: Run Test Suite
     runs-on: ubuntu-latest
@@ -131,6 +129,8 @@ jobs:
     name: Create GitHub Release
     needs: [build-aot, pack-nuget]
     runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.clean_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -141,9 +141,6 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      # The install scripts (install.sh / install.ps1) verify the downloaded
-      # archive against this file before extracting. Do not rename it without
-      # updating the installers.
       - name: Generate checksums
         run: |
           cd release-assets
@@ -164,6 +161,13 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "Using release tag: ${TAG}"
 
+      - name: Extract Clean Semantic Version
+        id: version
+        run: |
+          RAW_TAG="${{ steps.tag.outputs.tag }}"
+          CLEAN_VERSION="${RAW_TAG#v}"
+          echo "clean_version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -171,3 +175,29 @@ jobs:
           name: ${{ steps.tag.outputs.tag }}
           files: release-assets/*
           generate_release_notes: true
+
+  publish-npm:
+    name: Publish to npm
+    needs: [publish-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Sync version and publish
+        working-directory: ./npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::Secret NPM_TOKEN is missing! Please configure it in GitHub Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          npm version ${{ needs.publish-release.outputs.release_version }} --no-git-tag-version --allow-same-version
+          npm publish --access public
