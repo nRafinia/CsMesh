@@ -37,7 +37,49 @@ public static class AgentIntegration
     /// Reads what is there, edits one key, writes it back. A whole-file write would be simpler and
     /// would silently delete the user's other servers the first time they had any.
     /// </summary>
-    public static bool RegisterServer(string configPath, string repoRoot, out string outcome)
+    /// <summary>
+    /// Config files that hold an mcpServers block, for the whole machine.
+    ///
+    /// Every one of these uses the same shape -- mcpServers, then command and args -- which is
+    /// what makes a single writer enough. Verified against a real install rather than assumed,
+    /// because guessing a schema is what made the first version of the grep hook do nothing.
+    /// </summary>
+    public static IEnumerable<string> GlobalServerTargets(string home)
+    {
+        yield return Path.Combine(home, ".claude.json");
+        yield return Path.Combine(home, ".claude", ".mcp.json");
+        yield return Path.Combine(home, ".cursor", "mcp.json");
+        yield return Path.Combine(home, ".ai", "mcp", "mcp.json");
+        yield return Path.Combine(home, ".gemini", "settings.json");
+        yield return Path.Combine(home, ".gemini", "config", "mcp_config.json");
+
+        if (OperatingSystem.IsWindows())
+        {
+            var roaming = Environment.GetEnvironmentVariable("APPDATA");
+            if (!string.IsNullOrEmpty(roaming))
+                yield return Path.Combine(roaming, "Claude", "claude_desktop_config.json");
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            yield return Path.Combine(home, "Library", "Application Support", "Claude",
+                "claude_desktop_config.json");
+        }
+        else
+        {
+            var config = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")
+                         ?? Path.Combine(home, ".config");
+            yield return Path.Combine(config, "Claude", "claude_desktop_config.json");
+        }
+    }
+
+    /// <summary>Config files a repository carries with it.</summary>
+    public static IEnumerable<string> ProjectServerTargets(string repoRoot)
+    {
+        yield return Path.Combine(repoRoot, ".mcp.json");
+        yield return Path.Combine(repoRoot, ".cursor", "mcp.json");
+    }
+
+    public static bool RegisterServer(string configPath, string? repoRoot, out string outcome)
     {
         try
         {
@@ -63,10 +105,18 @@ public static class AgentIntegration
 
             var replaced = servers["csmesh"] != null;
 
+            // A machine-wide registration must not name a repository. Pinning one would answer
+            // every other project's questions from the wrong graph -- confidently, and with no
+            // sign anything was wrong. Left off, serve resolves the repository from the directory
+            // the client launches it in, which is the project directory in every client checked.
+            var args = repoRoot == null
+                ? new JsonArray("serve")
+                : new JsonArray("serve", "--repo", Path.GetFullPath(repoRoot));
+
             servers["csmesh"] = new JsonObject
             {
                 ["command"] = BinaryPath(),
-                ["args"] = new JsonArray("serve", "--repo", Path.GetFullPath(repoRoot))
+                ["args"] = args
             };
 
             var directory = Path.GetDirectoryName(configPath);
@@ -189,6 +239,108 @@ public static class AgentIntegration
                 root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 
             outcome = scriptPath;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            outcome = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The same nudge for Antigravity, whose hook format is not Claude's.
+    ///
+    /// The event is BeforeTool rather than PreToolUse, the matcher names the tool differently, and
+    /// the hooks array holds strings rather than objects. Close enough to look interchangeable and
+    /// not close enough to be -- writing Claude's shape here produces a file the IDE accepts and
+    /// ignores.
+    /// </summary>
+    public static bool InstallGeminiHook(string settingsPath, out string outcome)
+    {
+        try
+        {
+            JsonObject root = File.Exists(settingsPath) &&
+                              JsonNode.Parse(File.ReadAllText(settingsPath)) is JsonObject parsed
+                ? parsed
+                : new JsonObject();
+
+            if (root["hooks"] is not JsonObject hooks)
+            {
+                hooks = new JsonObject();
+                root["hooks"] = hooks;
+            }
+
+            if (hooks["BeforeTool"] is not JsonArray beforeTool)
+            {
+                beforeTool = new JsonArray();
+                hooks["BeforeTool"] = beforeTool;
+            }
+
+            var mine = beforeTool.FirstOrDefault(e =>
+                e?["matcher"]?.GetValue<string>()?.Contains("grep", StringComparison.OrdinalIgnoreCase) == true &&
+                e.ToJsonString().Contains("csmesh", StringComparison.Ordinal));
+
+            if (mine != null) beforeTool.Remove(mine);
+
+            // Written to stderr, which is where an advisory belongs: it reaches the model as
+            // context without being mistaken for the tool's own output.
+            const string message =
+                "Reminder: prefer csmesh (where, trace, impl, blast-radius) over grep for C# code " +
+                "discovery; it resolves DI bindings and mediator dispatch that grep cannot. " +
+                "Run 'csmesh index' first if the repository is not indexed.";
+
+            beforeTool.Add(new JsonObject
+            {
+                ["matcher"] = "grep_search|file_search",
+                ["hooks"] = new JsonArray($"@{{type=command; command=echo '{message}' >&2}}")
+            });
+
+            var directory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+            File.WriteAllText(settingsPath,
+                root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+            outcome = "added";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            outcome = ex.Message;
+            return false;
+        }
+    }
+
+    public static bool UninstallGeminiHook(string settingsPath, out string outcome)
+    {
+        outcome = "absent";
+
+        try
+        {
+            if (!File.Exists(settingsPath) ||
+                JsonNode.Parse(File.ReadAllText(settingsPath)) is not JsonObject root ||
+                root["hooks"] is not JsonObject hooks ||
+                hooks["BeforeTool"] is not JsonArray beforeTool)
+            {
+                return false;
+            }
+
+            var mine = beforeTool
+                .Where(e => e?.ToJsonString().Contains("csmesh", StringComparison.Ordinal) == true)
+                .ToList();
+
+            if (mine.Count == 0) return false;
+
+            foreach (var entry in mine) beforeTool.Remove(entry);
+
+            if (beforeTool.Count == 0) hooks.Remove("BeforeTool");
+            if (hooks.Count == 0) root.Remove("hooks");
+
+            File.WriteAllText(settingsPath,
+                root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+            outcome = "removed";
             return true;
         }
         catch (Exception ex)

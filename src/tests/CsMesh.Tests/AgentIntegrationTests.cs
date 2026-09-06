@@ -203,3 +203,117 @@ public sealed class AgentIntegrationTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* temp dir */ }
     }
 }
+
+/// <summary>
+/// Registration across the several config files a machine carries, and the one hook format that
+/// is not Claude's.
+/// </summary>
+public sealed class MultiTargetIntegrationTests : IDisposable
+{
+    private readonly string _home;
+
+    public MultiTargetIntegrationTests()
+    {
+        _home = Path.Combine(Path.GetTempPath(), "csmesh-multi-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(_home);
+    }
+
+    private JsonElement Read(string path) =>
+        JsonDocument.Parse(File.ReadAllText(path)).RootElement.Clone();
+
+    [Fact]
+    public void GlobalTargetsCoverTheClientsThatCarryTheirOwnConfig()
+    {
+        var targets = AgentIntegration.GlobalServerTargets(_home).ToList();
+
+        Assert.Contains(targets, t => t.EndsWith(".claude.json", StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.Contains(".cursor", StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.Contains(".gemini", StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.Contains("claude_desktop_config.json", StringComparison.Ordinal));
+
+        // No duplicates: registering the same file twice is harmless but the second write would
+        // be reported as an update to something this run just added.
+        Assert.Equal(targets.Count, targets.Distinct().Count());
+    }
+
+    /// <summary>
+    /// A machine-wide registration must not name a repository. Pinning one would answer every
+    /// other project's questions from the wrong graph -- confidently, and with nothing to show
+    /// anything was wrong.
+    /// </summary>
+    [Fact]
+    public void AGlobalRegistrationRecordsNoRepository()
+    {
+        var path = Path.Combine(_home, "global.json");
+        AgentIntegration.RegisterServer(path, repoRoot: null, out _);
+
+        var args = Read(path).GetProperty("mcpServers").GetProperty("csmesh").GetProperty("args");
+
+        Assert.Equal(1, args.GetArrayLength());
+        Assert.Equal("serve", args[0].GetString());
+    }
+
+    [Fact]
+    public void AProjectRegistrationPinsTheRepository()
+    {
+        var path = Path.Combine(_home, "project.json");
+        AgentIntegration.RegisterServer(path, _home, out _);
+
+        var args = Read(path).GetProperty("mcpServers").GetProperty("csmesh").GetProperty("args");
+
+        Assert.Equal(3, args.GetArrayLength());
+        Assert.Equal("--repo", args[1].GetString());
+    }
+
+    /// <summary>
+    /// Antigravity's format is close enough to Claude's to look interchangeable and not close
+    /// enough to be: BeforeTool rather than PreToolUse, and an array of strings rather than of
+    /// objects. Writing Claude's shape produces a file the IDE accepts and ignores.
+    /// </summary>
+    [Fact]
+    public void TheGeminiHookUsesBeforeToolAndAStringArray()
+    {
+        var path = Path.Combine(_home, "settings.json");
+        Assert.True(AgentIntegration.InstallGeminiHook(path, out _));
+
+        var beforeTool = Read(path).GetProperty("hooks").GetProperty("BeforeTool");
+
+        Assert.Equal(1, beforeTool.GetArrayLength());
+        Assert.Contains("grep", beforeTool[0].GetProperty("matcher").GetString()!, StringComparison.Ordinal);
+
+        foreach (var entry in beforeTool[0].GetProperty("hooks").EnumerateArray())
+        {
+            Assert.Equal(JsonValueKind.String, entry.ValueKind);
+        }
+    }
+
+    [Fact]
+    public void TheGeminiHookMergesAndDoesNotDuplicate()
+    {
+        var path = Path.Combine(_home, "settings.json");
+        File.WriteAllText(path, """
+            {
+              "mcpServers": { "other": { "command": "other" } },
+              "hooks": { "BeforeTool": [ { "matcher": "web_search", "hooks": [ "theirs" ] } ] }
+            }
+            """);
+
+        AgentIntegration.InstallGeminiHook(path, out _);
+        AgentIntegration.InstallGeminiHook(path, out _);
+
+        var root = Read(path);
+        Assert.True(root.GetProperty("mcpServers").TryGetProperty("other", out _));
+        Assert.Equal(2, root.GetProperty("hooks").GetProperty("BeforeTool").GetArrayLength());
+
+        Assert.True(AgentIntegration.UninstallGeminiHook(path, out _));
+
+        var after = Read(path).GetProperty("hooks").GetProperty("BeforeTool");
+        Assert.Equal(1, after.GetArrayLength());
+        Assert.Equal("web_search", after[0].GetProperty("matcher").GetString());
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_home, recursive: true); } catch { /* temp dir */ }
+    }
+}
