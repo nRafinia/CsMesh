@@ -53,6 +53,13 @@ public static class AgentIntegration
         yield return Path.Combine(home, ".gemini", "settings.json");
         yield return Path.Combine(home, ".gemini", "config", "mcp_config.json");
 
+        // Antigravity moved its config more than once and the surfaces do not agree yet: the IDE
+        // has used .gemini/antigravity, the CLI .gemini/antigravity-cli, and the shared path is
+        // .gemini/config. Writing all three is cheap and writing the wrong one is invisible --
+        // the server simply never appears, with nothing anywhere saying why.
+        yield return Path.Combine(home, ".gemini", "antigravity", "mcp_config.json");
+        yield return Path.Combine(home, ".gemini", "antigravity-cli", "mcp_config.json");
+
         if (OperatingSystem.IsWindows())
         {
             var roaming = Environment.GetEnvironmentVariable("APPDATA");
@@ -77,6 +84,10 @@ public static class AgentIntegration
     {
         yield return Path.Combine(repoRoot, ".mcp.json");
         yield return Path.Combine(repoRoot, ".cursor", "mcp.json");
+
+        // Antigravity's workspace-scoped location. Its global config is a separate file, so a
+        // project install that skipped this left Antigravity with nothing at all.
+        yield return Path.Combine(repoRoot, ".agents", "mcp_config.json");
     }
 
     public static bool RegisterServer(string configPath, string? repoRoot, out string outcome)

@@ -231,6 +231,12 @@ public sealed class MultiTargetIntegrationTests : IDisposable
         Assert.Contains(targets, t => t.Contains(".gemini", StringComparison.Ordinal));
         Assert.Contains(targets, t => t.Contains("claude_desktop_config.json", StringComparison.Ordinal));
 
+        // Antigravity has moved this more than once and its surfaces still disagree, so all
+        // three are written. Missing the right one is invisible: the server never appears and
+        // nothing says why.
+        Assert.Contains(targets, t => t.Contains("antigravity", StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.Contains("antigravity-cli", StringComparison.Ordinal));
+
         // No duplicates: registering the same file twice is harmless but the second write would
         // be reported as an update to something this run just added.
         Assert.Equal(targets.Count, targets.Distinct().Count());
@@ -241,6 +247,20 @@ public sealed class MultiTargetIntegrationTests : IDisposable
     /// other project's questions from the wrong graph -- confidently, and with nothing to show
     /// anything was wrong.
     /// </summary>
+    /// <summary>
+    /// Antigravity's global and workspace configs are different files. A project install that
+    /// wrote only .mcp.json left it with nothing, which is what happened.
+    /// </summary>
+    [Fact]
+    public void ProjectTargetsIncludeAntigravitysWorkspaceConfig()
+    {
+        var targets = AgentIntegration.ProjectServerTargets(_home).ToList();
+
+        Assert.Contains(targets, t => t.EndsWith(Path.Combine(".agents", "mcp_config.json"), StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.EndsWith(".mcp.json", StringComparison.Ordinal));
+        Assert.Equal(targets.Count, targets.Distinct().Count());
+    }
+
     [Fact]
     public void AGlobalRegistrationRecordsNoRepository()
     {
