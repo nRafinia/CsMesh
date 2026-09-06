@@ -1,0 +1,17 @@
+{
+  "name": "csmesh",
+  "version": "0.1.9",
+  "description": "Structural code intelligence & call-graph engine for C# and .NET — built for AI coding agents under hard token budgets",
+  "bin": {
+    "csmesh": "./bin/run.js"
+  },
+  "scripts": {
+    "postinstall": "node ./scripts/install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nRafinia/CsMesh.git"
+  },
+  "keywords": ["dotnet", "ai-agent", "context-engineering", "developer-tools", "roslyn"],
+  "license": "MIT"
+}
