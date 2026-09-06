@@ -149,9 +149,14 @@ public static class OutOfGraph
         s.Length > 1 && (s[0] == 'v' || s[0] == 'V') && s[1..].All(char.IsDigit);
 
     private static bool LooksLikeRoute(string q) =>
-        q.StartsWith('/') ||
-        q.StartsWith("api/", StringComparison.OrdinalIgnoreCase) ||
-        (q.Contains('/') && !q.Contains('\\') && !LooksLikeFile(q));
+        // A source path is not a route. NonSourceExtensions deliberately omits .cs, so
+        // "src/Foo.cs" fell past LooksLikeFile, hit the slash test, and came back as
+        // "csmesh entrypoints Foo.cs" -- which returns nothing, and an agent reads nothing as
+        // "there are no entrypoints there" rather than "you asked the wrong question".
+        !q.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) &&
+        (q.StartsWith('/') ||
+         q.StartsWith("api/", StringComparison.OrdinalIgnoreCase) ||
+         (q.Contains('/') && !q.Contains('\\') && !LooksLikeFile(q)));
 
     private static bool LooksLikeEnvironmentVariable(string q) =>
         q.Length > 2 &&

@@ -33,6 +33,11 @@ public static class McpServer
         // csmesh logs about itself goes to stderr, which the spec leaves free for exactly this.
         Dbg.Log($"mcp: serving {root}");
 
+        // Single-threaded by design: one frame is read, dispatched and answered before the next
+        // is looked at. McpTools swaps Console.Out around each command to capture its output, and
+        // that is only safe while nothing else can be writing. Anything that makes this loop
+        // concurrent breaks the capture first and silently -- output would land in the wrong
+        // reply, or in the transport.
         string? line;
         while ((line = Console.In.ReadLine()) != null)
         {
@@ -99,7 +104,10 @@ public static class McpServer
                 break;
 
             case "ping":
-                Write(Reply(request, Element(new ToolsListResult { Tools = [] }, McpJsonContext.Default.ToolsListResult)));
+                // The spec says an empty object. Returning a typed payload with an empty array
+                // happens to satisfy a lenient client and gives a strict one something to reject,
+                // and a liveness check is the worst place to be interesting.
+                Write(Reply(request, JsonDocument.Parse("{}").RootElement.Clone()));
                 break;
 
             // Notifications carry no id and take no reply. Answering one is a protocol error, so

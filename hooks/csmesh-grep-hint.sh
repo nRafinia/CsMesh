@@ -5,7 +5,10 @@
 # string literals, TODOs and anything the symbol graph does not hold, and a hook that
 # refused those would be wrong more often than it was right.
 #
-# Reads the PreToolUse payload on stdin, writes advice to stdout, always exits 0.
+# The reply must be a single line of JSON on stdout. Claude Code reads PreToolUse output as
+# a structured payload and passes hookSpecificOutput.additionalContext to the model; plain
+# text is discarded without an error, so an earlier version of this script that printed a
+# readable hint accomplished exactly nothing while appearing to work.
 
 set -euo pipefail
 
@@ -27,17 +30,23 @@ case "$pattern" in
   *" "*|"") exit 0 ;;
 esac
 
-cat <<HINT
-csmesh is indexed for this repository and resolves what grep cannot: DI bindings,
+# Escape anything that would break the JSON string. Newlines become \n rather than real
+# breaks, because the transport is one line.
+escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{ printf "%s\\n", $0 }'
+}
+
+hint="csmesh is indexed for this repository and resolves what grep cannot: DI bindings,
 mediator dispatch, interface-to-implementation routing and attribute routing.
 
-For '$pattern', try first:
-  csmesh where $pattern            -- where it lives, ranked by what reaches it
-  csmesh impl $pattern             -- implementations and their DI registration
-  csmesh trace $pattern            -- call tree through interfaces and dispatch
-  csmesh blast-radius $pattern     -- what breaks if it changes
+For '${pattern}', try first:
+  csmesh where ${pattern}            -- where it lives, ranked by what reaches it
+  csmesh impl ${pattern}             -- implementations and their DI registration
+  csmesh trace ${pattern}            -- call tree through interfaces and dispatch
+  csmesh blast-radius ${pattern}     -- what breaks if it changes
 
-Stay with grep for string literals, config keys, log messages and non-.cs files.
-HINT
+Stay with grep for string literals, config keys, log messages and non-.cs files."
+
+printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$(escape "$hint")"
 
 exit 0

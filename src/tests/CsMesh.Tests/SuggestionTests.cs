@@ -208,3 +208,34 @@ public sealed class MissOrderingTests(GraphFixture fixture) : IClassFixture<Grap
         Assert.False(verdict.Decisive);
     }
 }
+
+/// <summary>
+/// NonSourceExtensions deliberately omits .cs, so "src/Foo.cs" fell past LooksLikeFile, hit the
+/// slash test and came back as a route. The advice was "csmesh entrypoints Foo.cs", which returns
+/// nothing -- and an agent reads nothing as "there are no entrypoints there" rather than "you
+/// asked the wrong question".
+/// </summary>
+public sealed class SourcePathClassificationTests(GraphFixture fixture) : IClassFixture<GraphFixture>
+{
+    [Theory]
+    [InlineData("src/Foo.cs")]
+    [InlineData("src/Core/Application/Handler.cs")]
+    public void ASourcePathIsNotARoute(string query)
+    {
+        var verdict = OutOfGraph.Classify(query, fixture.Graph);
+
+        if (verdict == null) return;
+
+        Assert.DoesNotContain(verdict.Next, n => n.StartsWith("csmesh entrypoints", StringComparison.Ordinal));
+    }
+
+    /// <summary>Real routes must keep working; the exclusion is for .cs only.</summary>
+    [Fact]
+    public void ARealRouteStillGoesToEntrypoints()
+    {
+        var verdict = OutOfGraph.Classify("/api/v1/orders", fixture.Graph);
+
+        Assert.NotNull(verdict);
+        Assert.Contains(verdict.Next, n => n.StartsWith("csmesh entrypoints", StringComparison.Ordinal));
+    }
+}

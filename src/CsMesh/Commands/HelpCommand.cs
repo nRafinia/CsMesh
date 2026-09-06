@@ -522,6 +522,21 @@ public static class HelpCommand
             csmesh usage --tail 20
         """;
 
+    public const string McpInstallNote =
+        """
+        csmesh skill --install --mcp
+
+        Registers csmesh as an MCP server and installs the grep hook alongside the skill files.
+        Opt-in rather than part of --install, because both write into configuration shared with
+        every other tool you have.
+
+        Project scope writes .mcp.json next to the repo; --global writes the user config instead.
+        The binary is recorded by absolute path, so it does not have to be on PATH.
+
+        Existing entries are merged, not replaced, and re-running updates rather than duplicating.
+        Remove with: csmesh skill --install --mcp --uninstall
+        """;
+
     public const string ServeHelp =
         """
         csmesh serve -- expose csmesh to an agent over MCP.

@@ -75,14 +75,23 @@ public static class SkillCommand
         var isGlobal = opt.Flag("global") || opt.Flag("g");
         var targetAgent = opt.Get("agent", "all").ToLowerInvariant();
 
+        // Opt-in rather than part of --install. These write into configuration the user shares
+        // with every other tool they have, and a server appearing in someone's client because
+        // they installed a skill file is not a welcome surprise.
+        var wantsMcp = opt.Flag("mcp");
+
         if (isGlobal)
         {
             var home = GetHomeDir();
             Console.WriteLine($"Installing csmesh skill globally to user config: {home}\n");
-            return Install(home, targetAgent, isGlobal: true);
+            var globalExit = Install(home, targetAgent, isGlobal: true);
+            if (wantsMcp) Integrate(home, root, isGlobal: true, remove: opt.Flag("uninstall"));
+            return globalExit;
         }
 
-        return Install(root, targetAgent, isGlobal: false);
+        var exit = Install(root, targetAgent, isGlobal: false);
+        if (wantsMcp) Integrate(root, root, isGlobal: false, remove: opt.Flag("uninstall"));
+        return exit;
     }
 
     private static readonly FrozenSet<string> ValidAgents = new[]
@@ -131,6 +140,53 @@ public static class SkillCommand
         }
 
         return Exit.Ok;
+    }
+
+    /// <summary>
+    /// Registers the MCP server and the grep hook, or takes them back out.
+    ///
+    /// Both edit files the user owns and shares with other tools, so both merge rather than
+    /// overwrite and both are reversible. Anything installed that cannot be uninstalled leaves a
+    /// dead entry behind the day csmesh is removed, pointing at a binary that is no longer there.
+    /// </summary>
+    private static void Integrate(string basePath, string repoRoot, bool isGlobal, bool remove)
+    {
+        var claudeDir = isGlobal
+            ? Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR") ?? Path.Combine(basePath, ".claude")
+            : Path.Combine(basePath, ".claude");
+
+        // Project scope puts the server in .mcp.json, which is the file a team checks in; user
+        // scope keeps it to this machine.
+        var mcpConfig = isGlobal
+            ? Path.Combine(claudeDir, "settings.json")
+            : Path.Combine(repoRoot, ".mcp.json");
+
+        Console.WriteLine();
+
+        if (remove)
+        {
+            Console.WriteLine(AgentIntegration.UnregisterServer(mcpConfig, out var gone)
+                ? $"  mcp server   {gone} from {mcpConfig}"
+                : $"  mcp server   nothing to remove in {mcpConfig}");
+
+            Console.WriteLine(AgentIntegration.UninstallHook(claudeDir, out var hookGone)
+                ? $"  grep hook    {hookGone}"
+                : $"  grep hook    nothing to remove");
+
+            return;
+        }
+
+        Console.WriteLine(AgentIntegration.RegisterServer(mcpConfig, repoRoot, out var outcome)
+            ? $"  mcp server   {outcome} in {mcpConfig}"
+            : $"  mcp server   FAILED: {outcome}");
+
+        Console.WriteLine(AgentIntegration.InstallHook(claudeDir, out var hookOutcome)
+            ? $"  grep hook    {hookOutcome}"
+            : $"  grep hook    FAILED: {hookOutcome}");
+
+        Console.WriteLine($"  binary       {AgentIntegration.BinaryPath()}");
+        Console.WriteLine();
+        Console.WriteLine("  Restart your client to pick these up. Remove with: csmesh skill --install --mcp --uninstall");
     }
 
     private static void InstallClaude(string basePath, bool isGlobal)
