@@ -49,13 +49,23 @@ public static class GraphStore
             {
                 return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 // Another csmesh holds it. Wait rather than clobber.
+                //
+                // UnauthorizedAccessException belongs here and its absence was a real bug. A
+                // sharing violation on Windows does not always surface as IOException, and the
+                // catch-all below read that as "no locking on this filesystem" and wrote
+                // unsynchronised. On Linux that costs nothing, because rename() is atomic whoever
+                // else is renaming. On Windows it puts two writers on one destination, and the
+                // second one's MoveFileEx fails with access denied -- which is what the suite
+                // found on its first Windows run.
                 Thread.Sleep(LockWaitMs);
             }
             catch (Exception ex)
             {
+                // A read-only checkout or a filesystem without locking. Genuinely nothing to wait
+                // for, and refusing to index would be the worse answer.
                 Dbg.Log($"graph lock unavailable, writing unsynchronised: {ex.Message}");
                 return null;
             }
@@ -116,12 +126,34 @@ public static class GraphStore
         {
             try
             {
-                File.Move(temp, destination, overwrite: true);
+                if (File.Exists(destination))
+                {
+                    // ReplaceFile rather than MoveFileEx. Windows treats them differently: the
+                    // move opens the destination for delete and fails outright if any handle
+                    // disallows it, while the replace is built for swapping a file that readers
+                    // may hold, which is the whole situation here. On Unix both land on rename()
+                    // and the distinction does not arise.
+                    File.Replace(temp, destination, destinationBackupFileName: null,
+                        ignoreMetadataErrors: true);
+                }
+                else
+                {
+                    File.Move(temp, destination, overwrite: true);
+                }
+
                 return;
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException
                                        && attempt < RenameAttempts)
             {
+                if (attempt == RenameAttempts - 1)
+                {
+                    // Named, because the next thing that happens is an exception whose message
+                    // says only "access to the path is denied" and does not say which path.
+                    Dbg.Log($"could not move '{temp}' onto '{destination}' after " +
+                            $"{RenameAttempts * RenameWaitMs}ms: {ex.Message}");
+                }
+
                 Thread.Sleep(RenameWaitMs);
             }
         }
