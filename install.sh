@@ -7,6 +7,7 @@
 #   CSMESH_INSTALL_DIR : destination directory (default: ~/.local/bin or ~/bin)
 #   CSMESH_VERSION     : specific version tag to install (default: latest)
 #   CSMESH_USE_DOTNET  : set to 1 to force installation via dotnet tool
+#   CSMESH_SKIP_CHECKSUM : set to 1 to skip sha256 verification (not recommended)
 
 set -e
 
@@ -44,7 +45,7 @@ warn() {
 }
 
 error() {
-    printf "${RED}${BOLD}[ERROR]${NC} %s\n" "$1"
+    printf "${RED}${BOLD}[ERROR]${NC} %b\n" "$1"
     exit 1
 }
 
@@ -103,6 +104,45 @@ install_via_dotnet() {
         fi
     fi
     return 1
+}
+
+# Verify the downloaded archive against the release's checksums.txt.
+# Fails closed when checksums are present; warns and continues when the
+# release predates checksum publication (or the user opted out).
+verify_checksum() {
+    [ "$CSMESH_SKIP_CHECKSUM" = "1" ] && { warn "Checksum verification skipped (CSMESH_SKIP_CHECKSUM=1)."; return 0; }
+
+    command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || {
+        warn "No sha256 tool found (sha256sum/shasum); skipping verification."
+        return 0
+    }
+
+    info "Fetching checksums..."
+    if ! curl -fsSL "$RELEASE_URL/checksums.txt" -o "$TMP_DIR/checksums.txt" 2>/dev/null; then
+        warn "checksums.txt not found in this release; skipping verification."
+        warn "For verification, pin a version: CSMESH_VERSION=vX.Y.Z and check the release page."
+        return 0
+    fi
+
+    # Extract the expected hash for our asset (format: "<hash>  <filename>").
+    EXPECTED=$(grep "  ${ASSET_NAME}$" "$TMP_DIR/checksums.txt" | awk '{print $1}')
+
+    if [ -z "$EXPECTED" ]; then
+        warn "${ASSET_NAME} not listed in checksums.txt; skipping verification."
+        return 0
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$TMP_DIR/$ASSET_NAME" | awk '{print $1}')
+    else
+        ACTUAL=$(shasum -a 256 "$TMP_DIR/$ASSET_NAME" | awk '{print $1}')
+    fi
+
+    if [ "$EXPECTED" != "$ACTUAL" ]; then
+        error "Checksum mismatch for ${ASSET_NAME}!\n  expected: ${EXPECTED}\n  actual:   ${ACTUAL}\nAborting. The download may be corrupted or tampered with."
+    fi
+
+    success "Checksum verified (sha256: ${ACTUAL})"
 }
 
 # 1. If user explicitly requested dotnet tool
@@ -175,6 +215,9 @@ if [ "$HTTP_CODE" != "200" ]; then
         error "Failed to download binary from ${DOWNLOAD_URL} and .NET SDK is not available.\nFor manual installation: dotnet tool install --global CsMesh"
     fi
 fi
+
+# Verify integrity before touching the install directory
+verify_checksum
 
 # Ensure target directory exists
 mkdir -p "$INSTALL_DIR"

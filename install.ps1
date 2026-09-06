@@ -3,9 +3,10 @@
 #   irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex
 #
 # Environment variables (optional):
-#   $env:CSMESH_INSTALL_DIR : custom directory to install csmesh.exe (default: $env:LOCALAPPDATA\Programs\csmesh)
-#   $env:CSMESH_VERSION     : specific release tag to install (default: latest)
-#   $env:CSMESH_USE_DOTNET  : set to "1" to force installation as a .NET global tool
+#   $env:CSMESH_INSTALL_DIR   : custom directory to install csmesh.exe (default: $env:LOCALAPPDATA\Programs\csmesh)
+#   $env:CSMESH_VERSION       : specific release tag to install (default: latest)
+#   $env:CSMESH_USE_DOTNET    : set to "1" to force installation as a .NET global tool
+#   $env:CSMESH_SKIP_CHECKSUM : set to "1" to skip sha256 verification (not recommended)
 
 $ErrorActionPreference = "Stop"
 
@@ -56,6 +57,64 @@ function Install-ViaDotnet() {
     return $false
 }
 
+# Detect the OS architecture. PROCESSOR_ARCHITECTURE alone is unreliable: on
+# ARM64 Windows it reports AMD64 whenever the host process is running under the
+# x64 emulation layer, which misleads the installer into fetching the wrong binary.
+# PROCESSOR_ARCHITEW6432 exists only for that emulation case; .NET's
+# RuntimeInformation is the authoritative fallback.
+function Get-OSArchitecture() {
+    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    switch ($arch) {
+        ([System.Runtime.InteropServices.Architecture]::X64)   { return "x64" }
+        ([System.Runtime.InteropServices.Architecture]::Arm64) { return "arm64" }
+        default { return "unknown" }
+    }
+}
+
+# Verify the downloaded archive against the release's checksums.txt.
+# Fails closed when checksums are present; warns and continues for older
+# releases that predate checksum publication (or when the user opted out).
+function Verify-Checksum([string]$ReleaseUrl, [string]$AssetPath, [string]$AssetName) {
+    if ($env:CSMESH_SKIP_CHECKSUM -eq "1") {
+        Write-Warn "Checksum verification skipped (CSMESH_SKIP_CHECKSUM=1)."
+        return
+    }
+
+    Write-Info "Fetching checksums..."
+    $checksumsPath = Join-Path ([System.IO.Path]::GetDirectoryName($AssetPath)) "checksums.txt"
+    try {
+        Invoke-WebRequest -Uri "$ReleaseUrl/checksums.txt" -OutFile $checksumsPath -UseBasicParsing -TimeoutSec 60
+    }
+    catch {
+        Write-Warn "checksums.txt not found in this release; skipping verification."
+        Write-Warn "For verification, pin a version: `$env:CSMESH_VERSION = 'vX.Y.Z' and check the release page."
+        return
+    }
+
+    # Expected line format: "<sha256>  <filename>" (two spaces, as produced by sha256sum).
+    $expected = $null
+    foreach ($line in Get-Content $checksumsPath) {
+        if ($line -match "^\s*([0-9a-fA-F]{64})\s+\S*\Q$AssetName\E\s*$") {
+            $expected = $Matches[1].ToLowerInvariant()
+            break
+        }
+    }
+
+    if (-not $expected) {
+        Write-Warn "$AssetName not listed in checksums.txt; skipping verification."
+        return
+    }
+
+    $actual = (Get-FileHash -Path $AssetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    if ($expected -ne $actual) {
+        Write-Err "Checksum mismatch for $AssetName!`n  expected: $expected`n  actual:   $actual`nAborting. The download may be corrupted or tampered with."
+        exit 1
+    }
+
+    Write-Success "Checksum verified (sha256: $actual)"
+}
+
 if ($env:CSMESH_USE_DOTNET -eq "1") {
     if (Install-ViaDotnet) {
         return
@@ -71,17 +130,13 @@ $InstallDir = if ($env:CSMESH_INSTALL_DIR) {
     Join-Path $env:LOCALAPPDATA "Programs\csmesh"
 }
 
-# Detect architecture
-$Arch = if ([System.Environment]::Is64BitOperatingSystem) {
-    if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
-} else {
-    "x86"
-}
+# Detect OS architecture (authoritative, emulation-aware)
+$Arch = Get-OSArchitecture
 
 if ($Arch -ne "x64" -and $Arch -ne "arm64") {
     Write-Warn "Prebuilt binaries only support x64 and arm64. Falling back to dotnet tool..."
     if (Install-ViaDotnet) { return }
-    Write-Err "Unsupported architecture: $Arch and .NET SDK not found."
+    Write-Err "Unsupported architecture and .NET SDK not found."
     return
 }
 
@@ -90,10 +145,12 @@ $AssetName = "csmesh-win-${Arch}.zip"
 # Resolve version
 if ($env:CSMESH_VERSION) {
     $Version = $env:CSMESH_VERSION
-    $DownloadUrl = "https://github.com/$Repo/releases/download/$Version/$AssetName"
+    $ReleaseUrl = "https://github.com/$Repo/releases/download/$Version"
+    $DownloadUrl = "$ReleaseUrl/$AssetName"
 } else {
     Write-Info "Resolving latest release of $Repo..."
-    $DownloadUrl = "https://github.com/$Repo/releases/latest/download/$AssetName"
+    $ReleaseUrl = "https://github.com/$Repo/releases/latest/download"
+    $DownloadUrl = "$ReleaseUrl/$AssetName"
 }
 
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString("N"))
@@ -123,6 +180,9 @@ try {
             return
         }
     }
+
+    # Verify integrity before touching the install directory
+    Verify-Checksum -ReleaseUrl $ReleaseUrl -AssetPath $ZipPath -AssetName $AssetName
 
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
