@@ -1643,6 +1643,20 @@ public static partial class Indexer
             var arg = inv.ArgumentList.Arguments.FirstOrDefault();
             if (arg == null && requestSymbol == null) return;
 
+            // A dispatch carries the message and then only plumbing: a CancellationToken, a
+            // configure lambda, a context. It never takes a host and a port.
+            //
+            // TcpLogClient.SendAsync(Payload, _settings.Host, _settings.Port) got through the
+            // source-declared guard because Payload is declared in the repository, and was
+            // reported as a message with no handler -- sending the reader looking for a consumer
+            // that was never meant to exist. Same family as the HttpClient.SendAsync case, and
+            // the name is no more the signal here than it was there.
+            foreach (var extra in inv.ArgumentList.Arguments.Skip(1))
+            {
+                var type = model.GetTypeInfo(extra.Expression).Type;
+                if (type != null && IsPrimitiveArgument(type)) return;
+            }
+
             if (requestSymbol == null && arg != null)
             {
                 if (arg.Expression is ObjectCreationExpressionSyntax oc)
@@ -1726,6 +1740,20 @@ public static partial class Indexer
                 }
             }
         }
+
+        /// <summary>
+        /// Strings, numbers and the like. Plumbing arguments -- tokens, lambdas, contexts -- are
+        /// none of these, so this separates a dispatch from a transport call without needing a
+        /// list of transport types to exclude.
+        /// </summary>
+        private static bool IsPrimitiveArgument(ITypeSymbol type) =>
+            type.SpecialType is SpecialType.System_String or SpecialType.System_Boolean
+                or SpecialType.System_Char or SpecialType.System_Byte or SpecialType.System_SByte
+                or SpecialType.System_Int16 or SpecialType.System_UInt16
+                or SpecialType.System_Int32 or SpecialType.System_UInt32
+                or SpecialType.System_Int64 or SpecialType.System_UInt64
+                or SpecialType.System_Single or SpecialType.System_Double
+                or SpecialType.System_Decimal;
 
         /// <summary>
         /// Lifetime by registration method name. TryAdd* is the form library authors use so a host

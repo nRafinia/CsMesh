@@ -198,3 +198,82 @@ public sealed class DbContextEntityTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* temp dir */ }
     }
 }
+
+/// <summary>
+/// Transport calls that happen to be named Send or Publish and happen to carry a type declared in
+/// the repository. Found on a real solution: a TCP log client reported as a message with no
+/// handler, which sends the reader looking for a consumer that was never meant to exist.
+/// </summary>
+public sealed class TransportCallTests : IDisposable
+{
+    private readonly string _root;
+    private readonly Graph _graph;
+
+    public TransportCallTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), "csmesh-transport-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(_root, "src"));
+
+        File.WriteAllText(Path.Combine(_root, "src", "Transport.cs"), """
+            namespace Demo;
+
+            public interface IRequestHandler<T> { }
+
+            public record Payload(string Body);
+            public record RealCommand(int Id);
+
+            public class RealCommandHandler : IRequestHandler<RealCommand>
+            {
+                public void Handle(RealCommand command) { }
+            }
+
+            public static class TcpLogClient
+            {
+                public static void SendAsync(Payload payload, string host, int port) { }
+            }
+
+            public interface IBus { void Publish(object message, System.Threading.CancellationToken token); }
+
+            public class Caller
+            {
+                private readonly IBus _bus = null!;
+
+                public void Log(Payload payload) => TcpLogClient.SendAsync(payload, "localhost", 5000);
+                public void Dispatch() => _bus.Publish(new RealCommand(1), default);
+            }
+            """);
+
+        _graph = Indexer.Build(_root);
+        _graph.Freeze();
+    }
+
+    /// <summary>
+    /// Host and port are not plumbing a mediator would ever carry.
+    ///
+    /// The symptom is an unresolved entry, not a false edge -- there is no handler for Payload, so
+    /// nothing was ever linked. What it produced was 'mediatr/no-handler' in the report, telling
+    /// the reader to go looking for a consumer that was never meant to exist. Asserting on edges
+    /// here passes with or without the fix; this has to assert on what was actually wrong.
+    /// </summary>
+    [Fact]
+    public void PrimitiveExtraArgumentsRuleOutADispatch()
+    {
+        Assert.DoesNotContain(_graph.Unresolved, u =>
+            u.Kind == "mediatr" && u.Expression.Contains("TcpLogClient", StringComparison.Ordinal));
+    }
+
+    /// <summary>A CancellationToken is plumbing, and must not disqualify a real dispatch.</summary>
+    [Fact]
+    public void PlumbingArgumentsStillAllowADispatch()
+    {
+        var caller = _graph.Nodes.First(n => n.Short == "Caller.Dispatch");
+        var handler = _graph.Nodes.First(n => n.Short == "RealCommandHandler.Handle");
+
+        Assert.Contains(_graph.Edges, e => e.From == caller.Id && e.To == handler.Id && e.Kind == EdgeKind.Mediatr);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { /* temp dir */ }
+    }
+}
