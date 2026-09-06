@@ -12,6 +12,7 @@ namespace CsMesh.Tests;
 /// special-case exactly these two -- and they are the two that say whether the answers from the
 /// other twelve can be trusted at all.
 /// </summary>
+[Collection("console-capture")]
 public sealed class ReportJsonTests
 {
     private sealed class Sandbox : IDisposable

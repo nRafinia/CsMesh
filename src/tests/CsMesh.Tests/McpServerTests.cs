@@ -12,6 +12,7 @@ namespace CsMesh.Tests;
 /// should not be, a schema serialised under the wrong casing. None of those produce an error the
 /// user can act on, so they have to be caught here.
 /// </summary>
+[Collection("console-capture")]
 public sealed class McpServerTests
 {
     private sealed class Sandbox : IDisposable

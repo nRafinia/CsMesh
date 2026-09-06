@@ -69,12 +69,19 @@ public static class GraphStore
     /// Serialises to a sibling temp file and renames it into place.
     ///
     /// File.Create truncates first and fills afterwards, so any reader arriving mid-write saw a
-    /// half-written graph and any crash left one on disk permanently. A rename is atomic on both
-    /// NTFS and ext4: a reader sees either the whole old file or the whole new one.
+    /// half-written graph and any crash left one on disk permanently. A rename gives a reader
+    /// either the whole old file or the whole new one.
+    ///
+    /// Windows will not let the rename happen while anything holds the destination open without
+    /// FILE_SHARE_DELETE, which is why OpenReadShared exists below. That covers csmesh's own
+    /// readers; it says nothing about an editor, a backup agent or a virus scanner that opened the
+    /// file for its own reasons, so a brief retry follows. Linux has no such rule -- rename() does
+    /// not consult open handles -- which is exactly why this was invisible until the suite ran on
+    /// Windows.
     /// </summary>
     private static void WriteAtomic(Graph g, string destination)
     {
-        var temp = destination + ".tmp-" + Environment.ProcessId;
+        var temp = destination + ".tmp-" + Environment.ProcessId + "-" + Environment.CurrentManagedThreadId;
 
         try
         {
@@ -83,7 +90,7 @@ public static class GraphStore
                 JsonSerializer.Serialize(stream, g, AppJsonContext.Default.Graph);
             }
 
-            File.Move(temp, destination, overwrite: true);
+            Rename(temp, destination);
         }
         catch
         {
@@ -92,6 +99,44 @@ public static class GraphStore
             throw;
         }
     }
+
+    private const int RenameAttempts = 20;
+    private const int RenameWaitMs = 25;
+
+    /// <summary>
+    /// Moves the finished graph into place, waiting out a transient hold on the destination.
+    ///
+    /// Bounded on purpose. If something keeps the file open for half a second this gives up and
+    /// lets the exception surface, because a write that silently did not happen is worse than one
+    /// that failed loudly -- the next query would answer from the old graph and say it was current.
+    /// </summary>
+    private static void Rename(string temp, string destination)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temp, destination, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException
+                                       && attempt < RenameAttempts)
+            {
+                Thread.Sleep(RenameWaitMs);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Opens the graph for reading without blocking a concurrent replacement.
+    ///
+    /// File.OpenRead asks for FileShare.Read, which on Windows is a promise that the file will not
+    /// be deleted or renamed while the handle lives -- so a reader in one process makes the writer
+    /// in another fail outright. Adding Delete is what lets the rename go through, and the reader
+    /// keeps reading the old file it already opened.
+    /// </summary>
+    private static FileStream OpenReadShared(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
     public static void Save(Graph g)
     {
@@ -137,7 +182,7 @@ public static class GraphStore
 
         try
         {
-            using var stream = File.OpenRead(path);
+            using var stream = OpenReadShared(path);
             var graph = JsonSerializer.Deserialize(stream, AppJsonContext.Default.Graph);
             if (graph == null || graph.FormatVersion != Graph.CurrentFormatVersion) return null;
 
@@ -170,7 +215,7 @@ public static class GraphStore
         Graph? graph;
         try
         {
-            using var stream = File.OpenRead(path);
+            using var stream = OpenReadShared(path);
             graph = JsonSerializer.Deserialize(stream, AppJsonContext.Default.Graph);
         }
         catch (Exception ex)
