@@ -89,20 +89,30 @@ public sealed class GraphWriteAtomicityTests
 
                 for (var i = 0; i < 150; i++)
                 {
-                    byte[] bytes;
+                    // A read that could not start is not a torn read. On Windows ReplaceFile
+                    // makes the destination briefly unopenable, so a reader hammering it in a
+                    // loop is denied often -- 62 times out of 150 on the run that found this.
+                    // That is the platform swapping the file correctly, which is the opposite of
+                    // the defect. Only content that begins and stops mid-document counts.
+                    byte[]? bytes = null;
 
-                    // Not File.ReadAllBytes: it asks for FileShare.Read, which on Windows blocks
-                    // the writer's rename outright rather than merely racing it. A reader that
-                    // stops the write from happening is not the reader this test is about.
-                    try
+                    for (var attempt = 0; attempt < 20 && bytes == null; attempt++)
                     {
-                        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-                            FileShare.ReadWrite | FileShare.Delete);
-                        using var memory = new MemoryStream();
-                        stream.CopyTo(memory);
-                        bytes = memory.ToArray();
+                        try
+                        {
+                            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                                FileShare.ReadWrite | FileShare.Delete);
+                            using var memory = new MemoryStream();
+                            stream.CopyTo(memory);
+                            bytes = memory.ToArray();
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            Thread.Sleep(5);
+                        }
                     }
-                    catch (IOException) { Interlocked.Increment(ref torn); continue; }
+
+                    if (bytes == null) continue;
 
                     Interlocked.Increment(ref reads);
                     if (bytes.Length == 0 || bytes[^1] != (byte)'}') Interlocked.Increment(ref torn);
