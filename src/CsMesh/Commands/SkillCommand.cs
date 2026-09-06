@@ -222,7 +222,18 @@ public static class SkillCommand
         }
 
         Console.WriteLine();
-        Console.WriteLine("  Restart your client to pick these up. Remove with: csmesh skill --install --mcp --uninstall");
+
+        // Worth more than one line, because the failure it prevents is expensive and does not
+        // look like a failure. A client starts its MCP servers when it opens, so one that was
+        // already running started before this config existed -- with its own working directory,
+        // which is the IDE's install folder. It will not re-read the file, so it stays pointed
+        // there until the client is restarted, and every answer comes back empty as though the
+        // repository had nothing in it.
+        Console.WriteLine("  RESTART YOUR CLIENT before using csmesh through MCP.");
+        Console.WriteLine("  A server it already started is still pointed at its own directory and");
+        Console.WriteLine("  will not re-read this config. Until then, the CLI works normally.");
+        Console.WriteLine();
+        Console.WriteLine("  Remove with: csmesh skill --install --mcp --uninstall");
     }
 
     private static void InstallClaude(string basePath, bool isGlobal)
