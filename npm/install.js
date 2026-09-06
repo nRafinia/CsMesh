@@ -22,41 +22,55 @@ if (!target) {
 }
 
 const binDir = path.join(__dirname, '..', 'bin');
-if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+if (!fs.existsSync(binDir)) {
+  fs.mkdirSync(binDir, { recursive: true });
+}
 
-const url = `https://github.com/nRafinia/CsMesh/releases/download/v${version}/${target.file}`;
+const releaseTag = version.startsWith('v') ? version : `v${version}`;
+const url = `https://github.com/nRafinia/CsMesh/releases/download/${releaseTag}/${target.file}`;
 const tempArchive = path.join(binDir, target.file);
 
 console.log(`Downloading ${target.file} from ${url}...`);
 
-function download(url, dest, cb) {
-  https.get(url, (res) => {
+function download(fileUrl, destPath, callback) {
+  https.get(fileUrl, (res) => {
     if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-      return download(res.headers.location, dest, cb);
+      return download(res.headers.location, destPath, callback);
     }
     if (res.statusCode !== 200) {
-      return cb(new Error(`Failed with status ${res.statusCode}`));
+      return callback(new Error(`Download failed with status ${res.statusCode}`));
     }
-    const file = fs.createWriteStream(dest);
-    res.pipe(file);
-    file.on('finish', () => file.close(cb));
-  }).on('error', cb);
+    const fileStream = fs.createWriteStream(destPath);
+    res.pipe(fileStream);
+    fileStream.on('finish', () => fileStream.close(callback));
+  }).on('error', callback);
 }
 
 download(url, tempArchive, (err) => {
   if (err) {
-    console.error('Download failed:', err.message);
+    console.error('Download error:', err.message);
     process.exit(1);
   }
 
-  if (target.file.endsWith('.zip')) {
-    execSync(`powershell -Command "Expand-Archive -Path '${tempArchive}' -DestinationPath '${binDir}' -Force"`);
-  } else {
-    execSync(`tar -xzf "${tempArchive}" -C "${binDir}"`);
+  try {
+    if (target.file.endsWith('.zip')) {
+      execSync(`powershell -Command "Expand-Archive -Path '${tempArchive}' -DestinationPath '${binDir}' -Force"`);
+    } else {
+      execSync(`tar -xzf "${tempArchive}" -C "${binDir}"`);
+    }
+  } catch (extractErr) {
+    console.error('Extraction failed:', extractErr.message);
+    process.exit(1);
+  } finally {
+    if (fs.existsSync(tempArchive)) {
+      fs.unlinkSync(tempArchive);
+    }
   }
 
-  fs.unlinkSync(tempArchive);
   const binPath = path.join(binDir, target.bin);
-  if (platform !== 'win32') fs.chmodSync(binPath, 0o755);
-  console.log('Installation finished successfully.');
+  if (platform !== 'win32' && fs.existsSync(binPath)) {
+    fs.chmodSync(binPath, 0o755);
+  }
+
+  console.log('csmesh binary ready.');
 });
