@@ -211,7 +211,7 @@ public static class SkillText
         `grep`, `ripgrep`, glob, or reading files in sequence to discover C# symbols, trace callers, find
         interface implementations, or inspect types.
 
-        Your VERY FIRST tool call when exploring or investigating C# code MUST be `run_command` with `csmesh`:
+        Your VERY FIRST action when exploring or investigating C# code MUST be running `csmesh` (via your available shell/bash/command tool, or via `csmesh_*` MCP tools if configured):
         - To find a symbol or route: `csmesh where <term>`
         - To trace call paths: `csmesh trace <Type.Member> --budget 600`
         - To find implementations: `csmesh impl <IThing> --budget 300`
@@ -304,7 +304,7 @@ public static class SkillText
         `grep`, `ripgrep`, glob, or reading files in sequence to discover C# symbols, trace callers, find
         interface implementations, or inspect types.
 
-        Your VERY FIRST tool call when exploring or investigating C# code MUST be `run_command` with `csmesh`:
+        Your VERY FIRST action when exploring or investigating C# code MUST be running `csmesh` (via your available shell/bash/command tool, or via `csmesh_*` MCP tools if configured):
         - To find a symbol or route: `csmesh where <term>`
         - To trace call paths: `csmesh trace <Type.Member> --budget 600`
         - To find implementations: `csmesh impl <IThing> --budget 300`
