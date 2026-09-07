@@ -60,6 +60,8 @@ public static class AgentIntegration
         yield return Path.Combine(home, ".gemini", "antigravity", "mcp_config.json");
         yield return Path.Combine(home, ".gemini", "antigravity-cli", "mcp_config.json");
 
+        yield return Path.Combine(home, ".codeium", "windsurf", "mcp_config.json");
+
         if (OperatingSystem.IsWindows())
         {
             var roaming = Environment.GetEnvironmentVariable("APPDATA");
@@ -84,6 +86,7 @@ public static class AgentIntegration
     {
         yield return Path.Combine(repoRoot, ".mcp.json");
         yield return Path.Combine(repoRoot, ".cursor", "mcp.json");
+        yield return Path.Combine(repoRoot, ".vscode", "mcp.json");
 
         // Antigravity's workspace-scoped location. Its global config is a separate file, so a
         // project install that skipped this left Antigravity with nothing at all.

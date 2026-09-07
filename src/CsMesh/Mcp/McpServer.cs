@@ -303,6 +303,8 @@ public static class McpServer
                 + "container binds, and what a change would reach.\n\n"
                 + "Every tool reads an index on disk. Run 'index' once in a fresh checkout, and again "
                 + "when an answer says it is stale. 'doctor' says whether the index is usable.\n\n"
+                + "In standalone desktop or multi-repo environments where workspace detection is not available, "
+                + "specify the 'repo' argument on tool calls to point to the repository.\n\n"
                 + "Not in the graph: string literals, config keys, log messages, and anything outside "
                 + "a .cs file. Use ordinary text search for those.\n\n"
                 + "Answers end with a suggested next step written as a shell command, e.g. "

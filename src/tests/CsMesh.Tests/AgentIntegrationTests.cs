@@ -230,6 +230,7 @@ public sealed class MultiTargetIntegrationTests : IDisposable
         Assert.Contains(targets, t => t.Contains(".cursor", StringComparison.Ordinal));
         Assert.Contains(targets, t => t.Contains(".gemini", StringComparison.Ordinal));
         Assert.Contains(targets, t => t.Contains("claude_desktop_config.json", StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.Contains("windsurf", StringComparison.Ordinal));
 
         // Antigravity has moved this more than once and its surfaces still disagree, so all
         // three are written. Missing the right one is invisible: the server never appears and
@@ -257,6 +258,7 @@ public sealed class MultiTargetIntegrationTests : IDisposable
         var targets = AgentIntegration.ProjectServerTargets(_home).ToList();
 
         Assert.Contains(targets, t => t.EndsWith(Path.Combine(".agents", "mcp_config.json"), StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.EndsWith(Path.Combine(".vscode", "mcp.json"), StringComparison.Ordinal));
         Assert.Contains(targets, t => t.EndsWith(".mcp.json", StringComparison.Ordinal));
         Assert.Equal(targets.Count, targets.Distinct().Count());
     }
@@ -350,6 +352,14 @@ public sealed class MultiTargetIntegrationTests : IDisposable
 
         var afterRoot = Read(path);
         Assert.False(afterRoot.TryGetProperty("csmesh-grep-hint", out _));
+    }
+
+    [Fact]
+    public void FindRootDiscardsUnexpandedIdeVariables()
+    {
+        var discovered = RepositoryLocator.FindRoot("${workspaceFolder}");
+        Assert.False(discovered.Contains("${workspaceFolder}", StringComparison.Ordinal));
+        Assert.True(Directory.Exists(discovered));
     }
 
     public void Dispose()

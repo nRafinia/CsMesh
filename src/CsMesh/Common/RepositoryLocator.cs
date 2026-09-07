@@ -10,6 +10,19 @@ public static class RepositoryLocator
     /// </summary>
     public static string FindRoot(string start)
     {
+        // Many IDEs (VS Code, Cursor, JetBrains) pass macros like ${workspaceFolder} or $PROJECT_DIR$.
+        // If an editor failed to expand them before passing, discard the literal macro name and fall back
+        // to well-known IDE environment variables or CWD.
+        if (string.IsNullOrWhiteSpace(start) || (start.Contains('$') && !Directory.Exists(start)))
+        {
+            start = Environment.GetEnvironmentVariable("CSMESH_REPO")
+                    ?? Environment.GetEnvironmentVariable("WORKSPACE_FOLDER")
+                    ?? Environment.GetEnvironmentVariable("VSCODE_WORKSPACE_FOLDER")
+                    ?? Environment.GetEnvironmentVariable("PROJECT_DIR")
+                    ?? Environment.GetEnvironmentVariable("WORKSPACE")
+                    ?? Directory.GetCurrentDirectory();
+        }
+
         var dir = new DirectoryInfo(Path.GetFullPath(start));
         while (dir != null)
         {
