@@ -42,7 +42,7 @@ public static class CliRunner
         Telemetry.Telemetry.Disabled = opt.Flag("no-telemetry")
                                        || Environment.GetEnvironmentVariable("CSMESH_NO_TELEMETRY") == "1"
                                        || Environment.GetEnvironmentVariable("CSGRAPH_NO_TELEMETRY") == "1"
-                                       || cmd is "usage" or "doctor" or "skill" or "version" or "help" or "serve";
+                                        || cmd is "usage" or "doctor" or "skill" or "install" or "uninstall" or "version" or "help" or "serve";
 
         var root = RepositoryLocator.FindRoot(opt.Value("repo") ?? Directory.GetCurrentDirectory());
         Telemetry.Telemetry.Current.Root = root;
@@ -72,7 +72,9 @@ public static class CliRunner
             "serve" => Mcp.McpServer.Run(root),
             "usage" => UsageCommand.Execute(root, opt),
             "doctor" => DoctorCommand.Execute(root, opt),
-            "skill" => SkillCommand.Execute(root, opt),
+            "skill" => SkillCommand.Execute(root, opt, SkillMode.Skill),
+            "install" => SkillCommand.Execute(root, opt, SkillMode.Install),
+            "uninstall" => SkillCommand.Execute(root, opt, SkillMode.Uninstall),
             "version" => Emit($"CsMesh {AppVersion.Get()}"),
             "help" => HelpCommand.Show(rest.FirstOrDefault()),
             _ => Emit($"unknown command '{cmd}'. Try: CsMesh --help", Exit.Usage)
