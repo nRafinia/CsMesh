@@ -94,6 +94,23 @@ public static partial class Indexer
             return null;
         }
 
+        // A component's node was built from the generated C# a build produced for it, not from the
+        // .razor file itself -- Build() only knows to look for that generated source at the start
+        // of a full pass. Editing the .razor file changes the file this pass sees as dirty, but the
+        // generated C# behind the graph's nodes will not change until the next build, so rebinding
+        // against it now would bind against text that no longer matches the source and produce a
+        // graph that is confidently wrong rather than merely stale.
+        foreach (var relative in dirty)
+        {
+            var normalized = relative.Replace('\\', '/');
+            if (normalized.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ||
+                normalized.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase))
+            {
+                Dbg.Log($"incremental declined: {relative} is a Razor source; its compiled C# does not change until the next build");
+                return null;
+            }
+        }
+
         foreach (var relative in dirty)
         {
             var full = Path.Combine(root, relative);

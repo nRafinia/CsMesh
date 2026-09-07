@@ -44,6 +44,8 @@ public static class DoctorCommand
             report.ReferencesCapped = graph.ReferencesCapped;
             report.UnresolvedCallSites = graph.UnresolvedCallSites;
             report.GlobalUsingSources = graph.GlobalUsingSources;
+            report.RazorFileCount = graph.RazorFileCount;
+            report.RazorComponentsIndexed = graph.RazorComponentsIndexed;
             report.SkippedProjects = graph.SkippedProjects;
             report.ScopeDecision = graph.ScopeDecision;
             report.EdgesByKind = graph.Edges
@@ -223,6 +225,26 @@ public static class DoctorCommand
             {
                 e.Line("    CS0433 means a type arrived from two assemblies. bin/ probably holds a");
                 e.Line("    compiled copy of the source being indexed; that breaks resolution.");
+            }
+        }
+
+        if (graph.RazorFileCount > 0)
+        {
+            if (graph.RazorComponentsIndexed > 0)
+            {
+                e.Line($"  razor           {graph.RazorComponentsIndexed} of {graph.RazorFileCount} .razor/.cshtml file(s)" +
+                       " indexed from generated sources found on disk");
+            }
+            else
+            {
+                e.Line($"  razor           {graph.RazorFileCount} .razor/.cshtml file(s) found; their generated types");
+                e.Line("                  (components, parameters, @code members) are not in the graph, so a diagnostic");
+                e.Line("                  naming their namespace -- CS0246 is typical -- describes a missing build");
+                e.Line("                  output, not broken code.");
+                e.Line("                  their generator output was not found on disk. A warm build does not write it");
+                e.Line("                  even with the property below set -- it only runs the generator again when the");
+                e.Line("                  build is not incremental. Run both flags, then re-index:");
+                e.Line("                  dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true");
             }
         }
 

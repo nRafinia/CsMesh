@@ -85,6 +85,22 @@ public sealed class Graph
     public int GlobalUsingSources { get; set; }
 
     /// <summary>
+    /// .razor and .cshtml files under the root, counted with the same skip rules as
+    /// EnumerateSourceFiles. Modern Razor compiles through a Roslyn source generator whose output
+    /// normally lives only in memory, so a plain build leaves nothing on disk for this indexer to
+    /// read -- these files are typically counted, not indexed. See RazorComponentsIndexed for how
+    /// many actually made it into the graph.
+    /// </summary>
+    public int RazorFileCount { get; set; }
+
+    /// <summary>
+    /// Component types recovered from generated Razor sources found on disk. Zero while
+    /// RazorFileCount is nonzero means the build never emitted them where this indexer looks:
+    /// run with -p:EmitCompilerGeneratedFiles=true and --no-incremental, then re-index.
+    /// </summary>
+    public int RazorComponentsIndexed { get; set; }
+
+    /// <summary>
     /// Project files left out of the index because nothing builds them. Named rather than
     /// silently dropped: quietly ignoring source is worse than indexing dead source, since the
     /// reader has no way to find out it happened.
