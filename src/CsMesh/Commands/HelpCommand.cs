@@ -105,7 +105,7 @@ public static class HelpCommand
             --mcp              Include MCP server integration in install or uninstall
             -g, --global       Apply to global config directory instead of local repo
             --agent <TARGET>   Target agent:
-                               all (default), claude, cursor, windsurf, cline, antigravity,
+                               all (default), claude, cursor, vscode, rider, windsurf, cline, antigravity,
                                copilot, kilocode, mimo, codex, gemini, opencode
             --repo <PATH>      Target repository root (default: nearest repository above cwd)
             -h, --help         Print help information
@@ -134,7 +134,7 @@ public static class HelpCommand
             --all              Install both skill/rule files and MCP integration
             -g, --global       Install to user global config directory instead of local repo
             --agent <TARGET>   Target agent to install for:
-                               all (default), claude, cursor, windsurf, cline, antigravity,
+                               all (default), claude, cursor, vscode, rider, windsurf, cline, antigravity,
                                copilot, kilocode, mimo, codex, gemini, opencode
             --repo <PATH>      Target repository root
             -h, --help         Print help information
@@ -161,7 +161,7 @@ public static class HelpCommand
             --all              Remove both skill/rule files and MCP integration
             -g, --global       Remove from user global config directory instead of local repo
             --agent <TARGET>   Target agent to uninstall for:
-                               all (default), claude, cursor, windsurf, cline, antigravity,
+                               all (default), claude, cursor, vscode, rider, windsurf, cline, antigravity,
                                copilot, kilocode, mimo, codex, gemini, opencode
             --repo <PATH>      Target repository root
             -h, --help         Print help information

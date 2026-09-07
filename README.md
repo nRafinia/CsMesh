@@ -39,7 +39,7 @@ PaymentController.Post  {http:POST /charge}  Api/PaymentController.cs:14
 ## 📑 Table of Contents
 
 - [The Problem: The Hidden Tax of AI Code Exploration](#-the-problem-the-hidden-tax-of-ai-code-exploration)
-- [Why a CLI Beats an MCP Server](#-why-a-cli-beats-an-mcp-server)
+- [Dual Mode: CLI and MCP Server Support](#-dual-mode-cli-and-mcp-server-support)
 - [Empirical Benchmarks](#-empirical-benchmarks)
 - [Key Features](#-key-features)
 - [Installation](#-installation)
@@ -87,17 +87,19 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
 
 ---
 
-## ⚡ Why a CLI Beats an MCP Server
+## 🔌 Dual Mode: CLI and MCP Server Support
 
-A common approach for AI agent tooling is building a Model Context Protocol (MCP) server. However, for codebase graph analysis, MCP tools carry an inherent flaw:
+`csmesh` supports both **command-line interface (CLI)** and **Model Context Protocol (MCP)** workflows with a first-class experience, giving developers and AI agents the flexibility to choose what works best:
 
-* **The Upfront Context Tax:** MCP tool definitions, JSON schemas, and argument metadata are injected into the agent's context window on **every single turn**, even when unused.
-* **No Hard Token Budgets:** Unbounded MCP tool responses frequently dump thousands of lines of raw JSON, blowing the model's context window.
+* **⚡ Fast CLI-First Execution:**
+  - **Zero Idle Context Overhead:** Incurs zero token spend until explicitly invoked.
+  - **Hard Token Caps (`--budget`):** Guarantees answers fit within strict limits (e.g. `--budget 300` or `--budget 600`), exiting cleanly with code `2` on overflow instead of polluting conversation history.
+  - **Command Chaining:** Chain queries in a single turn (`csmesh impl IStore --budget 200 && csmesh blast-radius Order.Submit --budget 400`).
 
-**`csmesh` uses a CLI-first architecture:**
-- **0 Idle Tokens:** Incurs zero context overhead until explicitly invoked.
-- **Hard Token Caps (`--budget`):** Guarantees answers fit within budget (e.g. `--budget 300` or `--budget 600`), exiting cleanly with code `2` on overflow instead of polluting conversation history.
-- **Command Chaining:** Agents can chain queries in a single turn (`csmesh impl IStore --budget 200 && csmesh blast-radius Order.Submit --budget 400`).
+* **🤖 Native Model Context Protocol (MCP) Server:**
+  - **Interactive Agent Experience:** Run `csmesh serve` to expose query tools over standard JSON-RPC (stdio) to MCP-compatible clients like Claude Desktop, Cursor, Antigravity, VS Code, and Windsurf.
+  - **One-Command Setup:** Register csmesh into IDE configurations with `csmesh install --mcp` (locally) or `csmesh install --mcp --global` (machine-wide).
+  - **Token-Efficient Tool Responses:** Returns dense, structured plaintext designed for LLM comprehension without wasteful, unbounded JSON dumps.
 
 ---
 
@@ -201,11 +203,14 @@ csmesh index
 
 ### 2. Configure Your AI Coding Assistants
 ```bash
-# Configure all detected IDEs & agents in the current repository:
-csmesh skill --install
+# Install skill and rule files in the current repository:
+csmesh install
 
-# Or install machine-wide into your user profile (~/.claude, ~/.cursor, etc.):
-csmesh skill --install --global
+# Or install both skill files and MCP server integration:
+csmesh install --all
+
+# Or install machine-wide into your user profile (~/.claude, ~/.cursor, ~/.gemini, etc.):
+csmesh install --global
 ```
 
 ### 3. Ask Structural Questions
@@ -230,14 +235,16 @@ csmesh entrypoints orders
 
 ## 🤖 Supported IDEs & AI Coding Agents
 
-`csmesh skill --install` sets up native prompt instructions and skills across all major coding tools:
+`csmesh install` sets up native prompt instructions and skills across all major coding tools:
 
-| Agent / IDE | Local Target (`--install`) | Global Target (`--global` / `-g`) | Format |
+| Agent / IDE | Local Target (`csmesh install`) | Global Target (`--global` / `-g`) | Format |
 |:---|:---|:---|:---|
+| **VS Code** | `.vscode/mcp.json` + `.github/copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | MCP Server + Copilot Instructions |
+| **JetBrains Rider** | `.mcp.json` + `AGENTS.md` | `~/.ai/mcp/mcp.json` + `~/.codex/AGENTS.md` | MCP Server + Agent Rules Block |
 | **Claude Code** | `.claude/skills/csmesh/SKILL.md` | `~/.claude/skills/...` + `CLAUDE.md` | Skill (YAML frontmatter) |
-| **Cursor** | `.cursor/rules/csmesh.mdc` | `~/.cursor/rules/csmesh.mdc` | MDC Rule (Scoped to C# globs) |
-| **Google Antigravity** | `.agents/skills/csmesh/SKILL.md` + `.agents/rules/` | `~/.gemini/config/skills/...` | Workspace Skill + Rules |
-| **Windsurf (Cascade)** | `.windsurfrules` | `~/.codeium/windsurf/memories/...` | Tagged Instruction Block |
+| **Cursor** | `.cursor/rules/csmesh.mdc` + `.cursor/mcp.json` | `~/.cursor/rules/...` + `~/.cursor/mcp.json` | MDC Rule + MCP Server |
+| **Google Antigravity** | `.agents/skills/csmesh/SKILL.md` + `.agents/mcp_config.json` | `~/.gemini/config/skills/...` + `mcp_config.json` | Workspace Skill + Rules + MCP |
+| **Windsurf (Cascade)** | `.windsurfrules` | `~/.codeium/windsurf/` (rules & `mcp_config.json`) | Tagged Rules Block + MCP Server |
 | **Cline & Roo Code** | `.clinerules` or `.clinerules/csmesh.md` | `~/.cline/rules/csmesh.md` | Tagged Instruction Block |
 | **GitHub Copilot** | `.github/copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | User Instructions Block |
 | **MiMo Code (Xiaomi)** | `.mimocode/skills/csmesh/SKILL.md` + `AGENTS.md` | `~/.mimocode/skills/...` + `.mimo/` | Skill + Agent Instructions |
@@ -247,7 +254,7 @@ csmesh entrypoints orders
 | **OpenCode** | `AGENTS.md` + `.opencode/rules/csmesh.md` | `~/.config/opencode/AGENTS.md` + `~/.opencode/rules/` | Open Agent Standard Block & Rules |
 
 > [!TIP]
-> Shared configuration files (`AGENTS.md`, `GEMINI.md`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`) use safe tagged blocks (`<!-- csmesh-instructions -->`). Existing developer rules are **never overwritten**.
+> Shared configuration files (`AGENTS.md`, `GEMINI.md`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`) use safe tagged blocks (`<!-- csmesh-instructions -->`). Existing developer rules are **never overwritten**. When `--mcp` is passed (`csmesh install --mcp` or `csmesh install --all`), native MCP server configurations (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `~/.claude.json`, etc.) are also automatically merged.
 
 ---
 
@@ -391,13 +398,31 @@ Diagnoses index freshness, dirty files, caller attribution, and agent skill conf
 csmesh doctor
 ```
 
-#### `csmesh skill`
-Prints the skill definition or installs agent rules.
+#### `csmesh install [OPTIONS]`
+Installs agent skill and rule files and optional MCP server integrations for AI assistants.
 ```bash
-csmesh skill                             # Print skill markdown to stdout
-csmesh skill --install                   # Install locally for all agents
-csmesh skill --install --global          # Install globally for all agents (~/.claude, etc.)
-csmesh skill --install -g --agent cursor # Install globally for Cursor only
+csmesh install                      # Install skill and rule files for current repo
+csmesh install --mcp                # Register csmesh as an MCP server
+csmesh install --all                # Install skills and MCP server
+csmesh install --global             # Install globally across all user agents
+csmesh install -g --agent cursor   # Install globally for Cursor only
+```
+
+#### `csmesh uninstall [OPTIONS]`
+Safely removes agent skill/rule files, cleans up generated blocks, and unregisters MCP server integrations.
+```bash
+csmesh uninstall                    # Remove skill and rule files from current repo
+csmesh uninstall --mcp              # Unregister MCP server
+csmesh uninstall --all              # Remove skills and MCP server
+csmesh uninstall --global           # Remove globally across user config
+csmesh uninstall -g --agent cursor # Remove globally for Cursor only
+```
+
+#### `csmesh serve`
+Exposes csmesh query tools to AI agents as a Model Context Protocol (MCP) server over stdio.
+```bash
+csmesh serve
+csmesh serve --repo ./src
 ```
 
 ---

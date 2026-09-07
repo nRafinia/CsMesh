@@ -146,4 +146,28 @@ public sealed class SkillCommandTests : IDisposable
         Assert.Equal(Exit.Ok, uninstallExit);
         Assert.False(File.Exists(mdcPath));
     }
+
+    [Fact]
+    public void VsCodeAndRiderAgentTargetsWorkCorrectly()
+    {
+        var copilotInstructions = Path.Combine(_root, ".github", "copilot-instructions.md");
+        var agentsMd = Path.Combine(_root, "AGENTS.md");
+
+        // Install for vscode (maps to copilot instructions)
+        var vscodeExit = SkillCommand.Execute(_root, new Options(["--agent", "vscode"]), SkillMode.Install);
+        Assert.Equal(Exit.Ok, vscodeExit);
+        Assert.True(File.Exists(copilotInstructions));
+
+        // Install for rider (maps to AGENTS.md)
+        var riderExit = SkillCommand.Execute(_root, new Options(["--agent", "rider"]), SkillMode.Install);
+        Assert.Equal(Exit.Ok, riderExit);
+        Assert.True(File.Exists(agentsMd));
+
+        // Uninstall
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "vscode"]), SkillMode.Uninstall));
+        Assert.False(File.Exists(copilotInstructions));
+
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "rider"]), SkillMode.Uninstall));
+        Assert.False(File.Exists(agentsMd));
+    }
 }

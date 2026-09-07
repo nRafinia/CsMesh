@@ -245,7 +245,7 @@ public static class SkillCommand
 
     private static readonly FrozenSet<string> ValidAgents = new[]
     {
-        "claude", "cursor", "windsurf", "cline", "roo", "antigravity",
+        "claude", "cursor", "vscode", "rider", "windsurf", "cline", "roo", "antigravity",
         "copilot", "kilocode", "mimo", "mimocode", "codex", "kimi", "gemini", "opencode", "all"
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
@@ -253,7 +253,7 @@ public static class SkillCommand
     {
         if (!ValidAgents.Contains(targetAgent))
         {
-            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, opencode, all.");
+            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, vscode, rider, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, opencode, all.");
             return Exit.Usage;
         }
 
@@ -283,6 +283,8 @@ public static class SkillCommand
                 "roo" => "cline",
                 "mimocode" => "mimo",
                 "kimi" => "codex",
+                "vscode" => "copilot",
+                "rider" => "codex",
                 _ => targetAgent
             };
             actions[normalized]();
@@ -585,7 +587,7 @@ public static class SkillCommand
     {
         if (!ValidAgents.Contains(targetAgent))
         {
-            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, opencode, all.");
+            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, vscode, rider, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, opencode, all.");
             return Exit.Usage;
         }
 
@@ -615,6 +617,8 @@ public static class SkillCommand
                 "roo" => "cline",
                 "mimocode" => "mimo",
                 "kimi" => "codex",
+                "vscode" => "copilot",
+                "rider" => "codex",
                 _ => targetAgent
             };
             actions[normalized]();
