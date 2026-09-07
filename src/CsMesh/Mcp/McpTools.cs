@@ -172,6 +172,12 @@ public static class McpTools
                 };
             }
 
+            schema.Properties["repo"] = new JsonSchemaProperty
+            {
+                Type = "string",
+                Description = "Optional repository root path or workspace folder. Overrides detected workspace root."
+            };
+
             tools.Add(new ToolDescriptor
             {
                 Name = tool.Name,
@@ -207,6 +213,11 @@ public static class McpTools
             return Failure($"unknown tool '{name}'.");
         }
 
+        var explicitRepo = Text(arguments, "repo");
+        var effectiveRoot = !string.IsNullOrWhiteSpace(explicitRepo)
+            ? RepositoryLocator.FindRoot(explicitRepo)
+            : root;
+
         var argv = new List<string>();
 
         if (tool.Argument != null && Text(arguments, tool.Argument) is { Length: > 0 } first)
@@ -239,9 +250,9 @@ public static class McpTools
 
             exit = tool.Kind switch
             {
-                "doctor" => DoctorCommand.Execute(root, opt),
-                "index" => IndexCommand.Execute(root, opt),
-                _ => QueryCommand.Execute(root, opt, tool.Kind)
+                "doctor" => DoctorCommand.Execute(effectiveRoot, opt),
+                "index" => IndexCommand.Execute(effectiveRoot, opt),
+                _ => QueryCommand.Execute(effectiveRoot, opt, tool.Kind)
             };
         }
         catch (Exception ex)

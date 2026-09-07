@@ -27,11 +27,21 @@ public static class McpServer
     private const int MethodNotFound = -32601;
     private const int InternalError = -32603;
 
+    private static string _activeRoot = string.Empty;
+    private static bool _clientSupportsRoots;
+    private static string? _pendingRootsReqId;
+    private static int _reqCounter;
+
     public static int Run(string root)
     {
+        _activeRoot = root;
+        _clientSupportsRoots = false;
+        _pendingRootsReqId = null;
+        _reqCounter = 0;
+
         // stdout is the transport. Anything a command prints is captured in McpTools; anything
         // csmesh logs about itself goes to stderr, which the spec leaves free for exactly this.
-        Dbg.Log($"mcp: serving {root}");
+        Dbg.Log($"mcp: serving {_activeRoot}");
 
         // Single-threaded by design: one frame is read, dispatched and answered before the next
         // is looked at. McpTools swaps Console.Out around each command to capture its output, and
@@ -43,14 +53,48 @@ public static class McpServer
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
 
+            using var doc = TryParse(line, out var parseError);
+            if (parseError != null)
+            {
+                Dbg.Log($"mcp: unparseable frame: {parseError}");
+                Write(new RpcResponse { Error = new RpcError { Code = ParseError, Message = "parse error" } });
+                continue;
+            }
+
+            if (doc == null) continue;
+
+            var rootElem = doc.RootElement;
+
+            // Responses to server-initiated requests (e.g. roots/list) have no "method" member.
+            if (!rootElem.TryGetProperty("method", out _))
+            {
+                if (rootElem.TryGetProperty("id", out var idElem))
+                {
+                    var id = idElem.ValueKind == JsonValueKind.String ? idElem.GetString() : idElem.GetRawText();
+                    if (id == _pendingRootsReqId)
+                    {
+                        _pendingRootsReqId = null;
+                        if (rootElem.TryGetProperty("result", out var resElem))
+                        {
+                            HandleRootsResult(resElem);
+                        }
+                        else if (rootElem.TryGetProperty("error", out var errElem))
+                        {
+                            Dbg.Log($"mcp: client rejected roots/list: {errElem.GetRawText()}");
+                        }
+                    }
+                }
+                continue;
+            }
+
             RpcRequest? request;
             try
             {
-                request = JsonSerializer.Deserialize(line, McpJsonContext.Default.RpcRequest);
+                request = JsonSerializer.Deserialize(rootElem, McpJsonContext.Default.RpcRequest);
             }
             catch (JsonException ex)
             {
-                Dbg.Log($"mcp: unparseable frame: {ex.Message}");
+                Dbg.Log($"mcp: unparseable request: {ex.Message}");
                 Write(new RpcResponse { Error = new RpcError { Code = ParseError, Message = "parse error" } });
                 continue;
             }
@@ -59,7 +103,7 @@ public static class McpServer
 
             try
             {
-                Dispatch(root, request);
+                Dispatch(request);
             }
             catch (Exception ex)
             {
@@ -82,12 +126,46 @@ public static class McpServer
         return Exit.Ok;
     }
 
-    private static void Dispatch(string root, RpcRequest request)
+    private static JsonDocument? TryParse(string line, out string? error)
+    {
+        try
+        {
+            error = null;
+            return JsonDocument.Parse(line);
+        }
+        catch (JsonException ex)
+        {
+            error = ex.Message;
+            return null;
+        }
+    }
+
+    private static void Dispatch(RpcRequest request)
     {
         switch (request.Method)
         {
             case "initialize":
+                if (request.Params?.TryGetProperty("capabilities", out var caps) == true &&
+                    caps.TryGetProperty("roots", out _))
+                {
+                    _clientSupportsRoots = true;
+                    Dbg.Log("mcp: client advertised roots capability");
+                }
                 Write(Reply(request, Element(Initialize(request), McpJsonContext.Default.InitializeResult)));
+                break;
+
+            case "notifications/initialized":
+                if (_clientSupportsRoots)
+                {
+                    RequestRootsList();
+                }
+                break;
+
+            case "notifications/roots/list_changed" or "roots/list_changed":
+                if (_clientSupportsRoots)
+                {
+                    RequestRootsList();
+                }
                 break;
 
             case "tools/list":
@@ -99,7 +177,7 @@ public static class McpServer
                 var name = request.Params?.TryGetProperty("name", out var n) == true ? n.GetString() : null;
                 JsonElement? arguments = request.Params?.TryGetProperty("arguments", out var a) == true ? a : null;
 
-                var result = McpTools.Invoke(root, name ?? string.Empty, arguments);
+                var result = McpTools.Invoke(_activeRoot, name ?? string.Empty, arguments);
                 Write(Reply(request, Element(result, McpJsonContext.Default.ToolCallResult)));
                 break;
 
@@ -112,7 +190,6 @@ public static class McpServer
 
             // Notifications carry no id and take no reply. Answering one is a protocol error, so
             // these are absorbed rather than falling through to method-not-found.
-            case "notifications/initialized":
             case "notifications/cancelled":
                 break;
 
@@ -126,6 +203,90 @@ public static class McpServer
                 });
                 break;
         }
+    }
+
+    private static void RequestRootsList()
+    {
+        var id = $"csmesh-roots-{Interlocked.Increment(ref _reqCounter)}";
+        _pendingRootsReqId = id;
+        Dbg.Log($"mcp: requesting roots/list with id {id}");
+        Console.Out.WriteLine($$"""{"jsonrpc":"2.0","id":"{{id}}","method":"roots/list"}""");
+        Console.Out.Flush();
+    }
+
+    private static void HandleRootsResult(JsonElement resultElem)
+    {
+        try
+        {
+            var rootsResult = JsonSerializer.Deserialize(resultElem, McpJsonContext.Default.RootsListResult);
+            if (rootsResult?.Roots is { Count: > 0 } roots)
+            {
+                string? fallbackRoot = null;
+
+                foreach (var r in roots)
+                {
+                    if (string.IsNullOrWhiteSpace(r.Uri)) continue;
+
+                    var localPath = TryConvertUriToLocalPath(r.Uri);
+                    if (string.IsNullOrEmpty(localPath) || !Directory.Exists(localPath)) continue;
+
+                    var discovered = RepositoryLocator.FindRoot(localPath);
+                    fallbackRoot ??= discovered;
+
+                    // Prefer a root that actually contains a C# project, solution, or existing csmesh index
+                    if (HasDotNetOrMesh(discovered))
+                    {
+                        _activeRoot = discovered;
+                        Dbg.Log($"mcp: updated active root to '{_activeRoot}' from client root '{r.Uri}'");
+                        return;
+                    }
+                }
+
+                if (fallbackRoot != null)
+                {
+                    _activeRoot = fallbackRoot;
+                    Dbg.Log($"mcp: updated active root to fallback '{_activeRoot}'");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Dbg.Log($"mcp: failed to process roots/list result: {ex.Message}");
+        }
+    }
+
+    private static bool HasDotNetOrMesh(string dirPath)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(dirPath);
+            return Directory.Exists(Path.Combine(dirPath, ".csmesh"))
+                   || Directory.Exists(Path.Combine(dirPath, ".csgraph"))
+                   || dir.EnumerateFiles("*.sln").Any()
+                   || dir.EnumerateFiles("*.slnx").Any()
+                   || dir.EnumerateFiles("*.csproj", SearchOption.AllDirectories).Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? TryConvertUriToLocalPath(string uriOrPath)
+    {
+        if (string.IsNullOrWhiteSpace(uriOrPath)) return null;
+
+        if (Uri.TryCreate(uriOrPath, UriKind.Absolute, out var uri) && uri.IsFile)
+        {
+            return uri.LocalPath;
+        }
+
+        if (Path.IsPathRooted(uriOrPath))
+        {
+            return uriOrPath;
+        }
+
+        return null;
     }
 
     private static InitializeResult Initialize(RpcRequest request)
