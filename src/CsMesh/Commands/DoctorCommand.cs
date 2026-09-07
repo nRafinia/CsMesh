@@ -44,6 +44,8 @@ public static class DoctorCommand
             report.ReferencesCapped = graph.ReferencesCapped;
             report.UnresolvedCallSites = graph.UnresolvedCallSites;
             report.GlobalUsingSources = graph.GlobalUsingSources;
+            report.RazorFileCount = graph.RazorFileCount;
+            report.RazorComponentsIndexed = graph.RazorComponentsIndexed;
             report.SkippedProjects = graph.SkippedProjects;
             report.ScopeDecision = graph.ScopeDecision;
             report.EdgesByKind = graph.Edges
@@ -224,6 +226,14 @@ public static class DoctorCommand
                 e.Line("    CS0433 means a type arrived from two assemblies. bin/ probably holds a");
                 e.Line("    compiled copy of the source being indexed; that breaks resolution.");
             }
+        }
+
+        if (graph.RazorFileCount > 0)
+        {
+            e.Line($"  razor           {graph.RazorFileCount} .razor/.cshtml file(s) found; their generated types");
+            e.Line("                  (components, parameters, @code members) are not in the graph, so a diagnostic");
+            e.Line("                  naming their namespace -- CS0246 is typical -- describes a missing build");
+            e.Line("                  output, not broken code.");
         }
 
         if (graph.UnresolvedByReason.Count > 0)

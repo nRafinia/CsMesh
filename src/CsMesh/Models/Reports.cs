@@ -52,6 +52,13 @@ public sealed class DoctorReport
     public int UnresolvedCallSites { get; set; }
 
     public int GlobalUsingSources { get; set; }
+
+    /// <summary>.razor and .cshtml files found under the root. See Graph.RazorFileCount.</summary>
+    public int RazorFileCount { get; set; }
+
+    /// <summary>Component types recovered from generated Razor sources. See Graph.RazorComponentsIndexed.</summary>
+    public int RazorComponentsIndexed { get; set; }
+
     public List<string> SkippedProjects { get; set; } = [];
     public string ScopeDecision { get; set; } = string.Empty;
 

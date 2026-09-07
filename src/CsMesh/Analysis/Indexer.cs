@@ -44,6 +44,33 @@ public static partial class Indexer
         "/packages/", "/TestResults/", "/artifacts/", "/.csmesh/"
     };
 
+    private static readonly string[] RazorPatterns = { "*.razor", "*.cshtml" };
+
+    /// <summary>
+    /// .razor and .cshtml files under the root, using the same skip rules as EnumerateSourceFiles.
+    /// Counted rather than parsed here: whether any of them were actually recovered from generated
+    /// output is a separate question, answered by RazorComponentsIndexed.
+    /// </summary>
+    private static int CountRazorFiles(string root)
+    {
+        var count = 0;
+        foreach (var pattern in RazorPatterns)
+        {
+            IEnumerable<string> found;
+            try { found = Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories); }
+            catch { continue; }
+
+            foreach (var file in found)
+            {
+                var normalized = file.Replace('\\', '/');
+                if (SkipDirs.Any(d => normalized.Contains(d, StringComparison.OrdinalIgnoreCase))) continue;
+                count++;
+            }
+        }
+
+        return count;
+    }
+
     public static IEnumerable<string> EnumerateSourceFiles(string root) =>
         EnumerateSourceFiles(root, ProjectScope.Everything(root));
 
@@ -192,6 +219,7 @@ public static partial class Indexer
             BuiltFromCommit = RepositoryLocator.GitHead(root),
             Files = stamps,
             GlobalUsingSources = globalUsings.Count,
+            RazorFileCount = CountRazorFiles(root),
             IndexedAllProjects = includeAllProjects,
             SkippedProjects = scope.Excluded,
             SkippedProjectsReason = scope.Reason,
