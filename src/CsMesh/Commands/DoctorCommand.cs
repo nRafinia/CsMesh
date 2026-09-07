@@ -230,10 +230,22 @@ public static class DoctorCommand
 
         if (graph.RazorFileCount > 0)
         {
-            e.Line($"  razor           {graph.RazorFileCount} .razor/.cshtml file(s) found; their generated types");
-            e.Line("                  (components, parameters, @code members) are not in the graph, so a diagnostic");
-            e.Line("                  naming their namespace -- CS0246 is typical -- describes a missing build");
-            e.Line("                  output, not broken code.");
+            if (graph.RazorComponentsIndexed > 0)
+            {
+                e.Line($"  razor           {graph.RazorComponentsIndexed} of {graph.RazorFileCount} .razor/.cshtml file(s)" +
+                       " indexed from generated sources found on disk");
+            }
+            else
+            {
+                e.Line($"  razor           {graph.RazorFileCount} .razor/.cshtml file(s) found; their generated types");
+                e.Line("                  (components, parameters, @code members) are not in the graph, so a diagnostic");
+                e.Line("                  naming their namespace -- CS0246 is typical -- describes a missing build");
+                e.Line("                  output, not broken code.");
+                e.Line("                  their generator output was not found on disk. A warm build does not write it");
+                e.Line("                  even with the property below set -- it only runs the generator again when the");
+                e.Line("                  build is not incremental. Run both flags, then re-index:");
+                e.Line("                  dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true");
+            }
         }
 
         if (graph.UnresolvedByReason.Count > 0)
