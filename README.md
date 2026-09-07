@@ -214,7 +214,7 @@ dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh
 dotnet tool update --global CsMesh
 ```
 
-<!-- ### 2. Via npm / npx
+### 2. Via npm / npx
 ```bash
 Bash
 # Run directly without global installation
@@ -223,8 +223,8 @@ npx @nrafinia/csmesh --help
 # Or install globally across Windows, macOS, and Linux
 npm install -g @nrafinia/csmesh
 ```
--->
-### 2. As a Standalone Native AOT Binary (Zero Runtime Dependency)
+
+### 3. As a Standalone Native AOT Binary (Zero Runtime Dependency)
 
 You can compile a single, standalone binary with zero dependencies on the .NET SDK:
 
