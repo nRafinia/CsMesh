@@ -125,6 +125,7 @@ String literals, config values, TODOs, error messages, log text, anything in a `
 
 ```bash
 csmesh map                                          # orient first in an unfamiliar repo
+csmesh where discount                               # find symbol or route when you have words
 csmesh context PaymentService.Process --budget 800  # everything about one symbol, one call
 csmesh trace PaymentController.Post --budget 600
 csmesh impl IPaymentGateway --budget 300

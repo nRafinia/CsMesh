@@ -151,14 +151,14 @@ public static class DoctorCommand
         }
         else
         {
-            e.Line("skill (local)   NOT INSTALLED -> run: csmesh skill --install");
+            e.Line("skill (local)   NOT INSTALLED -> run: csmesh install");
         }
 
         var home = SkillCommand.GetHomeDir();
         var installedGlobal = SkillCommand.GlobalSkillTargets(home).Where(File.Exists).Distinct().ToList();
         e.Line(installedGlobal.Count > 0
             ? $"skill (global)  installed ({installedGlobal.Count} target(s) across user assistants)"
-            : "skill (global)  NOT INSTALLED -> run: csmesh skill --install --global");
+            : "skill (global)  NOT INSTALLED -> run: csmesh install --global");
 
         var (caller, via) = CallerDetector.Detect();
         e.Line($"caller now      {caller} (via {via}); tty={!Console.IsOutputRedirected}");

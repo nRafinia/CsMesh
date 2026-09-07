@@ -119,7 +119,7 @@ public static class UsageCommand
             // Agents reach for what the skill tells them about, so this is a read on the skill.
             Console.WriteLine();
             Console.WriteLine("  never used        " + string.Join(", ", unused));
-            Console.WriteLine("                    re-run 'csmesh skill --install' if the rules are out of date");
+            Console.WriteLine("                    re-run 'csmesh install' if the rules are out of date");
         }
 
         Console.WriteLine();

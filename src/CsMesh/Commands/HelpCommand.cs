@@ -27,6 +27,8 @@ public static class HelpCommand
             "usage" => UsageHelp,
             "doctor" => DoctorHelp,
             "skill" => SkillHelp,
+            "install" => InstallHelp,
+            "uninstall" => UninstallHelp,
             "serve" => ServeHelp,
             "version" => VersionHelp,
             _ => MainHelp
@@ -59,7 +61,9 @@ public static class HelpCommand
             silence        Why a query came back empty (alias: why-not)
             usage          Display local invocation metrics and caller attribution
             doctor         Diagnose index freshness, skill installation, and environment
-            skill          Display skill markdown or install agent skill/rule files
+            install        Install agent skill/rule files or MCP server integration
+            uninstall      Remove agent skill/rule files or MCP server integration
+            skill          Display skill markdown or manage agent skill/rule files
             serve          Serve the same commands to an agent over MCP on stdio
             version        Print version information
             help           Print this message or the help of the given subcommand(s)
@@ -89,27 +93,86 @@ public static class HelpCommand
 
     public const string SkillHelp =
         """
-        csmesh skill - Display skill markdown or install agent skill and rule files
+        csmesh skill - Display skill markdown or manage agent skill and rule files
 
         USAGE:
             csmesh skill [OPTIONS]
 
         OPTIONS:
+            --show, --print    Display skill markdown content to stdout
             --install          Install skill and rule files for AI coding agents
-            -g, --global       Install to global assistant config directory (~/.claude, ~/.cursor, etc.)
-                               instead of local project files
-            --agent <TARGET>   Target agent to install for:
-                               all (default), claude, cursor, windsurf, cline, antigravity,
+            --uninstall        Remove skill and rule files for AI coding agents
+            --mcp              Include MCP server integration in install or uninstall
+            -g, --global       Apply to global config directory instead of local repo
+            --agent <TARGET>   Target agent:
+                               all (default), claude, cursor, vscode, rider, windsurf, cline, antigravity,
                                copilot, kilocode, mimo, codex, gemini, opencode
             --repo <PATH>      Target repository root (default: nearest repository above cwd)
             -h, --help         Print help information
 
         EXAMPLES:
-            csmesh skill                             # Print skill markdown to stdout
-            csmesh skill --install                   # Install across all supported agents in current repo
-            csmesh skill --install --global          # Install globally for all agents on this computer
+            csmesh skill                             # Show this help information
+            csmesh skill --show                      # Print skill markdown to stdout
+            csmesh skill --install                   # Install across all supported agents
+            csmesh skill --install --mcp             # Install skills and register MCP server
+            csmesh skill --uninstall                 # Remove skill and rule files
+            csmesh skill --uninstall --mcp           # Remove skills and unregister MCP server
+            csmesh skill --install --global          # Install globally for all agents
             csmesh skill --install -g --agent cursor # Install globally for Cursor only
-            csmesh skill --install --agent claude    # Install locally for Claude Code only
+        """;
+
+    public const string InstallHelp =
+        """
+        csmesh install - Install agent skills, rules, or MCP server integration
+
+        USAGE:
+            csmesh install [OPTIONS]
+
+        OPTIONS:
+            --skill            Install skill and rule files (default if no target specified)
+            --mcp              Register csmesh as an MCP server and install hooks
+            --all              Install both skill/rule files and MCP integration
+            -g, --global       Install to user global config directory instead of local repo
+            --agent <TARGET>   Target agent to install for:
+                               all (default), claude, cursor, vscode, rider, windsurf, cline, antigravity,
+                               copilot, kilocode, mimo, codex, gemini, opencode
+            --repo <PATH>      Target repository root
+            -h, --help         Print help information
+
+        EXAMPLES:
+            csmesh install                      # Install skill files for current repo
+            csmesh install --global             # Install skill files globally
+            csmesh install --mcp                # Register MCP server for current repo
+            csmesh install --mcp --global       # Register MCP server globally
+            csmesh install --all                # Install skills and MCP server
+            csmesh install -g --agent cursor   # Install globally for Cursor only
+        """;
+
+    public const string UninstallHelp =
+        """
+        csmesh uninstall - Remove agent skills, rules, or MCP server integration
+
+        USAGE:
+            csmesh uninstall [OPTIONS]
+
+        OPTIONS:
+            --skill            Remove skill and rule files (default if no target specified)
+            --mcp              Unregister csmesh MCP server and remove hooks
+            --all              Remove both skill/rule files and MCP integration
+            -g, --global       Remove from user global config directory instead of local repo
+            --agent <TARGET>   Target agent to uninstall for:
+                               all (default), claude, cursor, vscode, rider, windsurf, cline, antigravity,
+                               copilot, kilocode, mimo, codex, gemini, opencode
+            --repo <PATH>      Target repository root
+            -h, --help         Print help information
+
+        EXAMPLES:
+            csmesh uninstall                    # Remove skill files from current repo
+            csmesh uninstall --global           # Remove skill files globally
+            csmesh uninstall --mcp              # Unregister MCP server for current repo
+            csmesh uninstall --mcp --global     # Unregister MCP server globally
+            csmesh uninstall --all              # Remove skills and MCP server
+            csmesh uninstall -g --agent cursor # Remove globally for Cursor only
         """;
 
     public const string IndexHelp =
@@ -534,7 +597,7 @@ public static class HelpCommand
         The binary is recorded by absolute path, so it does not have to be on PATH.
 
         Existing entries are merged, not replaced, and re-running updates rather than duplicating.
-        Remove with: csmesh skill --install --mcp --uninstall
+        Remove with: csmesh uninstall --mcp
         """;
 
     public const string ServeHelp =

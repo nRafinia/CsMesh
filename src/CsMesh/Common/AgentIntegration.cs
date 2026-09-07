@@ -60,6 +60,8 @@ public static class AgentIntegration
         yield return Path.Combine(home, ".gemini", "antigravity", "mcp_config.json");
         yield return Path.Combine(home, ".gemini", "antigravity-cli", "mcp_config.json");
 
+        yield return Path.Combine(home, ".codeium", "windsurf", "mcp_config.json");
+
         if (OperatingSystem.IsWindows())
         {
             var roaming = Environment.GetEnvironmentVariable("APPDATA");
@@ -84,6 +86,7 @@ public static class AgentIntegration
     {
         yield return Path.Combine(repoRoot, ".mcp.json");
         yield return Path.Combine(repoRoot, ".cursor", "mcp.json");
+        yield return Path.Combine(repoRoot, ".vscode", "mcp.json");
 
         // Antigravity's workspace-scoped location. Its global config is a separate file, so a
         // project install that skipped this left Antigravity with nothing at all.
@@ -349,6 +352,85 @@ public static class AgentIntegration
             if (hooks.Count == 0) root.Remove("hooks");
 
             File.WriteAllText(settingsPath,
+                root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+            outcome = "removed";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            outcome = ex.Message;
+            return false;
+        }
+    }
+
+    public static bool InstallAntigravityHook(string hooksPath, out string outcome)
+    {
+        try
+        {
+            JsonObject root = File.Exists(hooksPath) &&
+                              JsonNode.Parse(File.ReadAllText(hooksPath)) is JsonObject parsed
+                ? parsed
+                : new JsonObject();
+
+            const string hookName = "csmesh-grep-hint";
+            var command = OperatingSystem.IsWindows()
+                ? "cmd /c \"echo ADVISORY: prefer csmesh (where, trace, impl, blast-radius) over grep for C# code discovery. 1>&2\""
+                : "echo 'ADVISORY: prefer csmesh (where, trace, impl, blast-radius) over grep for C# code discovery.' >&2";
+
+            var hookDef = new JsonObject
+            {
+                ["PreToolUse"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["matcher"] = "grep_search",
+                        ["hooks"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["type"] = "command",
+                                ["command"] = command
+                            }
+                        }
+                    }
+                }
+            };
+
+            root[hookName] = hookDef;
+
+            var directory = Path.GetDirectoryName(hooksPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+            File.WriteAllText(hooksPath,
+                root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+            outcome = "added";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            outcome = ex.Message;
+            return false;
+        }
+    }
+
+    public static bool UninstallAntigravityHook(string hooksPath, out string outcome)
+    {
+        outcome = "absent";
+
+        try
+        {
+            if (!File.Exists(hooksPath) ||
+                JsonNode.Parse(File.ReadAllText(hooksPath)) is not JsonObject root ||
+                root["csmesh-grep-hint"] == null)
+            {
+                return false;
+            }
+
+            root.Remove("csmesh-grep-hint");
+
+            File.WriteAllText(hooksPath,
                 root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 
             outcome = "removed";

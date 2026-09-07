@@ -140,6 +140,7 @@ public static class SkillText
 
         ```bash
         csmesh map                                          # orient first in an unfamiliar repo
+        csmesh where discount                               # find symbol or route when you have words
         csmesh context PaymentService.Process --budget 800  # everything about one symbol, one call
         csmesh trace PaymentController.Post --budget 600
         csmesh impl IPaymentGateway --budget 300
@@ -204,6 +205,21 @@ public static class SkillText
     public const string Rules =
         """
         # csmesh: C# structural code intelligence
+
+        ## MANDATORY DIRECTIVE: ALWAYS PREFER CSMESH OVER GREP / FILE SEARCH
+        In ANY repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, you are STRICTLY FORBIDDEN from using
+        `grep`, `ripgrep`, glob, or reading files in sequence to discover C# symbols, trace callers, find
+        interface implementations, or inspect types.
+
+        Your VERY FIRST tool call when exploring or investigating C# code MUST be `run_command` with `csmesh`:
+        - To find a symbol or route: `csmesh where <term>`
+        - To trace call paths: `csmesh trace <Type.Member> --budget 600`
+        - To find implementations: `csmesh impl <IThing> --budget 300`
+        - To check blast radius: `csmesh blast-radius <Type.Member> --budget 800`
+        - To inspect a type: `csmesh context <TypeName> --budget 800`
+        - To orient in a repo: `csmesh map`
+
+        Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
 
         In any repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, reach for `csmesh` before grep,
         ripgrep, glob, reading files in sequence, or handing discovery to a subagent. It answers from a
@@ -282,6 +298,21 @@ public static class SkillText
         ---
 
         # csmesh: C# structural code intelligence
+
+        ## MANDATORY DIRECTIVE: ALWAYS PREFER CSMESH OVER GREP / FILE SEARCH
+        In ANY repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, you are STRICTLY FORBIDDEN from using
+        `grep`, `ripgrep`, glob, or reading files in sequence to discover C# symbols, trace callers, find
+        interface implementations, or inspect types.
+
+        Your VERY FIRST tool call when exploring or investigating C# code MUST be `run_command` with `csmesh`:
+        - To find a symbol or route: `csmesh where <term>`
+        - To trace call paths: `csmesh trace <Type.Member> --budget 600`
+        - To find implementations: `csmesh impl <IThing> --budget 300`
+        - To check blast radius: `csmesh blast-radius <Type.Member> --budget 800`
+        - To inspect a type: `csmesh context <TypeName> --budget 800`
+        - To orient in a repo: `csmesh map`
+
+        Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
 
         In any repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, reach for `csmesh` before grep,
         ripgrep, glob, reading files in sequence, or handing discovery to a subagent. It answers from a

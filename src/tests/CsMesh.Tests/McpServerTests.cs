@@ -278,4 +278,84 @@ public sealed class McpServerTests
             Assert.True(reply.TryGetProperty("result", out _));
         }
     }
+
+    [Fact]
+    public void RootsListDynamicallyUpdatesActiveRootWhenClientAdvertisesCapability()
+    {
+        using var sandbox = new Sandbox();
+        var tempNonRepo = Path.Combine(Path.GetTempPath(), "csmesh-empty-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempNonRepo);
+
+        try
+        {
+            var sandboxUri = new Uri(sandbox.Root).AbsoluteUri;
+            var rootsResultJson = """{"jsonrpc":"2.0","id":"csmesh-roots-1","result":{"roots":[{"uri":"URI","name":"sandbox"}]}}"""
+                .Replace("URI", sandboxUri, StringComparison.Ordinal);
+
+            var replies = Exchange(tempNonRepo,
+                """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"roots":{"listChanged":true}}}}""",
+                """{"jsonrpc":"2.0","method":"notifications/initialized"}""",
+                rootsResultJson,
+                """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"where","arguments":{"symbol":"Thing"}}}""");
+
+            Assert.Equal(3, replies.Count);
+            Assert.Equal("2.0", replies[0].GetProperty("jsonrpc").GetString());
+            Assert.Equal(1, replies[0].GetProperty("id").GetInt32());
+
+            Assert.Equal("roots/list", replies[1].GetProperty("method").GetString());
+            Assert.Equal("csmesh-roots-1", replies[1].GetProperty("id").GetString());
+
+            Assert.Equal(2, replies[2].GetProperty("id").GetInt32());
+            var whereResult = replies[2].GetProperty("result");
+            Assert.False(whereResult.TryGetProperty("isError", out var err) && err.GetBoolean());
+            var content = whereResult.GetProperty("content")[0].GetProperty("text").GetString()!;
+            Assert.Contains("Thing", content, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(tempNonRepo, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void RootsListChangedNotificationRequeriesRoots()
+    {
+        using var sandbox = new Sandbox();
+
+        var replies = Exchange(sandbox.Root,
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"roots":{"listChanged":true}}}}""",
+            """{"jsonrpc":"2.0","method":"notifications/initialized"}""",
+            """{"jsonrpc":"2.0","method":"notifications/roots/list_changed"}""");
+
+        Assert.Equal(3, replies.Count);
+        Assert.Equal("roots/list", replies[1].GetProperty("method").GetString());
+        Assert.Equal("roots/list", replies[2].GetProperty("method").GetString());
+        Assert.NotEqual(replies[1].GetProperty("id").GetString(), replies[2].GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void ToolCallWithExplicitRepoArgumentOverridesActiveRoot()
+    {
+        using var sandbox = new Sandbox();
+        var tempNonRepo = Path.Combine(Path.GetTempPath(), "csmesh-empty-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempNonRepo);
+
+        try
+        {
+            var repoPathJson = JsonSerializer.Serialize(sandbox.Root);
+            var frame = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"trace","arguments":{"symbol":"Caller.Run","repo":REPO}}}"""
+                .Replace("REPO", repoPathJson, StringComparison.Ordinal);
+
+            var replies = Exchange(tempNonRepo, frame);
+            var text = replies[0].GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!;
+
+            Assert.Contains("Caller.Run", text, StringComparison.Ordinal);
+            Assert.Contains("Thing.Go", text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(tempNonRepo, recursive: true); } catch { }
+        }
+    }
 }
+

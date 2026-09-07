@@ -4,6 +4,13 @@ using CsMesh.Skill;
 
 namespace CsMesh.Commands;
 
+public enum SkillMode
+{
+    Skill,
+    Install,
+    Uninstall
+}
+
 public static class SkillCommand
 {
     public static string GetHomeDir()
@@ -59,44 +66,186 @@ public static class SkillCommand
         yield return Path.Combine(home, ".opencode", "rules", "csmesh.md");
     }
 
-    public static int Execute(string root, Options opt)
+    public static int Execute(string root, Options opt, SkillMode mode = SkillMode.Skill)
     {
-        if (opt.Flag("help") || opt.Flag("h") || opt.Positional.Contains("help"))
+        var helpRequested = opt.Flag("help") || opt.Flag("h") || opt.Positional.Contains("help");
+        if (helpRequested)
         {
-            return HelpCommand.Show("skill");
+            return HelpCommand.Show(mode switch
+            {
+                SkillMode.Install => "install",
+                SkillMode.Uninstall => "uninstall",
+                _ => "skill"
+            });
         }
 
-        if (!opt.Flag("install"))
+        var hasInstallFlag = opt.Flag("install") || opt.Flag("i");
+        var hasUninstallFlag = opt.Flag("uninstall") || opt.Flag("u");
+
+        if (hasInstallFlag && hasUninstallFlag)
         {
-            Console.WriteLine(SkillText.Markdown);
-            return Exit.Ok;
+            Console.Error.WriteLine("csmesh: cannot specify both --install and --uninstall.");
+            return Exit.Usage;
+        }
+
+        bool isInstall;
+        bool isUninstall;
+
+        if (mode == SkillMode.Install)
+        {
+            if (hasUninstallFlag)
+            {
+                Console.Error.WriteLine("csmesh: cannot specify --uninstall with install command.");
+                return Exit.Usage;
+            }
+            isInstall = true;
+            isUninstall = false;
+        }
+        else if (mode == SkillMode.Uninstall)
+        {
+            if (hasInstallFlag)
+            {
+                Console.Error.WriteLine("csmesh: cannot specify --install with uninstall command.");
+                return Exit.Usage;
+            }
+            isInstall = false;
+            isUninstall = true;
+        }
+        else // SkillMode.Skill
+        {
+            var wantsShow = opt.Flag("show") || opt.Flag("print") || opt.Flag("cat") || opt.Flag("markdown");
+            if (wantsShow)
+            {
+                Console.WriteLine(SkillText.Markdown);
+                return Exit.Ok;
+            }
+
+            if (hasUninstallFlag)
+            {
+                isInstall = false;
+                isUninstall = true;
+            }
+            else if (hasInstallFlag)
+            {
+                isInstall = true;
+                isUninstall = false;
+            }
+            else
+            {
+                return HelpCommand.Show("skill");
+            }
         }
 
         var isGlobal = opt.Flag("global") || opt.Flag("g");
         var targetAgent = opt.Get("agent", "all").ToLowerInvariant();
+        var basePath = isGlobal ? GetHomeDir() : root;
 
-        // Opt-in rather than part of --install. These write into configuration the user shares
-        // with every other tool they have, and a server appearing in someone's client because
-        // they installed a skill file is not a welcome surprise.
         var wantsMcp = opt.Flag("mcp");
+        var wantsSkill = opt.Flag("skill");
+        var wantsAll = opt.Flag("all");
 
-        if (isGlobal)
+        if (isInstall)
         {
-            var home = GetHomeDir();
-            Console.WriteLine($"Installing csmesh skill globally to user config: {home}\n");
-            var globalExit = Install(home, targetAgent, isGlobal: true);
-            if (wantsMcp) Integrate(home, root, isGlobal: true, remove: opt.Flag("uninstall"));
-            return globalExit;
+            bool doInstallSkills;
+            bool doInstallMcp;
+
+            if (mode == SkillMode.Skill)
+            {
+                doInstallSkills = true;
+                doInstallMcp = wantsMcp || wantsAll;
+            }
+            else
+            {
+                if (wantsAll || (wantsMcp && wantsSkill))
+                {
+                    doInstallSkills = true;
+                    doInstallMcp = true;
+                }
+                else if (wantsMcp)
+                {
+                    doInstallSkills = false;
+                    doInstallMcp = true;
+                }
+                else
+                {
+                    doInstallSkills = true;
+                    doInstallMcp = false;
+                }
+            }
+
+            if (isGlobal)
+            {
+                Console.WriteLine($"Installing csmesh globally to user config: {basePath}\n");
+            }
+
+            if (doInstallSkills)
+            {
+                var skillExit = Install(basePath, targetAgent, isGlobal);
+                if (skillExit != Exit.Ok) return skillExit;
+            }
+
+            if (doInstallMcp)
+            {
+                Integrate(basePath, root, isGlobal, remove: false);
+            }
+
+            return Exit.Ok;
         }
 
-        var exit = Install(root, targetAgent, isGlobal: false);
-        if (wantsMcp) Integrate(root, root, isGlobal: false, remove: opt.Flag("uninstall"));
-        return exit;
+        if (isUninstall)
+        {
+            bool doUninstallSkills;
+            bool doUninstallMcp;
+
+            if (mode == SkillMode.Skill)
+            {
+                doUninstallSkills = true;
+                doUninstallMcp = wantsMcp || wantsAll;
+            }
+            else
+            {
+                if (wantsAll || (wantsMcp && wantsSkill))
+                {
+                    doUninstallSkills = true;
+                    doUninstallMcp = true;
+                }
+                else if (wantsMcp)
+                {
+                    doUninstallSkills = false;
+                    doUninstallMcp = true;
+                }
+                else
+                {
+                    doUninstallSkills = true;
+                    doUninstallMcp = false;
+                }
+            }
+
+            if (isGlobal)
+            {
+                Console.WriteLine($"Uninstalling csmesh globally from user config: {basePath}\n");
+            }
+
+            if (doUninstallSkills)
+            {
+                var skillExit = Uninstall(basePath, targetAgent, isGlobal);
+                if (skillExit != Exit.Ok) return skillExit;
+            }
+
+            if (doUninstallMcp)
+            {
+                Integrate(basePath, root, isGlobal, remove: true);
+            }
+
+            return Exit.Ok;
+        }
+
+        return Exit.Ok;
     }
 
     private static readonly FrozenSet<string> ValidAgents = new[]
     {
-        "claude", "cursor", "windsurf", "cline", "roo", "antigravity",
+        "claude", "cursor", "vscode", "rider", "windsurf", "cline", "roo", "antigravity",
         "copilot", "kilocode", "mimo", "mimocode", "codex", "kimi", "gemini", "opencode", "all"
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
@@ -104,7 +253,7 @@ public static class SkillCommand
     {
         if (!ValidAgents.Contains(targetAgent))
         {
-            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, opencode, all.");
+            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, vscode, rider, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, opencode, all.");
             return Exit.Usage;
         }
 
@@ -134,6 +283,8 @@ public static class SkillCommand
                 "roo" => "cline",
                 "mimocode" => "mimo",
                 "kimi" => "codex",
+                "vscode" => "copilot",
+                "rider" => "codex",
                 _ => targetAgent
             };
             actions[normalized]();
@@ -167,6 +318,10 @@ public static class SkillCommand
             ? Path.Combine(basePath, ".gemini", "settings.json")
             : Path.Combine(repoRoot, ".gemini", "settings.json");
 
+        var antigravityHooks = isGlobal
+            ? Path.Combine(basePath, ".gemini", "config", "hooks.json")
+            : Path.Combine(repoRoot, ".agents", "hooks.json");
+
         Console.WriteLine();
 
         if (remove)
@@ -186,6 +341,11 @@ public static class SkillCommand
             if (AgentIntegration.UninstallGeminiHook(geminiSettings, out var geminiGone))
             {
                 Console.WriteLine($"  gemini hook  {geminiGone}");
+            }
+
+            if (AgentIntegration.UninstallAntigravityHook(antigravityHooks, out var agyGone))
+            {
+                Console.WriteLine($"  antigravity  {agyGone}");
             }
 
             return;
@@ -214,6 +374,13 @@ public static class SkillCommand
                 : $"  gemini hook  FAILED: {geminiOutcome}");
         }
 
+        if (File.Exists(antigravityHooks) || !isGlobal)
+        {
+            Console.WriteLine(AgentIntegration.InstallAntigravityHook(antigravityHooks, out var agyOutcome)
+                ? $"  antigravity  {agyOutcome} in {antigravityHooks}"
+                : $"  antigravity  FAILED: {agyOutcome}");
+        }
+
         Console.WriteLine($"  binary       {AgentIntegration.BinaryPath()}");
 
         if (isGlobal)
@@ -222,7 +389,18 @@ public static class SkillCommand
         }
 
         Console.WriteLine();
-        Console.WriteLine("  Restart your client to pick these up. Remove with: csmesh skill --install --mcp --uninstall");
+
+        // Worth more than one line, because the failure it prevents is expensive and does not
+        // look like a failure. A client starts its MCP servers when it opens, so one that was
+        // already running started before this config existed -- with its own working directory,
+        // which is the IDE's install folder. It will not re-read the file, so it stays pointed
+        // there until the client is restarted, and every answer comes back empty as though the
+        // repository had nothing in it.
+        Console.WriteLine("  RESTART YOUR CLIENT before using csmesh through MCP.");
+        Console.WriteLine("  A server it already started is still pointed at its own directory and");
+        Console.WriteLine("  will not re-read this config. Until then, the CLI works normally.");
+        Console.WriteLine();
+        Console.WriteLine("  Remove with: csmesh uninstall --mcp");
     }
 
     private static void InstallClaude(string basePath, bool isGlobal)
@@ -402,6 +580,231 @@ public static class SkillCommand
             var updated = existing.TrimEnd() + "\n\n" + wrappedBlock + "\n";
             File.WriteAllText(filePath, updated);
             Console.WriteLine($"updated {filePath}");
+        }
+    }
+
+    private static int Uninstall(string basePath, string targetAgent, bool isGlobal)
+    {
+        if (!ValidAgents.Contains(targetAgent))
+        {
+            Console.Error.WriteLine($"Unknown agent target '{targetAgent}'. Supported targets: claude, cursor, vscode, rider, windsurf, cline, antigravity, copilot, kilocode, mimo, codex, gemini, opencode, all.");
+            return Exit.Usage;
+        }
+
+        var actions = new Dictionary<string, Action>
+        {
+            ["claude"] = () => UninstallClaude(basePath, isGlobal),
+            ["cursor"] = () => UninstallCursor(basePath),
+            ["antigravity"] = () => UninstallAntigravity(basePath, isGlobal),
+            ["windsurf"] = () => UninstallWindsurf(basePath, isGlobal),
+            ["cline"] = () => UninstallCline(basePath, isGlobal),
+            ["copilot"] = () => UninstallCopilot(basePath, isGlobal),
+            ["kilocode"] = () => UninstallKilocode(basePath),
+            ["mimo"] = () => UninstallMimo(basePath, isGlobal),
+            ["codex"] = () => UninstallCodex(basePath, isGlobal),
+            ["gemini"] = () => UninstallGemini(basePath, isGlobal),
+            ["opencode"] = () => UninstallOpencode(basePath, isGlobal)
+        };
+
+        if (targetAgent is "all")
+        {
+            foreach (var action in actions.Values) action();
+        }
+        else
+        {
+            var normalized = targetAgent switch
+            {
+                "roo" => "cline",
+                "mimocode" => "mimo",
+                "kimi" => "codex",
+                "vscode" => "copilot",
+                "rider" => "codex",
+                _ => targetAgent
+            };
+            actions[normalized]();
+        }
+
+        return Exit.Ok;
+    }
+
+    private static void UninstallClaude(string basePath, bool isGlobal)
+    {
+        if (isGlobal)
+        {
+            var claudeHome = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR") ?? Path.Combine(basePath, ".claude");
+            DeleteFile(Path.Combine(claudeHome, "skills", "csmesh", "SKILL.md"));
+            RemoveBlock(Path.Combine(claudeHome, "CLAUDE.md"));
+        }
+        else
+        {
+            DeleteFile(Path.Combine(basePath, ".claude", "skills", "csmesh", "SKILL.md"));
+        }
+    }
+
+    private static void UninstallCursor(string basePath)
+    {
+        DeleteFile(Path.Combine(basePath, ".cursor", "rules", "csmesh.mdc"));
+        DeleteFile(Path.Combine(basePath, ".cursor", "rules", "csmesh.md"));
+    }
+
+    private static void UninstallAntigravity(string basePath, bool isGlobal)
+    {
+        if (isGlobal)
+        {
+            DeleteFile(Path.Combine(basePath, ".gemini", "config", "skills", "csmesh", "SKILL.md"));
+            DeleteFile(Path.Combine(basePath, ".gemini", "config", "rules", "csmesh.md"));
+        }
+        else
+        {
+            DeleteFile(Path.Combine(basePath, ".agents", "skills", "csmesh", "SKILL.md"));
+            DeleteFile(Path.Combine(basePath, ".agents", "rules", "csmesh.md"));
+        }
+    }
+
+    private static void UninstallWindsurf(string basePath, bool isGlobal)
+    {
+        var path = isGlobal
+            ? Path.Combine(basePath, ".codeium", "windsurf", "memories", "global_rules.md")
+            : Path.Combine(basePath, ".windsurfrules");
+        RemoveBlock(path);
+    }
+
+    private static void UninstallCline(string basePath, bool isGlobal)
+    {
+        if (isGlobal)
+        {
+            var docs = Path.Combine(basePath, "Documents", "Cline", "Rules");
+            var dir = Directory.Exists(docs) ? docs : Path.Combine(basePath, ".cline", "rules");
+            DeleteFile(Path.Combine(dir, "csmesh.md"));
+        }
+        else
+        {
+            DeleteFile(Path.Combine(basePath, ".clinerules", "csmesh.md"));
+            RemoveBlock(Path.Combine(basePath, ".clinerules"));
+        }
+    }
+
+    private static void UninstallCopilot(string basePath, bool isGlobal)
+    {
+        if (isGlobal)
+        {
+            var copilotHome = Environment.GetEnvironmentVariable("COPILOT_HOME") ?? Path.Combine(basePath, ".copilot");
+            RemoveBlock(Path.Combine(copilotHome, "copilot-instructions.md"));
+        }
+        else
+        {
+            RemoveBlock(Path.Combine(basePath, ".github", "copilot-instructions.md"));
+        }
+    }
+
+    private static void UninstallKilocode(string basePath)
+    {
+        DeleteFile(Path.Combine(basePath, ".kilocode", "rules", "csmesh.md"));
+    }
+
+    private static void UninstallMimo(string basePath, bool isGlobal)
+    {
+        if (isGlobal)
+        {
+            DeleteFile(Path.Combine(basePath, ".mimocode", "skills", "csmesh", "SKILL.md"));
+            RemoveBlock(Path.Combine(basePath, ".mimo", "instructions.md"));
+        }
+        else
+        {
+            DeleteFile(Path.Combine(basePath, ".mimocode", "skills", "csmesh", "SKILL.md"));
+            RemoveBlock(Path.Combine(basePath, "AGENTS.md"));
+        }
+    }
+
+    private static void UninstallCodex(string basePath, bool isGlobal)
+    {
+        var path = isGlobal
+            ? Path.Combine(Environment.GetEnvironmentVariable("CODEX_HOME") ?? Path.Combine(basePath, ".codex"), "AGENTS.md")
+            : Path.Combine(basePath, "AGENTS.md");
+        RemoveBlock(path);
+    }
+
+    private static void UninstallGemini(string basePath, bool isGlobal)
+    {
+        var path = isGlobal
+            ? Path.Combine(basePath, ".gemini", "GEMINI.md")
+            : Path.Combine(basePath, "GEMINI.md");
+        RemoveBlock(path);
+    }
+
+    private static void UninstallOpencode(string basePath, bool isGlobal)
+    {
+        if (isGlobal)
+        {
+            var configDir = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ?? Path.Combine(basePath, ".config");
+            RemoveBlock(Path.Combine(configDir, "opencode", "AGENTS.md"));
+            DeleteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"));
+        }
+        else
+        {
+            RemoveBlock(Path.Combine(basePath, "AGENTS.md"));
+            DeleteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"));
+        }
+    }
+
+    private static void DeleteFile(string path)
+    {
+        if (!File.Exists(path)) return;
+        try
+        {
+            File.Delete(path);
+            Console.WriteLine($"deleted {path}");
+
+            // Clean up empty directory if applicable
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+            {
+                try { Directory.Delete(dir); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"failed to delete {path}: {ex.Message}");
+        }
+    }
+
+    private static void RemoveBlock(string filePath)
+    {
+        const string startTag = "<!-- csmesh-instructions -->";
+        const string endTag = "<!-- /csmesh-instructions -->";
+
+        if (!File.Exists(filePath)) return;
+
+        try
+        {
+            var existing = File.ReadAllText(filePath);
+            var startIndex = existing.IndexOf(startTag, StringComparison.Ordinal);
+            var endIndex = existing.IndexOf(endTag, StringComparison.Ordinal);
+
+            if (startIndex >= 0 && endIndex > startIndex)
+            {
+                var before = existing[..startIndex].TrimEnd();
+                var after = existing[(endIndex + endTag.Length)..].TrimStart();
+
+                var remaining = string.IsNullOrEmpty(before)
+                    ? after
+                    : (string.IsNullOrEmpty(after) ? before : $"{before}\n\n{after}");
+
+                if (string.IsNullOrWhiteSpace(remaining))
+                {
+                    File.Delete(filePath);
+                    Console.WriteLine($"deleted {filePath}");
+                }
+                else
+                {
+                    File.WriteAllText(filePath, remaining.TrimEnd() + "\n");
+                    Console.WriteLine($"updated {filePath}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"failed to update {filePath}: {ex.Message}");
         }
     }
 }

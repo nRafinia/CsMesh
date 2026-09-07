@@ -116,6 +116,27 @@ public sealed class ToolContent
     public string Text { get; set; } = string.Empty;
 }
 
+public sealed class ClientCapabilities
+{
+    public RootsCapability? Roots { get; set; }
+}
+
+public sealed class RootsCapability
+{
+    public bool? ListChanged { get; set; }
+}
+
+public sealed class RootDescriptor
+{
+    public string Uri { get; set; } = string.Empty;
+    public string? Name { get; set; }
+}
+
+public sealed class RootsListResult
+{
+    public List<RootDescriptor> Roots { get; set; } = [];
+}
+
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -125,5 +146,10 @@ public sealed class ToolContent
 [JsonSerializable(typeof(InitializeResult))]
 [JsonSerializable(typeof(ToolsListResult))]
 [JsonSerializable(typeof(ToolCallResult))]
+[JsonSerializable(typeof(ClientCapabilities))]
+[JsonSerializable(typeof(RootsCapability))]
+[JsonSerializable(typeof(RootsListResult))]
+[JsonSerializable(typeof(RootDescriptor))]
 [JsonSerializable(typeof(JsonElement))]
 internal partial class McpJsonContext : JsonSerializerContext;
+
