@@ -239,7 +239,7 @@ public static class AgentIntegration
 
             if (mine != null) preToolUse.Remove(mine);
 
-            preToolUse.Add(new JsonObject
+            preToolUse.Add((JsonNode)new JsonObject
             {
                 ["matcher"] = "Grep",
                 ["hooks"] = new JsonArray(new JsonObject
@@ -304,7 +304,7 @@ public static class AgentIntegration
                 "discovery; it resolves DI bindings and mediator dispatch that grep cannot. " +
                 "Run 'csmesh index' first if the repository is not indexed.";
 
-            beforeTool.Add(new JsonObject
+            beforeTool.Add((JsonNode)new JsonObject
             {
                 ["matcher"] = "grep_search|file_search",
                 ["hooks"] = new JsonArray($"@{{type=command; command=echo '{message}' >&2}}")
@@ -380,21 +380,17 @@ public static class AgentIntegration
 
             var hookDef = new JsonObject
             {
-                ["PreToolUse"] = new JsonArray
-                {
+                ["PreToolUse"] = new JsonArray(
                     new JsonObject
                     {
                         ["matcher"] = "grep_search",
-                        ["hooks"] = new JsonArray
-                        {
+                        ["hooks"] = new JsonArray(
                             new JsonObject
                             {
                                 ["type"] = "command",
                                 ["command"] = command
-                            }
-                        }
-                    }
-                }
+                            })
+                    })
             };
 
             root[hookName] = hookDef;
