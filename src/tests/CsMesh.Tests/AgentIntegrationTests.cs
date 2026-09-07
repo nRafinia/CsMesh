@@ -332,8 +332,29 @@ public sealed class MultiTargetIntegrationTests : IDisposable
         Assert.Equal("web_search", after[0].GetProperty("matcher").GetString());
     }
 
+    [Fact]
+    public void TheAntigravityHookInstallsAndUninstallsCorrectly()
+    {
+        var path = Path.Combine(_home, "hooks.json");
+        Assert.True(AgentIntegration.InstallAntigravityHook(path, out var outcome));
+        Assert.Equal("added", outcome);
+
+        var root = Read(path);
+        Assert.True(root.TryGetProperty("csmesh-grep-hint", out var hookDef));
+        var preTool = hookDef.GetProperty("PreToolUse");
+        Assert.Equal(1, preTool.GetArrayLength());
+        Assert.Contains("grep", preTool[0].GetProperty("matcher").GetString()!);
+
+        Assert.True(AgentIntegration.UninstallAntigravityHook(path, out var uninstalled));
+        Assert.Equal("removed", uninstalled);
+
+        var afterRoot = Read(path);
+        Assert.False(afterRoot.TryGetProperty("csmesh-grep-hint", out _));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_home, recursive: true); } catch { /* temp dir */ }
     }
 }
+

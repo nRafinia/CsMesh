@@ -167,6 +167,10 @@ public static class SkillCommand
             ? Path.Combine(basePath, ".gemini", "settings.json")
             : Path.Combine(repoRoot, ".gemini", "settings.json");
 
+        var antigravityHooks = isGlobal
+            ? Path.Combine(basePath, ".gemini", "config", "hooks.json")
+            : Path.Combine(repoRoot, ".agents", "hooks.json");
+
         Console.WriteLine();
 
         if (remove)
@@ -186,6 +190,11 @@ public static class SkillCommand
             if (AgentIntegration.UninstallGeminiHook(geminiSettings, out var geminiGone))
             {
                 Console.WriteLine($"  gemini hook  {geminiGone}");
+            }
+
+            if (AgentIntegration.UninstallAntigravityHook(antigravityHooks, out var agyGone))
+            {
+                Console.WriteLine($"  antigravity  {agyGone}");
             }
 
             return;
@@ -212,6 +221,13 @@ public static class SkillCommand
             Console.WriteLine(AgentIntegration.InstallGeminiHook(geminiSettings, out var geminiOutcome)
                 ? $"  gemini hook  {geminiOutcome} in {geminiSettings}"
                 : $"  gemini hook  FAILED: {geminiOutcome}");
+        }
+
+        if (File.Exists(antigravityHooks) || !isGlobal)
+        {
+            Console.WriteLine(AgentIntegration.InstallAntigravityHook(antigravityHooks, out var agyOutcome)
+                ? $"  antigravity  {agyOutcome} in {antigravityHooks}"
+                : $"  antigravity  FAILED: {agyOutcome}");
         }
 
         Console.WriteLine($"  binary       {AgentIntegration.BinaryPath()}");
