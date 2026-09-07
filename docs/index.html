@@ -280,7 +280,7 @@ footer .right{margin-left:auto}
       <a class="btn" href="https://github.com/nRafinia/CsMesh">Read the source</a>
     </div>
     <div class="chips">
-      <span>.NET 10</span><span>Native AOT</span><span>Roslyn</span><span>incremental re-indexing</span><span>zero idle context</span><span>MIT</span>
+      <span>.NET 10</span><span>Native AOT</span><span>Roslyn</span><span>MCP Server</span><span>incremental re-indexing</span><span>zero idle context</span><span>MIT</span>
     </div>
 
     <div class="term reveal hero-term">
@@ -356,7 +356,7 @@ footer .right{margin-left:auto}
 <section class="sect" id="commands">
   <div class="wrap">
     <div class="head">
-      <h2>Seven commands, real output</h2>
+      <h2>Core commands, real output</h2>
       <p>Pick one. Every answer is capped by <code>--budget</code>; pass <code>--heal</code> to auto-refresh stale nodes on the fly. When the answer is bigger than the cap, the process exits 2 with a hint.</p>
     </div>
     <div class="cmdgrid">
@@ -375,22 +375,24 @@ footer .right{margin-left:auto}
 <section class="sect dark" id="numbers">
   <div class="wrap">
     <div class="head">
-      <h2>Measured on a production backend</h2>
-      <p>A multi-project .NET solution, roughly 1,600 nodes and 3,000 edges. The same questions asked two ways, recorded by the tool's own <code>usage</code> telemetry.</p>
+      <h2>Empirical benchmarks on a real-world backend</h2>
+      <p>Benchmarked across a real-world enterprise .NET codebase (29 projects, 1,942 symbols, 5,143 edges). Comparing standard AI agent exploration (Ripgrep + sequential file reads) against single-command <code>csmesh</code> queries.</p>
     </div>
     <div class="figs">
-      <div><b>96<i>ms</i></b><span>median query</span><p>Against three to five seconds of grep, file reads and model round trips.</p></div>
-      <div><b>85<i>%</i></b><span>less context</span><p>Around a hundred tokens returned where the file-hopping loop spent four thousand.</p></div>
-      <div><b>1</b><span>shell command</span><p>Chainable with <span class="mono-i" style="color:#8A99AA">&amp;&amp;</span>, so two questions still cost one turn.</p></div>
+      <div><b>150<i>ms</i></b><span>median query</span><p>Delivers deterministic architectural facts in milliseconds, bypassing multi-hop model reasoning latency.</p></div>
+      <div><b>80–95<i>%</i></b><span>less context</span><p>Returns dense symbol graph edges instead of polluting the context window with thousands of raw source lines.</p></div>
+      <div><b>1</b><span>shell command</span><p>Replaces 3 to 7 exploratory turns into a single deterministic invocation under a hard token budget.</p></div>
     </div>
     <table class="tbl">
-      <thead><tr><th style="width:30%">Metric</th><th style="width:26%">grep and file reads</th><th style="width:22%">csmesh</th><th>Difference</th></tr></thead>
+      <thead><tr><th style="width:28%">Workflow Scenario</th><th style="width:26%">grep &amp; sequential reads</th><th style="width:24%">csmesh (single command)</th><th>Turn &amp; Token Savings</th></tr></thead>
       <tbody>
-        <tr><td>Query latency</td><td class="old">3,000–5,200 ms</td><td class="win">94–111 ms</td><td>35–50× faster</td></tr>
-        <tr><td>Agent turns</td><td class="old">2–4 turns</td><td class="win">1 command</td><td>up to 75% fewer</td></tr>
-        <tr><td>Context spent</td><td class="old">3,500–4,800 tokens</td><td class="win">73–125 tokens</td><td>~85% reduction</td></tr>
-        <tr><td>DI resolution</td><td class="old">guesswork</td><td class="win">deterministic</td><td>reads the registration</td></tr>
-        <tr><td>False positives</td><td class="old">mocks, comments, logs</td><td class="win">none</td><td>compiler symbols only</td></tr>
+        <tr><td>DI binding (e.g. IOrderRepository)</td><td class="old">~3 turns (~1,500 tokens)</td><td class="win">244 ms (1 command)</td><td>~15× faster turnaround, ~90% token reduction</td></tr>
+        <tr><td>Call chain trace (OrderEndpoints)</td><td class="old">5–7 turns (~4,000 tokens)</td><td class="win">156 ms (depth 2)</td><td>~30× faster task time, ~85% token reduction</td></tr>
+        <tr><td>Blast radius (OrderRepository)</td><td class="old">4–6 turns (24+ noisy hits)</td><td class="win">161 ms (reverse graph)</td><td>Zero false positives, ~80% token reduction</td></tr>
+        <tr><td>Path finding (Endpoint &rarr; Repo)</td><td class="old">Impossible with grep</td><td class="win">157 ms (4-hop route)</td><td>1 deterministic step, ~95% token reduction</td></tr>
+        <tr><td>Entrypoint &amp; worker discovery</td><td class="old">Multiple greps + manual parsing</td><td class="win">143 ms (csmesh entrypoints)</td><td>100% automated coverage (HTTP + HostedServices)</td></tr>
+        <tr><td>Type signature (OrderRecord)</td><td class="old">Path search + full file read</td><td class="win">166 ms (csmesh context)</td><td>3× fewer steps, ~70% token reduction</td></tr>
+        <tr><td>Architecture mapping (29 projects)</td><td class="old">Read .slnx + 29 .csproj files</td><td class="win">174 ms (csmesh map)</td><td>Hundreds of times faster, ~95% token reduction</td></tr>
       </tbody>
     </table>
   </div>
@@ -417,7 +419,7 @@ footer .right{margin-left:auto}
   <div class="wrap">
     <div class="head">
       <h2>Teaches your assistant to use it</h2>
-      <p>One command writes the skill and rule files each tool expects, in the repository or machine-wide with <code>--global</code>. Shared files like <code>AGENTS.md</code> get a tagged block, so rules you wrote yourself survive the install.</p>
+      <p>One command writes the skill and rule files each tool expects, in the repository or machine-wide with <code>--global</code>. Pass <code>--mcp</code> or <code>--all</code> to configure MCP server integration automatically. Shared files like <code>AGENTS.md</code> get a tagged block, so rules you wrote yourself survive the install.</p>
     </div>
     <div style="max-width:520px;margin-bottom:36px">
       <div class="cmdbox"><code>csmesh install</code><button data-copy="csmesh install">Copy</button></div>
@@ -427,7 +429,7 @@ footer .right{margin-left:auto}
       <div><span>JetBrains Rider</span><em>.mcp.json + AGENTS.md</em></div>
       <div><span>Claude Code</span><em>.claude/skills/csmesh/SKILL.md</em></div>
       <div><span>Cursor</span><em>.cursor/rules/csmesh.mdc</em></div>
-      <div><span>Google Antigravity</span><em>.agents/skills + .agents/rules</em></div>
+      <div><span>Google Antigravity</span><em>.agents/skills + mcp_config.json</em></div>
       <div><span>Windsurf</span><em>.windsurfrules</em></div>
       <div><span>Cline and Roo Code</span><em>.clinerules/csmesh.md</em></div>
       <div><span>GitHub Copilot</span><em>.github/copilot-instructions.md</em></div>
@@ -564,6 +566,22 @@ const commands = [
   "  OrdersController.Cancel  {http:POST /orders/{id}/cancel}  Api/OrdersController.cs:58",
   "  CreateOrderCommandHandler.Handle  {handler}  App/CreateOrder.cs:16",
   "  ReconcileOrdersWorker.ExecuteAsync  {hosted}  Jobs/ReconcileWorker.cs:19"]},
+ {label:"path", line:"csmesh path OrderEndpoints.CreateOrderAsync SqlOrderStore.Save", exit:"exit 0",
+  desc:"Finds the shortest invocation route between two distant symbols across DI bindings, service methods, and MediatR dispatch.",
+  out:[
+  "OrderEndpoints.CreateOrderAsync  Api/OrderEndpoints.cs:22",
+  "  -> OrderService.ProcessOrderAsync  App/OrderService.cs:44",
+  "    -> IOrderStore.Save  Domain/IOrderStore.cs:8",
+  "      -> SqlOrderStore.Save  [impl, di-bound]  Infra/SqlOrderStore.cs:28"]},
+ {label:"context", line:"csmesh context OrderService --budget 800", exit:"exit 0",
+  desc:"Everything structural about one symbol in a single call: signatures, callers, callees, implementations and entrypoints.",
+  out:[
+  "OrderService  [class, di:scoped]  App/OrderService.cs:18",
+  "implements: IOrderService",
+  "entrypoints above:",
+  "  OrdersController.Create  {http:POST /orders}  Api/OrdersController.cs:42",
+  "calls: IPaymentGateway.Authorize, IOrderStore.Save, IAuditLogger.LogAsync",
+  "called by: OrdersController.Create, OrderProcessingWorker.ExecuteAsync"]},
  {label:"index", line:"csmesh index", exit:"exit 0",
   desc:"Parses the whole solution with Roslyn and writes the frozen graph to .csmesh/graph.json. Incremental by default; re-parses only modified files.",
   out:["indexed 412 files (3 modified parsed incrementally) -> 1604 nodes, 3011 edges in 0.4s"]},
