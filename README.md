@@ -97,7 +97,7 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
   - **Command Chaining:** Chain queries in a single turn (`csmesh impl IStore --budget 200 && csmesh blast-radius Order.Submit --budget 400`).
 
 * **🤖 Native Model Context Protocol (MCP) Server:**
-  - **Interactive Agent Experience:** Run `csmesh serve` to expose query tools over standard JSON-RPC (stdio) to MCP-compatible clients like Claude Desktop, Cursor, Antigravity, VS Code, and Windsurf.
+  - **Interactive Agent Experience:** Run `csmesh serve` to expose query tools over standard JSON-RPC (stdio) to MCP-compatible clients like Claude Desktop, Cursor, Antigravity, VS Code, Windsurf, and Cline.
   - **One-Command Setup:** Register csmesh into IDE configurations with `csmesh install --mcp` (locally) or `csmesh install --mcp --global` (machine-wide).
   - **Token-Efficient Tool Responses:** Returns dense, structured plaintext designed for LLM comprehension without wasteful, unbounded JSON dumps.
 
@@ -297,7 +297,7 @@ csmesh entrypoints orders
 | **Cursor** | `.cursor/rules/csmesh.mdc` + `.cursor/mcp.json` | `~/.cursor/rules/...` + `~/.cursor/mcp.json` | MDC Rule + MCP Server |
 | **Google Antigravity** | `.agents/skills/csmesh/SKILL.md` + `.agents/mcp_config.json` | `~/.gemini/config/skills/...` + `mcp_config.json` | Workspace Skill + Rules + MCP |
 | **Windsurf (Cascade)** | `.windsurfrules` | `~/.codeium/windsurf/` (rules & `mcp_config.json`) | Tagged Rules Block + MCP Server |
-| **Cline & Roo Code** | `.clinerules` or `.clinerules/csmesh.md` | `~/.cline/rules/csmesh.md` | Tagged Instruction Block |
+| **Cline & Roo Code** | `.clinerules` or `.cline/mcp.json` | `~/.cline/rules/` + `cline_mcp_settings.json` | Tagged Instruction Block + MCP Server |
 | **GitHub Copilot** | `.github/copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | User Instructions Block |
 | **MiMo Code (Xiaomi)** | `.mimocode/skills/csmesh/SKILL.md` + `AGENTS.md` | `~/.mimocode/skills/...` + `.mimo/` | Skill + Agent Instructions |
 | **Kilo Code** | `.kilocode/rules/csmesh.md` | `~/.kilocode/rules/csmesh.md` | Native Rule File |
@@ -306,7 +306,7 @@ csmesh entrypoints orders
 | **OpenCode** | `AGENTS.md` + `.opencode/rules/csmesh.md` | `~/.config/opencode/AGENTS.md` + `~/.opencode/rules/` | Open Agent Standard Block & Rules |
 
 > [!TIP]
-> Shared configuration files (`AGENTS.md`, `GEMINI.md`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`) use safe tagged blocks (`<!-- csmesh-instructions -->`). Existing developer rules are **never overwritten**. When `--mcp` is passed (`csmesh install --mcp` or `csmesh install --all`), native MCP server configurations (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `~/.claude.json`, etc.) are also automatically merged.
+> Shared configuration files (`AGENTS.md`, `GEMINI.md`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`) use safe tagged blocks (`<!-- csmesh-instructions -->`). Existing developer rules are **never overwritten**. When `--mcp` is passed (`csmesh install --mcp` or `csmesh install --all`), native MCP server configurations (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `~/.claude.json`, `cline_mcp_settings.json`, etc.) are also automatically merged.
 
 ---
 
