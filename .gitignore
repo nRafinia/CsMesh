@@ -492,7 +492,10 @@ FodyWeavers.xsd
 .kilocode/
 .mimocode/
 .opencode/
+.gemini/
+.github/
 .clinerules
 .windsurfrules
 AGENTS.md
 GEMINI.md
+.mcp.json
