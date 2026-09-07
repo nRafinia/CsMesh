@@ -237,6 +237,7 @@ public sealed class MultiTargetIntegrationTests : IDisposable
         // nothing says why.
         Assert.Contains(targets, t => t.Contains("antigravity", StringComparison.Ordinal));
         Assert.Contains(targets, t => t.Contains("antigravity-cli", StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.Contains("cline", StringComparison.Ordinal));
 
         // No duplicates: registering the same file twice is harmless but the second write would
         // be reported as an update to something this run just added.
@@ -259,8 +260,63 @@ public sealed class MultiTargetIntegrationTests : IDisposable
 
         Assert.Contains(targets, t => t.EndsWith(Path.Combine(".agents", "mcp_config.json"), StringComparison.Ordinal));
         Assert.Contains(targets, t => t.EndsWith(Path.Combine(".vscode", "mcp.json"), StringComparison.Ordinal));
+        Assert.Contains(targets, t => t.EndsWith(Path.Combine(".cline", "mcp.json"), StringComparison.Ordinal));
         Assert.Contains(targets, t => t.EndsWith(".mcp.json", StringComparison.Ordinal));
         Assert.Equal(targets.Count, targets.Distinct().Count());
+    }
+
+    [Fact]
+    public void ClineSettingsPreservesExistingServersAndSettings()
+    {
+        var path = Path.Combine(_home, "cline_mcp_settings.json");
+        File.WriteAllText(path, """
+            {
+              "mcpServers": {
+                "jetbrains-rider": {
+                  "url": "http://127.0.0.1:64482/sse",
+                  "type": "sse",
+                  "disabled": false,
+                  "autoApprove": []
+                }
+              }
+            }
+            """);
+
+        Assert.True(AgentIntegration.RegisterServer(path, _home, out var outcome));
+        Assert.Equal("added", outcome);
+
+        var root = Read(path);
+        var servers = root.GetProperty("mcpServers");
+        Assert.True(servers.TryGetProperty("jetbrains-rider", out var rider));
+        Assert.Equal("http://127.0.0.1:64482/sse", rider.GetProperty("url").GetString());
+        Assert.True(servers.TryGetProperty("csmesh", out var csmesh));
+        Assert.Equal(AgentIntegration.BinaryPath(), csmesh.GetProperty("command").GetString());
+    }
+
+    [Fact]
+    public void RegisterServerPreservesExistingAutoApproveAndDisabledFields()
+    {
+        var path = Path.Combine(_home, "cline_mcp_settings.json");
+        File.WriteAllText(path, """
+            {
+              "mcpServers": {
+                "csmesh": {
+                  "command": "old_csmesh",
+                  "args": ["serve"],
+                  "disabled": false,
+                  "autoApprove": ["where", "trace"]
+                }
+              }
+            }
+            """);
+
+        Assert.True(AgentIntegration.RegisterServer(path, _home, out var outcome));
+        Assert.Equal("updated", outcome);
+
+        var csmesh = Read(path).GetProperty("mcpServers").GetProperty("csmesh");
+        Assert.Equal(AgentIntegration.BinaryPath(), csmesh.GetProperty("command").GetString());
+        Assert.False(csmesh.GetProperty("disabled").GetBoolean());
+        Assert.Equal(2, csmesh.GetProperty("autoApprove").GetArrayLength());
     }
 
     [Fact]

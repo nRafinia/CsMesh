@@ -62,22 +62,32 @@ public static class AgentIntegration
 
         yield return Path.Combine(home, ".codeium", "windsurf", "mcp_config.json");
 
+        // Cline
+        yield return Path.Combine(home, ".cline", "data", "settings", "cline_mcp_settings.json");
+
         if (OperatingSystem.IsWindows())
         {
             var roaming = Environment.GetEnvironmentVariable("APPDATA");
             if (!string.IsNullOrEmpty(roaming))
+            {
                 yield return Path.Combine(roaming, "Claude", "claude_desktop_config.json");
+                yield return Path.Combine(roaming, "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
+            }
         }
         else if (OperatingSystem.IsMacOS())
         {
             yield return Path.Combine(home, "Library", "Application Support", "Claude",
                 "claude_desktop_config.json");
+            yield return Path.Combine(home, "Library", "Application Support", "Code", "User",
+                "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
         }
         else
         {
             var config = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")
                          ?? Path.Combine(home, ".config");
             yield return Path.Combine(config, "Claude", "claude_desktop_config.json");
+            yield return Path.Combine(config, "Code", "User", "globalStorage",
+                "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
         }
     }
 
@@ -91,6 +101,7 @@ public static class AgentIntegration
         // Antigravity's workspace-scoped location. Its global config is a separate file, so a
         // project install that skipped this left Antigravity with nothing at all.
         yield return Path.Combine(repoRoot, ".agents", "mcp_config.json");
+        yield return Path.Combine(repoRoot, ".cline", "mcp.json");
     }
 
     public static bool RegisterServer(string configPath, string? repoRoot, out string outcome)
@@ -127,11 +138,19 @@ public static class AgentIntegration
                 ? new JsonArray("serve")
                 : new JsonArray("serve", "--repo", Path.GetFullPath(repoRoot));
 
-            servers["csmesh"] = new JsonObject
+            if (servers["csmesh"] is JsonObject existingCsmesh)
             {
-                ["command"] = BinaryPath(),
-                ["args"] = args
-            };
+                existingCsmesh["command"] = BinaryPath();
+                existingCsmesh["args"] = args;
+            }
+            else
+            {
+                servers["csmesh"] = new JsonObject
+                {
+                    ["command"] = BinaryPath(),
+                    ["args"] = args
+                };
+            }
 
             var directory = Path.GetDirectoryName(configPath);
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);

@@ -356,7 +356,14 @@ public static class SkillCommand
             // Only global config files that already exist are touched. Creating every one of them
             // would leave configuration for clients the user has not installed, which is litter
             // rather than help; a project file is different, since the repository is the point.
-            if (isGlobal && !File.Exists(target)) continue;
+            if (isGlobal && !File.Exists(target))
+            {
+                var dir = Path.GetDirectoryName(target);
+                var isClientInstalled = !string.IsNullOrEmpty(dir) &&
+                                        !dir.Equals(basePath, StringComparison.OrdinalIgnoreCase) &&
+                                        (Directory.Exists(dir) || (target.Contains(".cline") && Directory.Exists(Path.Combine(basePath, ".cline"))));
+                if (!isClientInstalled) continue;
+            }
 
             Console.WriteLine(AgentIntegration.RegisterServer(target, pinned, out var outcome)
                 ? $"  mcp server   {outcome} in {target}"
