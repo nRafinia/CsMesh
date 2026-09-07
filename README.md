@@ -15,7 +15,7 @@ Built for AI coding agents and developers who are tired of multi-turn "file-hopp
 
 </div>
 
-![logo](docs/readme.jpg)
+![logo](pics/readme.jpg)
 
 
 ---
