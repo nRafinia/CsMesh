@@ -199,5 +199,6 @@ jobs:
             echo "::error::Secret NPM_TOKEN is missing! Please configure it in GitHub Settings -> Secrets and variables -> Actions."
             exit 1
           fi
+          cp ../README.md ./README.md
           npm version ${{ needs.publish-release.outputs.release_version }} --no-git-tag-version --allow-same-version
           npm publish --access public

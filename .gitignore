@@ -498,3 +498,5 @@ FodyWeavers.xsd
 AGENTS.md
 GEMINI.md
 .mcp.json
+!npm/bin/
+!npm/bin/**
