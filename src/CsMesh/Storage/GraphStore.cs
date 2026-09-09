@@ -275,6 +275,71 @@ public static class GraphStore
     }
 
     /// <summary>
+    /// Where 'review' checks out a base revision to index it. A sibling of the graph files rather
+    /// than a temp directory, so a crash leaves evidence where the next run already looks instead
+    /// of orphaning a worktree somewhere git will not find it on its own.
+    /// </summary>
+    public static string BaseWorktreePath(string root) => Path.Combine(DirFor(root), "base");
+
+    /// <summary>The cached graph for one base revision, keyed on its commit so it survives being
+    /// asked for twice.</summary>
+    public static string BaseGraphPathFor(string root, string sha) => Path.Combine(DirFor(root), $"base-{sha}.json");
+
+    /// <summary>
+    /// Loads a cached base-revision graph, or null when there is none or it predates the current
+    /// keying rules -- same reasoning as <see cref="LoadPrevious"/>.
+    /// </summary>
+    public static Graph? LoadBaseGraph(string root, string sha)
+    {
+        var path = BaseGraphPathFor(root, sha);
+        if (!File.Exists(path)) return null;
+
+        try
+        {
+            using var stream = OpenReadShared(path);
+            var graph = JsonSerializer.Deserialize(stream, AppJsonContext.Default.Graph);
+            if (graph == null || graph.FormatVersion != Graph.CurrentFormatVersion) return null;
+
+            graph.Root = root;
+            graph.Freeze();
+            return graph;
+        }
+        catch (Exception ex)
+        {
+            Dbg.Log($"base graph load failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    public static void SaveBaseGraph(string root, string sha, Graph g)
+    {
+        Directory.CreateDirectory(DirFor(root));
+        WriteAtomic(g, BaseGraphPathFor(root, sha));
+    }
+
+    /// <summary>
+    /// Keeps only the most recently written base graphs, deleting the rest by write time. Each one
+    /// is a full-solution graph and an unbounded cache of them in .csmesh/ is exactly the kind of
+    /// noise this tool exists to avoid causing.
+    /// </summary>
+    public static void PruneBaseGraphs(string root, int keep = 5)
+    {
+        var dir = DirFor(root);
+        if (!Directory.Exists(dir)) return;
+
+        var stale = Directory.EnumerateFiles(dir, "base-*.json")
+            .Select(p => new FileInfo(p))
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .Skip(keep);
+
+        foreach (var file in stale)
+        {
+            try { file.Delete(); }
+            catch (Exception ex) { Dbg.Log($"could not prune base graph '{file.Name}': {ex.Message}"); }
+        }
+    }
+
+    /// <summary>
     /// Whether this graph was written by a different csmesh build than the one now running.
     ///
     /// Deliberately not a load failure. The file is readable and its answers are the answers the

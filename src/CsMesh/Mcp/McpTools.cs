@@ -84,6 +84,13 @@ public static class McpTools
             + "that changed, edges added or lost. Not a text diff.",
             null),
 
+        new("review", "review",
+            "Structural change against a named git revision (default: the merge base with the "
+            + "default branch), not against whatever the last index happened to see -- the "
+            + "question a pull request or CI gate actually asks. Findings already accepted via "
+            + "'csmesh review --accept' are suppressed; anything new is not.",
+            "base", Depth: false),
+
         new("silence", "silence",
             "Why an expected edge is absent. Use after a trace or impl returned less than expected, "
             + "instead of assuming the code is not there.",
@@ -124,8 +131,9 @@ public static class McpTools
                 };
 
                 // Only the tools that cannot answer anything without a subject demand one.
-                // entrypoints, unresolved and index all have a meaningful bare form.
-                if (tool.Kind is not ("entrypoints" or "unresolved")) schema.Required = [tool.Argument];
+                // entrypoints, unresolved, index and review all have a meaningful bare form --
+                // review's bare form is the merge base with the default branch.
+                if (tool.Kind is not ("entrypoints" or "unresolved" or "review")) schema.Required = [tool.Argument];
             }
 
             if (tool.SecondArgument != null)
@@ -147,11 +155,17 @@ public static class McpTools
                     Description = "Approximate token ceiling for the answer. Raise only after narrowing with 'under'."
                 };
 
-                schema.Properties["under"] = new JsonSchemaProperty
+                // review has no subtree scope: a base revision is indexed whole, and narrowing it
+                // would make the cached base graph useless for every other query against the
+                // same commit.
+                if (tool.Kind != "review")
                 {
-                    Type = "string",
-                    Description = "Restrict to a subtree, e.g. src/Payments. The cheapest way to cut a large answer."
-                };
+                    schema.Properties["under"] = new JsonSchemaProperty
+                    {
+                        Type = "string",
+                        Description = "Restrict to a subtree, e.g. src/Payments. The cheapest way to cut a large answer."
+                    };
+                }
             }
 
             if (tool.Depth)
@@ -195,6 +209,8 @@ public static class McpTools
         "entrypoints" => "Optional word to filter entrypoints by. Omit for all of them.",
         "unresolved" => "Optional cause to filter by, e.g. di or mediatr. Omit for all.",
         "path" => "Fully qualified or short name of the starting symbol.",
+        "review" => "Optional git revision to compare against. Omit for the merge base with the "
+                     + "default branch.",
         _ => "Fully qualified or short name, e.g. OrderService.SaveAsync."
     };
 
@@ -252,6 +268,10 @@ public static class McpTools
             {
                 "doctor" => DoctorCommand.Execute(effectiveRoot, opt),
                 "index" => IndexCommand.Execute(effectiveRoot, opt),
+                // Not routed through QueryCommand: review reads its own current-graph copy and
+                // does not participate in QueryCommand's --heal/auto-index path, so this call
+                // never triggers a second index of the same tree.
+                "review" => ReviewCommand.Execute(effectiveRoot, opt),
                 _ => QueryCommand.Execute(effectiveRoot, opt, tool.Kind)
             };
         }

@@ -163,7 +163,7 @@ public static partial class Queries
     }
 
     /// <summary>Bindings and dispatch before inheritance, inheritance before plumbing.</summary>
-    private static int StructuralRank(EdgeKind kind) => kind switch
+    internal static int StructuralRank(EdgeKind kind) => kind switch
     {
         EdgeKind.DiBinding => 0,
         EdgeKind.Mediatr => 1,
@@ -175,6 +175,70 @@ public static partial class Queries
 
     private readonly record struct EdgeFact(
         string From, string To, EdgeKind Kind, string? Note, string? Site, double Score, string? Source);
+
+    /// <summary>
+    /// One structural difference between two graphs, identified independently of where it lives
+    /// in either of them. Used by 'review', which must recognise the same finding across commits
+    /// that touch unrelated lines -- a line number or a display name moves for reasons that have
+    /// nothing to do with the finding, and either would silently invalidate an accepted baseline.
+    /// </summary>
+    public readonly record struct ReviewFinding(
+        string Id, string Relation, EdgeKind Kind, string From, string To, string? Note, string? Site, double Score);
+
+    /// <summary>
+    /// The same three-dimensional comparison <see cref="Changes"/> renders as prose, returned as
+    /// data instead. 'review' filters this against an accepted baseline; 'changes' does not need
+    /// to, because it has no baseline -- it always reports everything since the last index.
+    /// </summary>
+    public static List<ReviewFinding> DiffFindings(Graph current, Graph baseline, bool includeCalls)
+    {
+        var now = Signatures(current, includeCalls);
+        var before = Signatures(baseline, includeCalls);
+
+        var added = now.Keys.Except(before.Keys, StringComparer.Ordinal);
+        var removed = before.Keys.Except(now.Keys, StringComparer.Ordinal);
+        var degraded = now.Keys
+            .Intersect(before.Keys, StringComparer.Ordinal)
+            .Where(k => before[k].Score - now[k].Score > 0.05);
+
+        var findings = new List<ReviewFinding>();
+
+        foreach (var key in removed)
+        {
+            var f = before[key];
+            findings.Add(new ReviewFinding(FindingId(key), "removed", f.Kind, f.From, f.To, f.Note, f.Site, f.Score));
+        }
+
+        foreach (var key in added)
+        {
+            var f = now[key];
+            findings.Add(new ReviewFinding(FindingId(key), "added", f.Kind, f.From, f.To, f.Note, f.Site, f.Score));
+        }
+
+        foreach (var key in degraded)
+        {
+            var f = now[key];
+            findings.Add(new ReviewFinding(FindingId(key), "degraded", f.Kind, f.From, f.To, f.Note, f.Site, f.Score));
+        }
+
+        return findings
+            .OrderBy(f => StructuralRank(f.Kind))
+            .ThenBy(f => f.From, StringComparer.Ordinal)
+            .ThenBy(f => f.To, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
+    /// A short, stable identifier for one finding, derived from the edge signature -- kind plus
+    /// both ends' <see cref="Node.Key"/> plus the note -- and nothing positional. A line number, a
+    /// file offset or a display name all move for reasons unrelated to the finding itself; hashing
+    /// any of them into the identity would invalidate an accepted baseline on an unrelated edit.
+    /// </summary>
+    internal static string FindingId(string signature)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(signature));
+        return Convert.ToHexString(bytes)[..12].ToLowerInvariant();
+    }
 
     /// <summary>The two symbol keys of an edge signature, without its kind or note.</summary>
     private static string PairOf(string signature)
