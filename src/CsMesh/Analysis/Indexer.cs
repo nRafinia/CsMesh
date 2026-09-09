@@ -903,13 +903,12 @@ public static partial class Indexer
         {
             if (_idByKey.TryGetValue(key, out var existing)) return existing;
 
-            var span = at.GetLocation().GetLineSpan();
             var file = at.SyntaxTree.FilePath.Length > 0
                 ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
                 : "";
+            var (line, endLine) = LineRange(at.GetLocation(), file);
 
-            return AddNode(key, name, shortName, kind, file,
-                           span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
+            return AddNode(key, name, shortName, kind, file, line, endLine);
         }
 
         private int AddNode(string key, string name, string shortName, string kind, string file, int line, int endLine)
@@ -1092,21 +1091,18 @@ public static partial class Indexer
             var tally = $"{kind}/{reason}";
             g.UnresolvedByReason[tally] = g.UnresolvedByReason.GetValueOrDefault(tally) + 1;
 
-            var project = at.SyntaxTree.FilePath.Length > 0
+            var file = at.SyntaxTree.FilePath.Length > 0
                 ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
                 : "";
-            if (project.Length > 0)
+            if (file.Length > 0)
             {
-                var owner = ProjectOf(project);
+                var owner = ProjectOf(file);
                 if (owner.Length > 0)
                     g.UnresolvedByProject[owner] = g.UnresolvedByProject.GetValueOrDefault(owner) + 1;
             }
 
             if (g.Unresolved.Count(u => u.Kind == kind) >= UnresolvedCaps.GetValueOrDefault(kind, 100)) return;
 
-            var file = at.SyntaxTree.FilePath.Length > 0
-                ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
-                : "";
             var (line, _) = LineRange(at.GetLocation(), file);
             var text = expression.Replace('\n', ' ').Replace('\r', ' ').Trim();
             if (text.Length > 80) text = text[..77] + "...";
