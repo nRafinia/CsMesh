@@ -1,6 +1,7 @@
 using CsMesh.Analysis;
 using CsMesh.Commands;
 using CsMesh.Common;
+using CsMesh.Storage;
 using Xunit;
 
 namespace CsMesh.Tests;
@@ -331,6 +332,178 @@ public sealed class RazorLineMappingTests : IDisposable
     {
         Assert.Equal(1, Node("TestApp.Pages.Counter").Line);
         Assert.Equal(1, Node("TestApp.Pages.Counter.BuildRenderTree").Line);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { /* temp dir */ }
+    }
+}
+
+/// <summary>
+/// BuildIncremental replaced Graph.Files wholesale with the .cs stamps its own parse loop
+/// produced -- and that loop, driven by EnumerateSourceFiles, never returns a .razor or .cshtml
+/// path. One incremental pass over any unrelated .cs file was enough to drop every Razor stamp
+/// Build() had written, and from then on DirtyFiles had nothing left to compare a .razor edit
+/// against: freshness reported clean forever while the graph kept serving whatever generated C#
+/// the last full index had read, however far the .razor file had since moved on.
+/// </summary>
+public sealed class RazorStampSurvivesIncrementalTests : IDisposable
+{
+    private readonly string _root;
+    private readonly string _servicePath;
+    private readonly string _razorPath;
+
+    public RazorStampSurvivesIncrementalTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), "csmesh-razorinc-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(_root, "Pages"));
+        Directory.CreateDirectory(Path.Combine(_root, "Services"));
+
+        Write("App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+
+        _servicePath = Path.Combine(_root, "Services", "Greeter.cs");
+        // No CrossFileConstructs marker (interface, AddScoped, ...): this file must qualify for
+        // the incremental path, not decline into a full index that would mask the bug.
+        File.WriteAllText(_servicePath, """
+            namespace TestApp.Services
+            {
+                public class Greeter { public void Wave() { } }
+            }
+            """);
+
+        _razorPath = Path.Combine(_root, "Pages", "Counter.razor");
+        File.WriteAllText(_razorPath, "<h1>@count</h1>");
+
+        var generatedDir = Path.Combine(_root, "obj", "Debug", "net10.0", "generated",
+            "Microsoft.CodeAnalysis.Razor.Compiler",
+            "Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator", "Pages");
+        Directory.CreateDirectory(generatedDir);
+
+        var generatedPath = Path.Combine(generatedDir, "Counter_razor.g.cs");
+        var razorAbs = _razorPath.Replace('\\', '/');
+        File.WriteAllText(generatedPath, $$"""
+            #pragma checksum "{{razorAbs}}" "{ff1816ec-aa5e-4d10-87f6-980198115c8b}" "0000"
+            namespace TestApp.Pages
+            {
+                public partial class Counter : global::Microsoft.AspNetCore.Components.ComponentBase { }
+            }
+            """);
+
+        // The generated file must be the newer of the two, or Fix B's staleness check would skip
+        // it before this test ever reaches the incremental pass it means to exercise.
+        File.SetLastWriteTimeUtc(_razorPath, DateTime.UtcNow.AddMinutes(-10));
+        File.SetLastWriteTimeUtc(generatedPath, DateTime.UtcNow);
+    }
+
+    private void Write(string relative, string content)
+    {
+        var path = Path.Combine(_root, relative.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content);
+    }
+
+    [Fact]
+    public void AnEditedRazorFileIsStillDetectedAsDirtyAfterOneIncrementalPass()
+    {
+        var before = Indexer.Build(_root);
+        Assert.Equal(1, before.RazorComponentsIndexed);
+
+        // Touch the ordinary .cs file only -- an edit the incremental path is meant to accept.
+        File.AppendAllText(_servicePath, "\n// touched\n");
+        var firstDirty = GraphStore.DirtyFiles(before);
+        Assert.DoesNotContain(firstDirty, p => p.Replace('\\', '/').EndsWith("Counter.razor", StringComparison.Ordinal));
+
+        var after = Indexer.BuildIncremental(before, firstDirty);
+        Assert.NotNull(after);
+
+        // The actual bug: after that one incremental pass, does the graph still know Counter.razor
+        // is a file it is tracking at all?
+        Assert.Contains(after!.Files, f => f.Path.Replace('\\', '/').EndsWith("Counter.razor", StringComparison.Ordinal));
+
+        File.AppendAllText(_razorPath, "\n<p>edited after the incremental pass</p>\n");
+        var secondDirty = GraphStore.DirtyFiles(after);
+
+        Assert.Contains(secondDirty, p => p.Replace('\\', '/').EndsWith("Counter.razor", StringComparison.Ordinal));
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { /* temp dir */ }
+    }
+}
+
+/// <summary>
+/// NodeFor's fix for wrong line numbers (LineRange) did not reach every reporter of a location:
+/// SiteOf (Edge.Site) and RecordUnresolved (UnresolvedSite.Line) still read the physical line
+/// span directly, so an unresolved call or an edge's site inside a component's @code block would
+/// still be reported at a line number from the generated .g.cs rather than the .razor file.
+/// </summary>
+public sealed class RazorSiteLineMappingTests : IDisposable
+{
+    private readonly string _root;
+
+    public RazorSiteLineMappingTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), "csmesh-razorsite-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(_root, "Pages"));
+
+        Write("App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+
+        // Line 6 is "Go();" inside Handle -- an unresolved call, since nothing here declares Go.
+        Write("Pages/Counter.razor", """
+            <h1>@count</h1>
+
+            @code {
+                private void Handle()
+                {
+                    Go();
+                }
+            }
+            """);
+
+        var generatedDir = Path.Combine(_root, "obj", "Debug", "net10.0", "generated",
+            "Microsoft.CodeAnalysis.Razor.Compiler",
+            "Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator", "Pages");
+        Directory.CreateDirectory(generatedDir);
+
+        var razorAbs = Path.Combine(_root, "Pages", "Counter.razor").Replace('\\', '/');
+        File.WriteAllText(Path.Combine(generatedDir, "Counter_razor.g.cs"), $$"""
+            #pragma checksum "{{razorAbs}}" "{ff1816ec-aa5e-4d10-87f6-980198115c8b}" "0000"
+            namespace TestApp.Pages
+            {
+                public partial class Counter : global::Microsoft.AspNetCore.Components.ComponentBase
+                {
+            #line (4,5)-(7,6) "{{razorAbs}}"
+                    private void Handle()
+                    {
+                        Go();
+                    }
+            #line default
+            #line hidden
+                }
+            }
+            """);
+    }
+
+    private void Write(string relative, string content)
+    {
+        var path = Path.Combine(_root, relative.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content);
+    }
+
+    /// <summary>The failure this reproduces: an unresolved call reported deep in a ~30-line .g.cs.</summary>
+    [Fact]
+    public void AnUnresolvedCallInsideAtCodeReportsItsRealLine()
+    {
+        var graph = Indexer.Build(_root);
+
+        var site = graph.Unresolved.Single(u => u.Expression.Contains("Go()"));
+        Assert.Equal(6, site.Line);
+        Assert.Equal(Path.Combine("Pages", "Counter.razor"), site.File);
     }
 
     public void Dispose()

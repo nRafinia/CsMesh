@@ -47,11 +47,15 @@ public static partial class Indexer
     private static readonly string[] RazorPatterns = { "*.razor", "*.cshtml" };
 
     /// <summary>
-    /// .razor and .cshtml files under the root, using the same skip rules as EnumerateSourceFiles.
-    /// Counted rather than parsed here: whether any of them were actually recovered from generated
-    /// output is a separate question, answered by RazorComponentsIndexed.
+    /// .razor and .cshtml files under the root, using the same skip rules and project scope as
+    /// EnumerateSourceFiles. Counted rather than parsed here: whether any of them were actually
+    /// recovered from generated output is a separate question, answered by RazorComponentsIndexed.
+    ///
+    /// Scoped, not a plain directory walk: a project this index left out on purpose can still hold
+    /// .razor files, and counting those against the total would report "3 of 9" in a repository
+    /// where only 3 were ever going to be looked at.
     /// </summary>
-    private static int CountRazorFiles(string root)
+    private static int CountRazorFiles(string root, ProjectScope scope)
     {
         var count = 0;
         foreach (var pattern in RazorPatterns)
@@ -64,6 +68,7 @@ public static partial class Indexer
             {
                 var normalized = file.Replace('\\', '/');
                 if (SkipDirs.Any(d => normalized.Contains(d, StringComparison.OrdinalIgnoreCase))) continue;
+                if (!scope.Includes(file)) continue;
                 count++;
             }
         }
@@ -280,7 +285,10 @@ public static partial class Indexer
                 try { razorWrite = File.GetLastWriteTimeUtc(razorPath); } catch { continue; }
                 try { generatedWrite = File.GetLastWriteTimeUtc(generated); } catch { continue; }
 
-                if (razorWrite > generatedWrite)
+                // Same forgiveness GraphStore.DirtyFiles gives ordinary freshness comparisons: some
+                // filesystems round mtimes to the nearest 2 seconds, and without slack a build and
+                // the edit right before it can land on the same rounded tick in either order.
+                if (razorWrite - generatedWrite > TimeSpan.FromSeconds(2))
                 {
                     stale++;
                     continue;
@@ -386,7 +394,7 @@ public static partial class Indexer
             BuiltFromCommit = RepositoryLocator.GitHead(root),
             Files = stamps,
             GlobalUsingSources = globalUsings.Count,
-            RazorFileCount = CountRazorFiles(root),
+            RazorFileCount = CountRazorFiles(root, scope),
             RazorComponentsIndexed = razorSources.Count,
             RazorStaleSources = staleRazorSources,
             IndexedAllProjects = includeAllProjects,
@@ -1096,17 +1104,18 @@ public static partial class Indexer
 
             if (g.Unresolved.Count(u => u.Kind == kind) >= UnresolvedCaps.GetValueOrDefault(kind, 100)) return;
 
-            var span = at.GetLocation().GetLineSpan();
+            var file = at.SyntaxTree.FilePath.Length > 0
+                ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
+                : "";
+            var (line, _) = LineRange(at.GetLocation(), file);
             var text = expression.Replace('\n', ' ').Replace('\r', ' ').Trim();
             if (text.Length > 80) text = text[..77] + "...";
 
             g.Unresolved.Add(new UnresolvedSite
             {
                 Kind = kind,
-                File = at.SyntaxTree.FilePath.Length > 0
-                    ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
-                    : "",
-                Line = span.StartLinePosition.Line + 1,
+                File = file,
+                Line = line,
                 Expression = text,
                 Reason = reason
             });
@@ -1138,8 +1147,9 @@ public static partial class Indexer
             var file = at.SyntaxTree.FilePath.Length > 0
                 ? Path.GetRelativePath(g.Root, at.SyntaxTree.FilePath)
                 : "";
+            var (line, _) = LineRange(at.GetLocation(), file);
 
-            return $"{file}:{at.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
+            return $"{file}:{line}";
         }
 
         // ---------------------------------------------------------------- pass 1

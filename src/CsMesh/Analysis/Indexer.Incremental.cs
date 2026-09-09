@@ -240,7 +240,21 @@ public static partial class Indexer
 
         builder.ExportDispatchTables();
 
-        previous.Files = freshStamps;
+        // freshStamps only ever holds .cs files -- it comes from EnumerateSourceFiles, which never
+        // returns a .razor or .cshtml path. Replacing Files with it outright silently untracks
+        // every Razor source Build() had stamped: the next DirtyFiles call has no entry left to
+        // compare a .razor edit against, so the edit is invisible and freshness reports clean
+        // while the graph quietly keeps serving whatever a previous full index last read from
+        // generated C#. One incremental pass over an unrelated .cs file was enough to trigger it.
+        //
+        // Carrying the old stamps forward unconditionally is safe here: a dirty .razor/.cshtml
+        // file already declined this whole pass above, so none of the stamps below describe a
+        // file that changed since Build() wrote them.
+        var razorStamps = previous.Files.Where(f =>
+            f.Path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ||
+            f.Path.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        previous.Files = freshStamps.Concat(razorStamps).ToList();
         previous.Dirs = DirectoryStamps(root, files);
         previous.BuiltAt = DateTimeOffset.UtcNow;
         previous.BuiltFromCommit = RepositoryLocator.GitHead(root);
