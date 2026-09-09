@@ -103,6 +103,15 @@ public static class SkillText
         `diff` says what you edited. This says whether a DI binding or a mediator dispatch stopped
         resolving. The compiler catches neither, and unit tests that inject mocks do not either.
 
+        **"I am about to open a pull request." "Is this branch safe to merge?" "Set up a CI gate on
+        structural change."**
+        -> `csmesh review`
+
+        Same comparison as `changes`, but against the base branch instead of whatever the last index
+        happened to see -- the question a PR or a CI pipeline actually asks. Run `csmesh review --accept`
+        once the current findings are reviewed; only new ones surface after that. Exit `5` means something
+        unaccepted changed -- wire it into CI rather than reading the prose.
+
         **"What does this type hold? Is this field nullable?"**
         -> `csmesh context TypeName`, read the `MEMBERS` section
 
@@ -185,6 +194,7 @@ public static class SkillText
         | 2 | answer exists but exceeds the budget | narrow with `--under`, or use the depth the message names. Do **not** just raise `--budget` to a huge number |
         | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
         | 4 | no index, or one written by an older csmesh | run `csmesh index` |
+        | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
         | 64 | bad command line | run `csmesh <cmd> --help` |
         | 70 | csmesh itself failed | re-run with `--debug`; that is a bug, not your query |
 
@@ -246,6 +256,7 @@ public static class SkillText
         | work out how A reaches B | `csmesh path <from> <to>` |
         | claim an edit is safe | `csmesh diff --budget 800` |
         | finish a refactor | `csmesh changes` |
+        | open a pull request, or gate CI on structural change | `csmesh review` (`--accept` once reviewed) |
         | open a file to see a type's fields and nullability | `csmesh context TypeName`, read `MEMBERS` |
 
         A subagent is for what csmesh cannot know: intent, naming, business rules, why a decision was made.
@@ -282,8 +293,9 @@ public static class SkillText
 
         ## Exit codes
 
-        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index, `64` bad command line,
-        `70` internal error. Branch on these; do not parse the text.
+        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index, `5` `review` only:
+        unaccepted structural change, `64` bad command line, `70` internal error. Branch on these; do
+        not parse the text.
 
         ## Practice
 
@@ -342,6 +354,7 @@ public static class SkillText
         | work out how A reaches B | `csmesh path <from> <to>` |
         | claim an edit is safe | `csmesh diff --budget 800` |
         | finish a refactor | `csmesh changes` |
+        | open a pull request, or gate CI on structural change | `csmesh review` (`--accept` once reviewed) |
         | open a file to see a type's fields and nullability | `csmesh context TypeName`, read `MEMBERS` |
 
         A subagent is for what csmesh cannot know: intent, naming, business rules, why a decision was made.
@@ -378,8 +391,9 @@ public static class SkillText
 
         ## Exit codes
 
-        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index, `64` bad command line,
-        `70` internal error. Branch on these; do not parse the text.
+        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index, `5` `review` only:
+        unaccepted structural change, `64` bad command line, `70` internal error. Branch on these; do
+        not parse the text.
 
         ## Practice
 

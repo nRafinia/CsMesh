@@ -88,6 +88,15 @@ question, not the hypothetical "what if I changed X".
 `diff` says what you edited. This says whether a DI binding or a mediator dispatch stopped
 resolving. The compiler catches neither, and unit tests that inject mocks do not either.
 
+**"I am about to open a pull request." "Is this branch safe to merge?" "Set up a CI gate on
+structural change."**
+-> `csmesh review`
+
+Same comparison as `changes`, but against the base branch instead of whatever the last index
+happened to see -- the question a PR or a CI pipeline actually asks. Run `csmesh review --accept`
+once the current findings are reviewed; only new ones surface after that. Exit `5` means something
+unaccepted changed -- wire it into CI rather than reading the prose.
+
 **"What does this type hold? Is this field nullable?"**
 -> `csmesh context TypeName`, read the `MEMBERS` section
 
@@ -170,6 +179,7 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 | 2 | answer exists but exceeds the budget | narrow with `--under`, or use the depth the message names. Do **not** just raise `--budget` to a huge number |
 | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
 | 4 | no index, or one written by an older csmesh | run `csmesh index` |
+| 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
 | 64 | bad command line | run `csmesh <cmd> --help` |
 | 70 | csmesh itself failed | re-run with `--debug`; that is a bug, not your query |
 
