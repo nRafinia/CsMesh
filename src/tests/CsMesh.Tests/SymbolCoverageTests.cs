@@ -138,4 +138,28 @@ public sealed class SymbolCoverageTests : IClassFixture<GraphFixture>
         Assert.All(_f.Graph.Unresolved.Where(u => u.Kind == "type"),
             u => Assert.Equal("unbound-type", u.Reason));
     }
+
+    // ------------------------------------------------------------------ nested types
+
+    [Fact]
+    public void Resolve_finds_a_nested_class_member_via_the_outer_class_name()
+    {
+        // Inner.Compute is nested inside Container. Querying "Container.Compute"
+        // must find it even though the Short name is "Inner.Compute".
+        var resolved = _f.Graph.Resolve("Container.Compute");
+
+        Assert.NotEmpty(resolved);
+        Assert.Contains(resolved, n => n.Short == "Inner.Compute");
+    }
+
+    [Fact]
+    public void Resolve_still_prefers_a_direct_short_name_match_over_an_ancestor_match()
+    {
+        // "Inner.Compute" is the exact Short name, so it must come back from the
+        // earlier phase, not the ancestor fallback.
+        var resolved = _f.Graph.Resolve("Inner.Compute");
+
+        Assert.Single(resolved);
+        Assert.Equal("Inner.Compute", resolved[0].Short);
+    }
 }

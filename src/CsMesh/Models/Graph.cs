@@ -330,6 +330,22 @@ public sealed class Graph
             n.Short.EndsWith("." + q, StringComparison.OrdinalIgnoreCase)).ToList();
         if (suffix.Count > 0) return suffix;
 
+        // Nested type fallback: "Indexer.LineRange" should find
+        // "CsMesh.Analysis.Indexer.Builder.LineRange" because Indexer is an ancestor type
+        // and LineRange is the member name. This only fires when exact and suffix matching
+        // already failed, so it cannot shadow a direct match.
+        var dot = q.IndexOf('.');
+        if (dot > 0)
+        {
+            var outer = q[..dot];
+            var member = q[(dot + 1)..];
+            var nested = Nodes.Where(n =>
+                n.Name.EndsWith("." + member, StringComparison.OrdinalIgnoreCase) &&
+                n.Name.Contains("." + outer + ".", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (nested.Count > 0) return nested;
+        }
+
         return Nodes.Where(n => n.Short.Contains(q, StringComparison.OrdinalIgnoreCase))
                     .Take(40).ToList();
     }
