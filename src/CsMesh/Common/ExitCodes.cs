@@ -10,6 +10,15 @@ public static class Exit
     public const int OverBudget = 2;
     public const int Ambiguous = 3;
     public const int NoIndex = 4;
+
+    /// <summary>
+    /// 'review' found structural changes against the base revision that are not in the accepted
+    /// baseline. Distinct from the others because it is the one a CI pipeline gates on: everything
+    /// below this is "the answer could not be produced," and this alone means "the answer was
+    /// produced, and it says something needs a human."
+    /// </summary>
+    public const int Changed = 5;
+
     public const int Usage = 64;
 
     /// <summary>

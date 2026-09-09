@@ -44,6 +44,24 @@ public static partial class Indexer
         "/packages/", "/TestResults/", "/artifacts/", "/.csmesh/"
     };
 
+    /// <summary>
+    /// Whether a file falls under one of <see cref="SkipDirs"/>, judged by its path relative to
+    /// the root being indexed rather than by its absolute path.
+    ///
+    /// 'review' indexes a base revision from a worktree it creates at .csmesh/base -- deliberately
+    /// inside the directory this indexer otherwise treats as its own cache and always excludes.
+    /// Matching against the absolute path meant every file in that worktree carried '.csmesh/'
+    /// somewhere in its ancestry regardless of what the scan root actually was, and the base graph
+    /// indexed to zero files every time. The exclusion means "do not descend into a build output
+    /// or scratch directory found while scanning", which is a statement about descendants of root,
+    /// not about root's own location on disk.
+    /// </summary>
+    private static bool IsSkipped(string root, string file)
+    {
+        var relative = "/" + Path.GetRelativePath(root, file).Replace('\\', '/');
+        return SkipDirs.Any(d => relative.Contains(d, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static readonly string[] RazorPatterns = { "*.razor", "*.cshtml" };
 
     /// <summary>
@@ -66,8 +84,7 @@ public static partial class Indexer
 
             foreach (var file in found)
             {
-                var normalized = file.Replace('\\', '/');
-                if (SkipDirs.Any(d => normalized.Contains(d, StringComparison.OrdinalIgnoreCase))) continue;
+                if (IsSkipped(root, file)) continue;
                 if (!scope.Includes(file)) continue;
                 count++;
             }
@@ -83,9 +100,10 @@ public static partial class Indexer
     {
         foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
         {
-            var normalized = file.Replace('\\', '/');
-            if (SkipDirs.Any(d => normalized.Contains(d, StringComparison.OrdinalIgnoreCase))) continue;
+            if (IsSkipped(root, file)) continue;
             if (!scope.Includes(file)) continue;
+
+            var normalized = file.Replace('\\', '/');
             if (normalized.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)) continue;
             if (normalized.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase)) continue;
             if (normalized.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)) continue;

@@ -67,6 +67,7 @@ public static class CliRunner
             "unresolved" => QueryCommand.Execute(root, opt, "unresolved"),
             "diff" => QueryCommand.Execute(root, opt, "diff"),
             "changes" => QueryCommand.Execute(root, opt, "changes"),
+            "review" => ReviewCommand.Execute(root, opt),
             "silence" or "why-not" => QueryCommand.Execute(root, opt, "silence"),
             "map" => QueryCommand.Execute(root, opt, "map"),
             "serve" => Mcp.McpServer.Run(root),

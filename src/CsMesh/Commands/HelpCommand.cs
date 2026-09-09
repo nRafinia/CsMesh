@@ -21,6 +21,7 @@ public static class HelpCommand
             "unresolved" => UnresolvedHelp,
             "diff" => DiffHelp,
             "changes" => ChangesHelp,
+            "review" => ReviewHelp,
             "silence" or "why-not" => SilenceHelp,
             "map" => MapHelp,
             "where" or "find" => WhereHelp,
@@ -58,6 +59,7 @@ public static class HelpCommand
             unresolved     Where the indexer failed, grouped by reason
             diff           Symbols a git diff touched, and what they reach
             changes        Bindings, dispatches and implementations that appeared or vanished
+            review         Structural changes vs. a git revision, gated by an accepted baseline
             silence        Why a query came back empty (alias: why-not)
             usage          Display local invocation metrics and caller attribution
             doctor         Diagnose index freshness, skill installation, and environment
@@ -80,7 +82,7 @@ public static class HelpCommand
             -h, --help         Print help information
 
         EXIT CODES:
-            0 ok   1 not-found   2 over-budget   3 ambiguous   4 no-index
+            0 ok   1 not-found   2 over-budget   3 ambiguous   4 no-index   5 changed (review only)
             64 usage-error   70 internal-error
 
         CONFIDENCE:
@@ -454,6 +456,45 @@ public static class HelpCommand
         EXAMPLES:
             csmesh changes
             csmesh changes --calls --budget 1200
+        """;
+
+    public const string ReviewHelp =
+        """
+        csmesh review - Structural change vs. a git revision, as a CI-gateable answer
+
+        USAGE:
+            csmesh review [BASE] [OPTIONS]
+
+        ARGUMENTS:
+            [BASE]             Revision to compare against (default: merge base with the remote's
+                                default branch, falling back to HEAD when that cannot be resolved)
+
+        OPTIONS:
+            --calls            Include call and construction edges (noisy; off by default)
+            --accept           Write the current findings to .csmesh/accepted.txt as the new
+                                baseline; accepted findings stop being reported until BASE moves
+                                past them, at which point they are pruned automatically
+            --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
+            --json             Output as a structured JSON envelope
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            'changes' compares against whatever csmesh index last saw, which is an accident of
+            timing. 'review' compares against a named git revision, cached per commit so a second
+            run is fast, which is what a pull request or a CI gate actually needs.
+
+            A binding that moved is reported; a method body that was edited without moving an edge
+            is not -- same three-dimensional comparison as 'changes' (added, removed, degraded).
+
+            Building the base graph checks the revision out into a disposable worktree under
+            .csmesh/; your own working tree, staged or not, is never touched.
+
+        EXIT CODES:
+            0   nothing unaccepted changed (or --accept just ran)
+            4   the base revision could not be indexed, or no current index exists: csmesh index
+            5   unaccepted structural change exists -- fail the build
+            64  not a git repository, or BASE does not resolve
         """;
 
     public const string WhereHelp =

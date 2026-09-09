@@ -432,6 +432,14 @@ csmesh changes
 csmesh changes --calls --budget 1200
 ```
 
+#### `csmesh review [base]`
+The same structural comparison as `changes`, but against a named git revision instead of whatever the last index happened to see — the question a pull request or a CI gate actually asks. Defaults to the merge base with the remote's default branch, cached per commit so a second run is fast. `--accept` writes the current findings to `.csmesh/accepted.txt`; accepted findings stop being reported, and dead entries are pruned automatically once the base moves past them. Exits `5` when something unaccepted remains, so a pipeline can gate on it without parsing prose.
+```bash
+csmesh review                        # vs. the merge base with the default branch
+csmesh review origin/main --calls
+csmesh review --accept               # bless the current state as the new baseline
+```
+
 #### `csmesh silence <symbol> [<target>]` (alias: `why-not`)
 Why a query came back empty. Exit `1` from any other command means the graph had nothing; it does not say whether the symbol was mistyped, lives in a package, was never bound because the solution was not built, or is reached only through a container scan. Those call for four different next actions.
 ```bash
@@ -542,6 +550,7 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 | `2` | **Over Budget** | Answer exists but exceeds `--budget`. | Re-run with narrower `--depth` or query a specific callee. |
 | `3` | **Ambiguous** | Multiple symbols match query. | Re-run with qualified `Type.Member` instead of bare member name. |
 | `4` | **No Index** | Symbol graph has not been generated. | Execute `csmesh index` and retry. |
+| `5` | **Changed** (`review` only) | Unaccepted structural change vs. the base revision. | Review the finding, then `csmesh review --accept` if it's fine to keep. |
 | `64`| **Usage Error** | Invalid flags, syntax, or arguments. | Run `csmesh <cmd> --help`. |
 | `70`| **Internal Error** | Unhandled failure inside csmesh. | Re-run with `--debug` and open an issue. |
 

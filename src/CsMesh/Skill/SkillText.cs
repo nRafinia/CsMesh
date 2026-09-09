@@ -149,6 +149,7 @@ public static class SkillText
         csmesh entrypoints payments
         csmesh diff --budget 800                            # after editing: what did I just affect?
         csmesh changes                                      # after a refactor: did a binding vanish?
+        csmesh review --accept                              # CI gate: structural change vs. a git revision
         csmesh silence IPaymentGateway                      # exit 1: absent, or just unseen?
         csmesh unresolved --kind di                         # why is an answer thinner than expected?
         csmesh cycles --project

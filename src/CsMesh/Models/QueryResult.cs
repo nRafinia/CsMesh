@@ -39,6 +39,12 @@ public sealed class QueryRow
     /// <summary>Where the edge was declared, as file:line. Null for definition-only rows.</summary>
     public string? Site { get; set; }
 
+    /// <summary>
+    /// The stable finding id 'review' derives from the edge signature. Null outside 'review', where
+    /// nothing needs an identity that survives being asked about twice.
+    /// </summary>
+    public string? Id { get; set; }
+
     /// <summary>Owning project, without extension.</summary>
     public string? Project { get; set; }
 

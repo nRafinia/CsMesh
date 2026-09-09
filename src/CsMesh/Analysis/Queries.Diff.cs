@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 using CsMesh.Common;
 using CsMesh.Models;
@@ -124,41 +123,16 @@ public static partial class Queries
     /// </summary>
     private static bool TryReadDiff(string root, string range, out string output, out string failure)
     {
-        output = "";
-        failure = "";
-
         var arguments = $"--no-pager diff --unified=0 --no-color --no-ext-diff {range} -- \"*.cs\"";
 
-        try
+        if (GitTool.TryRun(root, arguments, out output, out var error, out var exitCode))
         {
-            using var process = Process.Start(new ProcessStartInfo("git", arguments)
-            {
-                WorkingDirectory = root,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            });
-
-            if (process == null)
-            {
-                failure = "could not start git.";
-                return false;
-            }
-
-            output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-
-            if (process.ExitCode == 0) return true;
-
-            failure = $"git failed ({process.ExitCode}): {error.Trim()}";
-            return false;
+            failure = "";
+            return true;
         }
-        catch (Exception ex)
-        {
-            failure = $"could not run git in {root}: {ex.Message}";
-            return false;
-        }
+
+        failure = exitCode >= 0 ? $"git failed ({exitCode}): {error.Trim()}" : error;
+        return false;
     }
 
     /// <summary>
