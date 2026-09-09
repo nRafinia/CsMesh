@@ -51,7 +51,7 @@ public static class HelpCommand
             trace          Trace execution paths through DI, MediatR, and interfaces
             impl           Find implementations of an interface or base class, DI-bound first
             blast-radius   Discover callers and entrypoints affected by changing a symbol
-            entrypoints    Find HTTP endpoints, message handlers, consumers, and jobs
+            entrypoints    Find HTTP endpoints, Blazor @page routes, handlers, and jobs
             context        Everything structural about one symbol, in a single call
             path           Shortest route from one symbol to another (alias: why)
             cycles         Circular dependencies between types or namespaces
@@ -184,6 +184,8 @@ public static class HelpCommand
 
         OPTIONS:
             --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
+            --full             Force a whole-solution rebuild instead of incremental refresh
+            --all              Include projects that are not built by any solution file
             --debug            Print debug details during indexing to stderr
             --no-telemetry     Do not record this invocation
             -h, --help         Print help information
@@ -192,9 +194,13 @@ public static class HelpCommand
             Build the solution first. Without bin/ assemblies many call sites cannot be bound
             and the resulting graph will be missing edges; 'index' reports the count.
 
+            For Blazor/Razor projects, emit generated sources so components are discovered:
+            dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true
+
         EXAMPLES:
             csmesh index
             csmesh index --repo ./src
+            csmesh index --full
         """;
 
     public const string TraceHelp =
@@ -264,7 +270,7 @@ public static class HelpCommand
 
     public const string EntrypointsHelp =
         """
-        csmesh entrypoints - Find HTTP endpoints, message handlers, consumers, and jobs
+        csmesh entrypoints - Find HTTP endpoints, Blazor @page routes, message handlers, consumers, and jobs
 
         USAGE:
             csmesh entrypoints [FILTER] [OPTIONS]
@@ -282,6 +288,7 @@ public static class HelpCommand
             csmesh entrypoints
             csmesh entrypoints payments
             csmesh entrypoints "POST /orders"
+            csmesh entrypoints "/checkout"
         """;
 
     public const string ContextHelp =
