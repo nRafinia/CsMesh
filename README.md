@@ -81,7 +81,8 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
 1. **Dependency Injection Bindings** (`AddScoped<IService, Service>()`)
 2. **CQRS / MediatR Handler Dispatches** (`_mediator.Send(cmd)`)
 3. **Interface Implementation Ranking** (distinguishing production services from mock fakes)
-4. **Attribute-based Endpoint Routing** (`[HttpGet]`, `[HttpPost]`, `[Route]`)
+4. **Attribute-based & Blazor Endpoint Routing** (`[HttpGet]`, `[HttpPost]`, `@page "/..."`)
+5. **Razor & Blazor Components** (types, `@code` methods, and parameter bindings compiled via Roslyn source generators)
 
 **`csmesh` solves this in a single shell command.** It parses your codebase's AST and semantic model via Roslyn into a pre-compiled, frozen symbol graph that returns exact answers in milliseconds.
 
@@ -174,10 +175,12 @@ The evaluation measured four critical dimensions:
 ## ✨ Key Features
 
 - **🚀 Native AOT & .NET 10 Ready:** Instantaneous sub-millisecond execution, zero JIT warm-up, and zero-allocation queries via `System.Collections.Frozen`.
+- **🎨 Blazor & Razor Component Intelligence:** Indexes Blazor components, `@code` methods, component parameters, and Razor Pages / MVC views. Automatically discovers `@page "/..."` routes as HTTP entrypoints and accurately maps line numbers back to `.razor` and `.cshtml` source files via Roslyn `#line` directives.
 - **🛡️ Token-Budget Enforcement (`--budget N`):** Hard limits on output tokens. Prevents agent context exhaustion by exiting with actionable tips when a query is too broad.
 - **💉 DI & IoC Container Intelligence:** Reads service registrations in every form they take — two-argument, `typeof` pairs, keyed, factory lambdas, and alias registrations such as `sp => sp.GetRequiredService<Concrete>()` — and ranks the class the container actually returns ahead of the ones nobody registered.
 - **📨 MediatR & CQRS Linking:** Resolves `_mediator.Send(...)` and `Publish(...)` calls to their concrete request handlers across decoupled project boundaries.
 - **💥 Blast Radius & Impact Analysis:** Computes the reverse call graph to surface all direct/indirect callers, affected controllers, and background consumers before modifying a symbol.
+- **🧩 Nested Type & Member Resolution:** Resolves members declared inside nested types seamlessly (e.g. `Container.Compute` automatically resolves `Container.Inner.Compute`), avoiding lookup misses without shadowing direct matches.
 - **🌐 Universal AI Agent Integration:** Installs native prompt rules and skills for **12+ AI tools** (Claude Code, Cursor, Antigravity, OpenCode, Windsurf, Cline, Copilot, MiMo Code, etc.) with both local and `--global` machine-wide support.
 - **🔄 Incremental Re-indexing:** Node identity is a compiler symbol key, not an array position, so an edit re-binds only the files that moved and every edge into them survives. Rows from files the index has not caught up with are tagged `[STALE]`; `--heal` re-binds them before answering. Falls back to a full pass when an edit touches something that binds across files.
 - **🧭 Entry by Description, Not by Name:** `csmesh where <term>` searches names, namespaces, file paths and route templates, then ranks by how many entrypoints reach each hit — so the handler outranks the DTO that shares its name.
@@ -252,6 +255,13 @@ Run these commands inside any C# / .NET repository (`.sln`, `.slnx`, `.csproj`):
 csmesh index
 # indexed 28 files -> 161 nodes, 380 edges in 0.1s
 ```
+
+> [!TIP]
+> **For Blazor & Razor projects:** Run your build with compiler-generated files enabled once, so Roslyn outputs component sources for `csmesh` to discover:
+> ```bash
+> dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true
+> csmesh index
+> ```
 
 ### 2. Configure Your AI Coding Assistants
 ```bash
@@ -378,7 +388,7 @@ csmesh blast PaymentService.Process --depth 2
 ```
 
 #### `csmesh entrypoints [filter]`
-Finds HTTP endpoints (`[HttpGet]`, `[HttpPost]`), message handlers, consumers, and background services.
+Finds HTTP endpoints (`[HttpGet]`, `[HttpPost]`, Blazor `@page`), message handlers, consumers, and background services.
 ```bash
 csmesh entrypoints
 csmesh entrypoints payments
