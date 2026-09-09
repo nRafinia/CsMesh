@@ -189,6 +189,11 @@ public static class SkillText
 
         ## Rules
 
+        - **Nested types**: csmesh keys members by their immediate containing type, not the outermost
+          class. A method `LineRange` inside `class Builder` nested inside `class Indexer` is keyed as
+          `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
+          a member, **always use `where <member-name>` first** to discover the correct qualified name
+          rather than guessing from the file or outer class name.
         - Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for `blast-radius`,
           `context` and `diff`, 400 for `path`.
         - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
@@ -281,6 +286,9 @@ public static class SkillText
 
         ## Practice
 
+        - **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
+          nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
+          Use `csmesh where <member-name>` first to discover the correct qualified name.
         - Always pass `--budget`: 600 `trace`, 300 `impl`, 800 `blast-radius`/`context`/`diff`, 400 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
         - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
@@ -374,6 +382,9 @@ public static class SkillText
 
         ## Practice
 
+        - **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
+          nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
+          Use `csmesh where <member-name>` first to discover the correct qualified name.
         - Always pass `--budget`: 600 `trace`, 300 `impl`, 800 `blast-radius`/`context`/`diff`, 400 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
         - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
