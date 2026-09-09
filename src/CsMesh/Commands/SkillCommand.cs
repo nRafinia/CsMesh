@@ -37,7 +37,10 @@ public static class SkillCommand
         yield return Path.Combine(root, ".github", "copilot-instructions.md");
         yield return Path.Combine(root, ".kilocode", "rules", "csmesh.md");
         yield return Path.Combine(root, ".mimocode", "skills", "csmesh", "SKILL.md");
+        yield return Path.Combine(root, ".opencode", "skills", "csmesh", "SKILL.md");
         yield return Path.Combine(root, ".opencode", "rules", "csmesh.md");
+        yield return Path.Combine(root, ".opencode", "commands", "csmesh.md");
+        yield return Path.Combine(root, ".opencode", "opencode.json");
         yield return Path.Combine(root, "AGENTS.md");
         yield return Path.Combine(root, "GEMINI.md");
     }
@@ -62,8 +65,13 @@ public static class SkillCommand
         yield return Path.Combine(home, ".cline", "rules", "csmesh.md");
         yield return Path.Combine(home, ".codeium", "windsurf", "memories", "global_rules.md");
         var configDir = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ?? Path.Combine(home, ".config");
+        yield return Path.Combine(configDir, "opencode", "skills", "csmesh", "SKILL.md");
         yield return Path.Combine(configDir, "opencode", "AGENTS.md");
+        yield return Path.Combine(configDir, "opencode", "commands", "csmesh.md");
+        yield return Path.Combine(configDir, "opencode", "opencode.json");
+        yield return Path.Combine(home, ".opencode", "skills", "csmesh", "SKILL.md");
         yield return Path.Combine(home, ".opencode", "rules", "csmesh.md");
+        yield return Path.Combine(home, ".opencode", "commands", "csmesh.md");
     }
 
     public static int Execute(string root, Options opt, SkillMode mode = SkillMode.Skill)
@@ -334,6 +342,18 @@ public static class SkillCommand
                 }
             }
 
+            var opencodeTargets = isGlobal
+                ? AgentIntegration.GlobalOpencodeTargets(basePath)
+                : AgentIntegration.ProjectOpencodeTargets(repoRoot);
+
+            foreach (var target in opencodeTargets)
+            {
+                if (AgentIntegration.UnregisterOpencodeServer(target, out var gone) && gone != "absent")
+                {
+                    Console.WriteLine($"  mcp server   {gone} from {target}");
+                }
+            }
+
             Console.WriteLine(AgentIntegration.UninstallHook(claudeDir, out var hookGone)
                 ? $"  grep hook    {hookGone}"
                 : "  grep hook    nothing to remove");
@@ -366,6 +386,26 @@ public static class SkillCommand
             }
 
             Console.WriteLine(AgentIntegration.RegisterServer(target, pinned, out var outcome)
+                ? $"  mcp server   {outcome} in {target}"
+                : $"  mcp server   FAILED {target}: {outcome}");
+        }
+
+        var opencodeTargetsToInstall = isGlobal
+            ? AgentIntegration.GlobalOpencodeTargets(basePath)
+            : AgentIntegration.ProjectOpencodeTargets(repoRoot);
+
+        foreach (var target in opencodeTargetsToInstall)
+        {
+            if (isGlobal && !File.Exists(target))
+            {
+                var dir = Path.GetDirectoryName(target);
+                var isClientInstalled = !string.IsNullOrEmpty(dir) &&
+                                        !dir.Equals(basePath, StringComparison.OrdinalIgnoreCase) &&
+                                        Directory.Exists(dir);
+                if (!isClientInstalled) continue;
+            }
+
+            Console.WriteLine(AgentIntegration.RegisterOpencodeServer(target, pinned, out var outcome)
                 ? $"  mcp server   {outcome} in {target}"
                 : $"  mcp server   FAILED {target}: {outcome}");
         }
@@ -528,18 +568,40 @@ public static class SkillCommand
         WriteOrUpdateBlock(path, SkillText.Rules);
     }
 
+    private const string OpencodeCommandContent = """
+        ---
+        description: C# structural code intelligence with csmesh (where, trace, impl, blast-radius, context)
+        ---
+        Use the csmesh structural C# intelligence tool to analyze and query the code:
+        $ARGUMENTS
+        """;
+
     private static void InstallOpencode(string basePath, bool isGlobal)
     {
         if (isGlobal)
         {
             var configDir = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ?? Path.Combine(basePath, ".config");
             WriteOrUpdateBlock(Path.Combine(configDir, "opencode", "AGENTS.md"), SkillText.Rules);
+            WriteFile(Path.Combine(configDir, "opencode", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
+            WriteFile(Path.Combine(basePath, ".opencode", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
             WriteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"), SkillText.Rules);
+            WriteFile(Path.Combine(configDir, "opencode", "commands", "csmesh.md"), OpencodeCommandContent);
+            WriteFile(Path.Combine(basePath, ".opencode", "commands", "csmesh.md"), OpencodeCommandContent);
+
+            var opencodeConfig = Path.Combine(configDir, "opencode", "opencode.json");
+            AgentIntegration.RegisterOpencodeServer(opencodeConfig, repoRoot: null, out var outcome);
+            Console.WriteLine($"  mcp server   {outcome} in {opencodeConfig}");
         }
         else
         {
             WriteOrUpdateBlock(Path.Combine(basePath, "AGENTS.md"), SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".opencode", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
             WriteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"), SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".opencode", "commands", "csmesh.md"), OpencodeCommandContent);
+
+            var opencodeConfig = Path.Combine(basePath, ".opencode", "opencode.json");
+            AgentIntegration.RegisterOpencodeServer(opencodeConfig, repoRoot: basePath, out var outcome);
+            Console.WriteLine($"  mcp server   {outcome} in {opencodeConfig}");
         }
     }
 
@@ -745,12 +807,35 @@ public static class SkillCommand
         {
             var configDir = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ?? Path.Combine(basePath, ".config");
             RemoveBlock(Path.Combine(configDir, "opencode", "AGENTS.md"));
+            DeleteFile(Path.Combine(configDir, "opencode", "skills", "csmesh", "SKILL.md"));
+            DeleteFile(Path.Combine(basePath, ".opencode", "skills", "csmesh", "SKILL.md"));
             DeleteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"));
+            DeleteFile(Path.Combine(configDir, "opencode", "commands", "csmesh.md"));
+            DeleteFile(Path.Combine(basePath, ".opencode", "commands", "csmesh.md"));
+
+            var opencodeConfig = Path.Combine(configDir, "opencode", "opencode.json");
+            if (AgentIntegration.UnregisterOpencodeServer(opencodeConfig, out var outcome) && outcome != "absent")
+            {
+                Console.WriteLine($"  mcp server   {outcome} from {opencodeConfig}");
+            }
         }
         else
         {
             RemoveBlock(Path.Combine(basePath, "AGENTS.md"));
+            DeleteFile(Path.Combine(basePath, ".opencode", "skills", "csmesh", "SKILL.md"));
             DeleteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"));
+            DeleteFile(Path.Combine(basePath, ".opencode", "commands", "csmesh.md"));
+
+            var opencodeConfig = Path.Combine(basePath, ".opencode", "opencode.json");
+            if (AgentIntegration.UnregisterOpencodeServer(opencodeConfig, out var outcome) && outcome != "absent")
+            {
+                Console.WriteLine($"  mcp server   {outcome} from {opencodeConfig}");
+            }
+            var rootConfig = Path.Combine(basePath, "opencode.json");
+            if (AgentIntegration.UnregisterOpencodeServer(rootConfig, out var rootOutcome) && rootOutcome != "absent")
+            {
+                Console.WriteLine($"  mcp server   {rootOutcome} from {rootConfig}");
+            }
         }
     }
 

@@ -313,7 +313,7 @@ csmesh entrypoints orders
 | **Kilo Code** | `.kilocode/rules/csmesh.md` | `~/.kilocode/rules/csmesh.md` | Native Rule File |
 | **Codex CLI & Kimi AI**| `AGENTS.md` | `~/.codex/AGENTS.md` | Open Agent Standard Block |
 | **Gemini CLI** | `GEMINI.md` | `~/.gemini/GEMINI.md` | Open Agent Standard Block |
-| **OpenCode** | `AGENTS.md` + `.opencode/rules/csmesh.md` | `~/.config/opencode/AGENTS.md` + `~/.opencode/rules/` | Open Agent Standard Block & Rules |
+| **OpenCode** | `.opencode/rules/` + `commands/` + `opencode.json` | `~/.config/opencode/` (`AGENTS.md`, `commands/`, `opencode.json`) | Rules + Slash Commands + Native MCP |
 
 > [!TIP]
 > Shared configuration files (`AGENTS.md`, `GEMINI.md`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`) use safe tagged blocks (`<!-- csmesh-instructions -->`). Existing developer rules are **never overwritten**. When `--mcp` is passed (`csmesh install --mcp` or `csmesh install --all`), native MCP server configurations (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `~/.claude.json`, `cline_mcp_settings.json`, etc.) are also automatically merged.

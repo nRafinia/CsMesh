@@ -104,6 +104,23 @@ public static class AgentIntegration
         yield return Path.Combine(repoRoot, ".cline", "mcp.json");
     }
 
+    /// <summary>Config files for OpenCode AI machine-wide.</summary>
+    public static IEnumerable<string> GlobalOpencodeTargets(string home)
+    {
+        var config = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")
+                     ?? Path.Combine(home, ".config");
+        yield return Path.Combine(config, "opencode", "opencode.json");
+        yield return Path.Combine(config, "opencode", "opencode.jsonc");
+        yield return Path.Combine(home, ".opencode", "opencode.json");
+    }
+
+    /// <summary>Config files for OpenCode AI inside a repository.</summary>
+    public static IEnumerable<string> ProjectOpencodeTargets(string repoRoot)
+    {
+        yield return Path.Combine(repoRoot, ".opencode", "opencode.json");
+        yield return Path.Combine(repoRoot, "opencode.json");
+    }
+
     public static bool RegisterServer(string configPath, string? repoRoot, out string outcome)
     {
         try
@@ -190,6 +207,100 @@ public static class AgentIntegration
 
             // An empty mcpServers is noise, but only remove it if we are the reason it is empty.
             if (servers.Count == 0) root.Remove("mcpServers");
+
+            File.WriteAllText(configPath,
+                root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+            outcome = "removed";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            outcome = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>Adds or updates the csmesh entry in an OpenCode AI config file (opencode.json).</summary>
+    public static bool RegisterOpencodeServer(string configPath, string? repoRoot, out string outcome)
+    {
+        try
+        {
+            JsonObject root;
+
+            if (File.Exists(configPath))
+            {
+                var existing = File.ReadAllText(configPath);
+                root = string.IsNullOrWhiteSpace(existing)
+                    ? new JsonObject()
+                    : JsonNode.Parse(existing) as JsonObject ?? new JsonObject();
+            }
+            else
+            {
+                root = new JsonObject();
+            }
+
+            if (!root.ContainsKey("$schema"))
+            {
+                root["$schema"] = "https://opencode.ai/config.json";
+            }
+
+            if (root["mcp"] is not JsonObject mcp)
+            {
+                mcp = new JsonObject();
+                root["mcp"] = mcp;
+            }
+
+            var replaced = mcp["csmesh"] != null;
+
+            var cmd = BinaryPath();
+            var cmdArray = repoRoot == null
+                ? new JsonArray(cmd, "serve")
+                : new JsonArray(cmd, "serve", "--repo", Path.GetFullPath(repoRoot));
+
+            mcp["csmesh"] = new JsonObject
+            {
+                ["type"] = "local",
+                ["command"] = cmdArray,
+                ["enabled"] = true
+            };
+
+            var directory = Path.GetDirectoryName(configPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+            File.WriteAllText(configPath,
+                root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+            outcome = replaced ? "updated" : "added";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            outcome = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>Removes the csmesh entry from an OpenCode AI config file.</summary>
+    public static bool UnregisterOpencodeServer(string configPath, out string outcome)
+    {
+        outcome = "absent";
+
+        try
+        {
+            if (!File.Exists(configPath)) return false;
+
+            var text = File.ReadAllText(configPath);
+            if (string.IsNullOrWhiteSpace(text)) return false;
+
+            if (JsonNode.Parse(text) is not JsonObject root ||
+                root["mcp"] is not JsonObject mcp ||
+                mcp["csmesh"] == null)
+            {
+                return false;
+            }
+
+            mcp.Remove("csmesh");
 
             File.WriteAllText(configPath,
                 root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
