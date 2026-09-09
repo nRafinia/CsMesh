@@ -94,6 +94,23 @@ public static partial class Indexer
             return null;
         }
 
+        // A component's node was built from the generated C# a build produced for it, not from the
+        // .razor file itself -- Build() only knows to look for that generated source at the start
+        // of a full pass. Editing the .razor file changes the file this pass sees as dirty, but the
+        // generated C# behind the graph's nodes will not change until the next build, so rebinding
+        // against it now would bind against text that no longer matches the source and produce a
+        // graph that is confidently wrong rather than merely stale.
+        foreach (var relative in dirty)
+        {
+            var normalized = relative.Replace('\\', '/');
+            if (normalized.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ||
+                normalized.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase))
+            {
+                Dbg.Log($"incremental declined: {relative} is a Razor source; its compiled C# does not change until the next build");
+                return null;
+            }
+        }
+
         foreach (var relative in dirty)
         {
             var full = Path.Combine(root, relative);
@@ -223,7 +240,21 @@ public static partial class Indexer
 
         builder.ExportDispatchTables();
 
-        previous.Files = freshStamps;
+        // freshStamps only ever holds .cs files -- it comes from EnumerateSourceFiles, which never
+        // returns a .razor or .cshtml path. Replacing Files with it outright silently untracks
+        // every Razor source Build() had stamped: the next DirtyFiles call has no entry left to
+        // compare a .razor edit against, so the edit is invisible and freshness reports clean
+        // while the graph quietly keeps serving whatever a previous full index last read from
+        // generated C#. One incremental pass over an unrelated .cs file was enough to trigger it.
+        //
+        // Carrying the old stamps forward unconditionally is safe here: a dirty .razor/.cshtml
+        // file already declined this whole pass above, so none of the stamps below describe a
+        // file that changed since Build() wrote them.
+        var razorStamps = previous.Files.Where(f =>
+            f.Path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ||
+            f.Path.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase)).ToList();
+
+        previous.Files = freshStamps.Concat(razorStamps).ToList();
         previous.Dirs = DirectoryStamps(root, files);
         previous.BuiltAt = DateTimeOffset.UtcNow;
         previous.BuiltFromCommit = RepositoryLocator.GitHead(root);

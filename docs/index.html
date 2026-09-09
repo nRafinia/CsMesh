@@ -280,7 +280,7 @@ footer .right{margin-left:auto}
       <a class="btn" href="https://github.com/nRafinia/CsMesh">Read the source</a>
     </div>
     <div class="chips">
-      <span>.NET 10</span><span>Native AOT</span><span>Roslyn</span><span>MCP Server</span><span>incremental re-indexing</span><span>zero idle context</span><span>MIT</span>
+      <span>.NET 10</span><span>Native AOT</span><span>Roslyn</span><span>Blazor &amp; Razor</span><span>MCP Server</span><span>incremental re-indexing</span><span>zero idle context</span><span>MIT</span>
     </div>
 
     <div class="term reveal hero-term">
@@ -343,10 +343,10 @@ footer .right{margin-left:auto}
         </div>
       </article>
       <article>
-        <div class="code">[HttpPost("/payments")]</div>
+        <div class="code">[HttpPost("/payments")] / @page "/checkout"</div>
         <div class="body">
           <h3>The entrypoint</h3>
-          <p>Attribute routes, MassTransit consumers, hosted services. Tagged as entrypoints, so a blast radius tells you which HTTP calls actually break — not which files mention the word.</p>
+          <p>Attribute routes, Blazor @page endpoints, MassTransit consumers, hosted services. Tagged as entrypoints, so a blast radius tells you which HTTP calls actually break — not which files mention the word.</p>
         </div>
       </article>
     </div>
@@ -558,7 +558,7 @@ const commands = [
   "  OrderProjection.Apply  Read/OrderProjection.cs:26  [STALE]",
   "indirect (types): OrdersController, CheckoutSaga, OrderMapper, InvoiceService"]},
  {label:"entrypoints", line:"csmesh entrypoints orders", exit:"exit 0",
-  desc:"Finds where the outside world gets in — attribute-routed actions, MediatR handlers, MassTransit consumers, hosted services — optionally filtered by a substring.",
+  desc:"Finds where the outside world gets in — attribute-routed actions, Blazor @page routes, MediatR handlers, MassTransit consumers, hosted services — optionally filtered by a substring.",
   out:[
   "5 entrypoint(s)",
   "  OrdersController.Get  {http:GET /orders/{id}}  Api/OrdersController.cs:31",

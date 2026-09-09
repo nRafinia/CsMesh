@@ -329,6 +329,22 @@ public sealed class GraphFixture : IDisposable
              public class Beta { public void Run() { new Gamma().Step(); } }
              public class Gamma { public void Step() { new Alpha().Go(new Beta()); } }
          }
+         """),
+
+        ("Nesting.cs",
+         """
+         namespace Outer
+         {
+             public static class Container
+             {
+                 private sealed class Inner
+                 {
+                     public static int Compute(int x) => x * 2;
+                 }
+
+                 public static int Run() => Inner.Compute(21);
+             }
+         }
          """)
     ];
 }

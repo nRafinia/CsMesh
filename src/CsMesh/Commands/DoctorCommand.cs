@@ -44,6 +44,9 @@ public static class DoctorCommand
             report.ReferencesCapped = graph.ReferencesCapped;
             report.UnresolvedCallSites = graph.UnresolvedCallSites;
             report.GlobalUsingSources = graph.GlobalUsingSources;
+            report.RazorFileCount = graph.RazorFileCount;
+            report.RazorComponentsIndexed = graph.RazorComponentsIndexed;
+            report.RazorStaleSources = graph.RazorStaleSources;
             report.SkippedProjects = graph.SkippedProjects;
             report.ScopeDecision = graph.ScopeDecision;
             report.EdgesByKind = graph.Edges
@@ -223,6 +226,41 @@ public static class DoctorCommand
             {
                 e.Line("    CS0433 means a type arrived from two assemblies. bin/ probably holds a");
                 e.Line("    compiled copy of the source being indexed; that breaks resolution.");
+            }
+        }
+
+        if (graph.RazorFileCount > 0)
+        {
+            if (graph.RazorComponentsIndexed > 0)
+            {
+                e.Line($"  razor           {graph.RazorComponentsIndexed} of {graph.RazorFileCount} .razor/.cshtml file(s)" +
+                       " indexed from generated sources found on disk");
+            }
+            else if (graph.RazorStaleSources == 0)
+            {
+                e.Line($"  razor           {graph.RazorFileCount} .razor/.cshtml file(s) found; their generated types");
+                e.Line("                  (components, parameters, @code members) are not in the graph, so a diagnostic");
+                e.Line("                  naming their namespace -- CS0246 is typical -- describes a missing build");
+                e.Line("                  output, not broken code.");
+                e.Line("                  their generator output was not found on disk. A warm build does not write it");
+                e.Line("                  even with the property below set -- it only runs the generator again when the");
+                e.Line("                  build is not incremental. Run both flags, then force a full re-index -- a plain");
+                e.Line("                  'csmesh index' will not notice, since obj/ changing is not by itself a reason");
+                e.Line("                  to rebind anything this indexer tracks:");
+                e.Line("                  dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true && csmesh index --full");
+            }
+
+            // Separate from the two cases above: this is neither "never built" nor "up to date" --
+            // a build happened at some point, but a later .razor/.cshtml edit was never rebuilt.
+            // Indexing that generated output would look current while quietly holding pre-edit
+            // content, which is worse than reporting nothing for that file.
+            if (graph.RazorStaleSources > 0)
+            {
+                e.Line($"  razor stale     {graph.RazorStaleSources} generated source(s) skipped: the .razor/.cshtml file");
+                e.Line("                  is newer than what was last compiled from it. Rebuilding alone will not refresh");
+                e.Line("                  this line, either -- the .razor file itself did not change, so a plain 'csmesh");
+                e.Line("                  index' has nothing to notice. Force it:");
+                e.Line("                  dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true && csmesh index --full");
             }
         }
 

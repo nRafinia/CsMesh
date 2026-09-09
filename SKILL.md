@@ -174,6 +174,11 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 
 ## Rules
 
+- **Nested types**: csmesh keys members by their immediate containing type, not the outermost
+  class. A method `LineRange` inside `class Builder` nested inside `class Indexer` is keyed as
+  `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
+  a member, **always use `where <member-name>` first** to discover the correct qualified name
+  rather than guessing from the file or outer class name.
 - Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for `blast-radius`,
   `context` and `diff`, 400 for `path`.
 - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the

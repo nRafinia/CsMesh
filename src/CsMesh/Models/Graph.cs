@@ -85,6 +85,35 @@ public sealed class Graph
     public int GlobalUsingSources { get; set; }
 
     /// <summary>
+    /// .razor and .cshtml files under the root, counted with the same skip rules as
+    /// EnumerateSourceFiles. Modern Razor compiles through a Roslyn source generator whose output
+    /// normally lives only in memory, so a plain build leaves nothing on disk for this indexer to
+    /// read -- these files are typically counted, not indexed. See RazorComponentsIndexed for how
+    /// many actually made it into the graph.
+    /// </summary>
+    public int RazorFileCount { get; set; }
+
+    /// <summary>
+    /// Component types recovered from generated Razor sources found on disk. Zero while
+    /// RazorFileCount is nonzero means the build never emitted them where this indexer looks:
+    /// run with -p:EmitCompilerGeneratedFiles=true and --no-incremental, then re-index.
+    /// </summary>
+    public int RazorComponentsIndexed { get; set; }
+
+    /// <summary>
+    /// Generated Razor sources found on disk but skipped because the .razor/.cshtml file they were
+    /// compiled from is newer than they are -- edited after the last build that produced them.
+    ///
+    /// Indexing them anyway would bind against text that no longer matches the source, and the
+    /// FileStamp this indexer would then write comes from the .razor file's own current mtime, not
+    /// the generated file's -- so the next freshness check would find nothing to disagree with and
+    /// report the graph clean while it silently holds pre-edit content. Skipping is what keeps that
+    /// from happening: the file stays untracked and out of the graph until an actual rebuild makes
+    /// the generated source current again.
+    /// </summary>
+    public int RazorStaleSources { get; set; }
+
+    /// <summary>
     /// Project files left out of the index because nothing builds them. Named rather than
     /// silently dropped: quietly ignoring source is worse than indexing dead source, since the
     /// reader has no way to find out it happened.
@@ -300,6 +329,22 @@ public sealed class Graph
             n.Name.EndsWith("." + q, StringComparison.OrdinalIgnoreCase) ||
             n.Short.EndsWith("." + q, StringComparison.OrdinalIgnoreCase)).ToList();
         if (suffix.Count > 0) return suffix;
+
+        // Nested type fallback: "Indexer.LineRange" should find
+        // "CsMesh.Analysis.Indexer.Builder.LineRange" because Indexer is an ancestor type
+        // and LineRange is the member name. This only fires when exact and suffix matching
+        // already failed, so it cannot shadow a direct match.
+        var dot = q.IndexOf('.');
+        if (dot > 0)
+        {
+            var outer = q[..dot];
+            var member = q[(dot + 1)..];
+            var nested = Nodes.Where(n =>
+                n.Name.EndsWith("." + member, StringComparison.OrdinalIgnoreCase) &&
+                n.Name.Contains("." + outer + ".", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (nested.Count > 0) return nested;
+        }
 
         return Nodes.Where(n => n.Short.Contains(q, StringComparison.OrdinalIgnoreCase))
                     .Take(40).ToList();
