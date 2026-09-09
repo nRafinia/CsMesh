@@ -410,6 +410,7 @@ footer .right{margin-left:auto}
       <div class="c2"><kbd>2</kbd><strong>over-budget</strong><p>The answer exists but is bigger than the cap. Narrow <code>--depth</code> rather than raising the budget.</p></div>
       <div><kbd>3</kbd><strong>ambiguous</strong><p>Several symbols match. Re-run with <code>Type.Member</code>.</p></div>
       <div class="c4"><kbd>4</kbd><strong>no-index</strong><p>No graph on disk yet. Run <code>csmesh index</code>.</p></div>
+      <div><kbd>5</kbd><strong>changed</strong><p><code>review</code> only: unaccepted structural change vs. the base revision. Fix it, or <code>csmesh review --accept</code>.</p></div>
       <div><kbd>64</kbd><strong>usage-error</strong><p>Bad flags or arguments. Run the command with <code>--help</code>.</p></div>
     </div>
   </div>
@@ -599,7 +600,16 @@ const commands = [
   "  edges DiBinding    14",
   "skill (local)   installed (.claude/skills/csmesh/SKILL.md, .cursor/rules/csmesh.mdc)",
   "caller now      human (via tty:interactive); tty=True",
-  "telemetry       417 invocation(s) logged, 392 agent-attributed"]}
+  "telemetry       417 invocation(s) logged, 392 agent-attributed"]},
+ {label:"review", line:"csmesh review --accept", exit:"exit 0",
+  desc:"The same structural comparison, but against a named git revision -- the merge base with the default branch by default -- instead of whatever the last index happened to see. The question a pull request or a CI gate actually asks. Unaccepted findings exit 5; --accept bakes the reviewed ones into a baseline so only new ones surface next time.",
+  out:[
+  "2 unaccepted finding(s) against origin/main (9f2c1ab3d4e5)",
+  "removed:",
+  "  IPaymentGateway -> StripeGateway  [DiBinding, scoped]  Infra/Registrations.cs:14",
+  "added:",
+  "  IPaymentGateway -> SandboxGateway  [DiBinding, scoped]  Infra/Registrations.cs:14",
+  "accepted 2 finding(s); baseline written to .csmesh/accepted.txt"]}
 ];
 
 const list = document.querySelector(".cmdlist");
