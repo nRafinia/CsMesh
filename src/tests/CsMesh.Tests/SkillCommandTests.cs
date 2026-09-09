@@ -115,6 +115,37 @@ public sealed class SkillCommandTests : IDisposable
     }
 
     [Fact]
+    public void OpencodeInstallAndUninstallManagesRulesCommandsAndMcpConfig()
+    {
+        var skill = Path.Combine(_root, ".opencode", "skills", "csmesh", "SKILL.md");
+        var rules = Path.Combine(_root, ".opencode", "rules", "csmesh.md");
+        var command = Path.Combine(_root, ".opencode", "commands", "csmesh.md");
+        var mcp = Path.Combine(_root, ".opencode", "opencode.json");
+
+        // Install
+        var installExit = SkillCommand.Execute(_root, new Options(["--agent", "opencode"]), SkillMode.Install);
+        Assert.Equal(Exit.Ok, installExit);
+        Assert.True(File.Exists(skill));
+        Assert.True(File.Exists(rules));
+        Assert.True(File.Exists(command));
+        Assert.True(File.Exists(mcp));
+
+        var mcpContent = File.ReadAllText(mcp);
+        Assert.Contains("csmesh", mcpContent);
+        Assert.Contains("local", mcpContent);
+
+        // Uninstall
+        var uninstallExit = SkillCommand.Execute(_root, new Options(["--agent", "opencode"]), SkillMode.Uninstall);
+        Assert.Equal(Exit.Ok, uninstallExit);
+        Assert.False(File.Exists(skill));
+        Assert.False(File.Exists(rules));
+        Assert.False(File.Exists(command));
+
+        var mcpAfter = File.ReadAllText(mcp);
+        Assert.DoesNotContain("csmesh", mcpAfter);
+    }
+
+    [Fact]
     public void McpIntegrationCanBeInstalledAndUninstalledViaInstallAndUninstallCommands()
     {
         var mcpJson = Path.Combine(_root, ".mcp.json");

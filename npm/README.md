@@ -81,7 +81,8 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
 1. **Dependency Injection Bindings** (`AddScoped<IService, Service>()`)
 2. **CQRS / MediatR Handler Dispatches** (`_mediator.Send(cmd)`)
 3. **Interface Implementation Ranking** (distinguishing production services from mock fakes)
-4. **Attribute-based Endpoint Routing** (`[HttpGet]`, `[HttpPost]`, `[Route]`)
+4. **Attribute-based & Blazor Endpoint Routing** (`[HttpGet]`, `[HttpPost]`, `@page "/..."`)
+5. **Razor & Blazor Components** (types, `@code` methods, and parameter bindings compiled via Roslyn source generators)
 
 **`csmesh` solves this in a single shell command.** It parses your codebase's AST and semantic model via Roslyn into a pre-compiled, frozen symbol graph that returns exact answers in milliseconds.
 
@@ -97,7 +98,7 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
   - **Command Chaining:** Chain queries in a single turn (`csmesh impl IStore --budget 200 && csmesh blast-radius Order.Submit --budget 400`).
 
 * **🤖 Native Model Context Protocol (MCP) Server:**
-  - **Interactive Agent Experience:** Run `csmesh serve` to expose query tools over standard JSON-RPC (stdio) to MCP-compatible clients like Claude Desktop, Cursor, Antigravity, VS Code, and Windsurf.
+  - **Interactive Agent Experience:** Run `csmesh serve` to expose query tools over standard JSON-RPC (stdio) to MCP-compatible clients like Claude Desktop, Cursor, Antigravity, VS Code, Windsurf, and Cline.
   - **One-Command Setup:** Register csmesh into IDE configurations with `csmesh install --mcp` (locally) or `csmesh install --mcp --global` (machine-wide).
   - **Token-Efficient Tool Responses:** Returns dense, structured plaintext designed for LLM comprehension without wasteful, unbounded JSON dumps.
 
@@ -174,10 +175,12 @@ The evaluation measured four critical dimensions:
 ## ✨ Key Features
 
 - **🚀 Native AOT & .NET 10 Ready:** Instantaneous sub-millisecond execution, zero JIT warm-up, and zero-allocation queries via `System.Collections.Frozen`.
+- **🎨 Blazor & Razor Component Intelligence:** Indexes Blazor components, `@code` methods, component parameters, and Razor Pages / MVC views. Automatically discovers `@page "/..."` routes as HTTP entrypoints and accurately maps line numbers back to `.razor` and `.cshtml` source files via Roslyn `#line` directives.
 - **🛡️ Token-Budget Enforcement (`--budget N`):** Hard limits on output tokens. Prevents agent context exhaustion by exiting with actionable tips when a query is too broad.
 - **💉 DI & IoC Container Intelligence:** Reads service registrations in every form they take — two-argument, `typeof` pairs, keyed, factory lambdas, and alias registrations such as `sp => sp.GetRequiredService<Concrete>()` — and ranks the class the container actually returns ahead of the ones nobody registered.
 - **📨 MediatR & CQRS Linking:** Resolves `_mediator.Send(...)` and `Publish(...)` calls to their concrete request handlers across decoupled project boundaries.
 - **💥 Blast Radius & Impact Analysis:** Computes the reverse call graph to surface all direct/indirect callers, affected controllers, and background consumers before modifying a symbol.
+- **🧩 Nested Type & Member Resolution:** Resolves members declared inside nested types seamlessly (e.g. `Container.Compute` automatically resolves `Container.Inner.Compute`), avoiding lookup misses without shadowing direct matches.
 - **🌐 Universal AI Agent Integration:** Installs native prompt rules and skills for **12+ AI tools** (Claude Code, Cursor, Antigravity, OpenCode, Windsurf, Cline, Copilot, MiMo Code, etc.) with both local and `--global` machine-wide support.
 - **🔄 Incremental Re-indexing:** Node identity is a compiler symbol key, not an array position, so an edit re-binds only the files that moved and every edge into them survives. Rows from files the index has not caught up with are tagged `[STALE]`; `--heal` re-binds them before answering. Falls back to a full pass when an edit touches something that binds across files.
 - **🧭 Entry by Description, Not by Name:** `csmesh where <term>` searches names, namespaces, file paths and route templates, then ranks by how many entrypoints reach each hit — so the handler outranks the DTO that shares its name.
@@ -214,7 +217,7 @@ dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh
 dotnet tool update --global CsMesh
 ```
 
-<!-- ### 2. Via npm / npx
+### 2. Via npm / npx
 ```bash
 Bash
 # Run directly without global installation
@@ -223,8 +226,8 @@ npx @nrafinia/csmesh --help
 # Or install globally across Windows, macOS, and Linux
 npm install -g @nrafinia/csmesh
 ```
--->
-### 2. As a Standalone Native AOT Binary (Zero Runtime Dependency)
+
+### 3. As a Standalone Native AOT Binary (Zero Runtime Dependency)
 
 You can compile a single, standalone binary with zero dependencies on the .NET SDK:
 
@@ -252,6 +255,13 @@ Run these commands inside any C# / .NET repository (`.sln`, `.slnx`, `.csproj`):
 csmesh index
 # indexed 28 files -> 161 nodes, 380 edges in 0.1s
 ```
+
+> [!TIP]
+> **For Blazor & Razor projects:** Run your build with compiler-generated files enabled once, so Roslyn outputs component sources for `csmesh` to discover:
+> ```bash
+> dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true
+> csmesh index
+> ```
 
 ### 2. Configure Your AI Coding Assistants
 ```bash
@@ -297,16 +307,16 @@ csmesh entrypoints orders
 | **Cursor** | `.cursor/rules/csmesh.mdc` + `.cursor/mcp.json` | `~/.cursor/rules/...` + `~/.cursor/mcp.json` | MDC Rule + MCP Server |
 | **Google Antigravity** | `.agents/skills/csmesh/SKILL.md` + `.agents/mcp_config.json` | `~/.gemini/config/skills/...` + `mcp_config.json` | Workspace Skill + Rules + MCP |
 | **Windsurf (Cascade)** | `.windsurfrules` | `~/.codeium/windsurf/` (rules & `mcp_config.json`) | Tagged Rules Block + MCP Server |
-| **Cline & Roo Code** | `.clinerules` or `.clinerules/csmesh.md` | `~/.cline/rules/csmesh.md` | Tagged Instruction Block |
+| **Cline & Roo Code** | `.clinerules` or `.cline/mcp.json` | `~/.cline/rules/` + `cline_mcp_settings.json` | Tagged Instruction Block + MCP Server |
 | **GitHub Copilot** | `.github/copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | User Instructions Block |
 | **MiMo Code (Xiaomi)** | `.mimocode/skills/csmesh/SKILL.md` + `AGENTS.md` | `~/.mimocode/skills/...` + `.mimo/` | Skill + Agent Instructions |
 | **Kilo Code** | `.kilocode/rules/csmesh.md` | `~/.kilocode/rules/csmesh.md` | Native Rule File |
 | **Codex CLI & Kimi AI**| `AGENTS.md` | `~/.codex/AGENTS.md` | Open Agent Standard Block |
 | **Gemini CLI** | `GEMINI.md` | `~/.gemini/GEMINI.md` | Open Agent Standard Block |
-| **OpenCode** | `AGENTS.md` + `.opencode/rules/csmesh.md` | `~/.config/opencode/AGENTS.md` + `~/.opencode/rules/` | Open Agent Standard Block & Rules |
+| **OpenCode** | `.opencode/rules/` + `commands/` + `opencode.json` | `~/.config/opencode/` (`AGENTS.md`, `commands/`, `opencode.json`) | Rules + Slash Commands + Native MCP |
 
 > [!TIP]
-> Shared configuration files (`AGENTS.md`, `GEMINI.md`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`) use safe tagged blocks (`<!-- csmesh-instructions -->`). Existing developer rules are **never overwritten**. When `--mcp` is passed (`csmesh install --mcp` or `csmesh install --all`), native MCP server configurations (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `~/.claude.json`, etc.) are also automatically merged.
+> Shared configuration files (`AGENTS.md`, `GEMINI.md`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`) use safe tagged blocks (`<!-- csmesh-instructions -->`). Existing developer rules are **never overwritten**. When `--mcp` is passed (`csmesh install --mcp` or `csmesh install --all`), native MCP server configurations (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `~/.claude.json`, `cline_mcp_settings.json`, etc.) are also automatically merged.
 
 ---
 
@@ -378,7 +388,7 @@ csmesh blast PaymentService.Process --depth 2
 ```
 
 #### `csmesh entrypoints [filter]`
-Finds HTTP endpoints (`[HttpGet]`, `[HttpPost]`), message handlers, consumers, and background services.
+Finds HTTP endpoints (`[HttpGet]`, `[HttpPost]`, Blazor `@page`), message handlers, consumers, and background services.
 ```bash
 csmesh entrypoints
 csmesh entrypoints payments

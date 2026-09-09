@@ -93,6 +93,70 @@ public sealed class AgentIntegrationTests : IDisposable
     }
 
     [Fact]
+    public void RegisterOpencodeServerWritesTypeLocalCommandAndSchema()
+    {
+        var opencodeJson = Path.Combine(_root, "opencode.json");
+        Assert.True(AgentIntegration.RegisterOpencodeServer(opencodeJson, _root, out var outcome));
+        Assert.Equal("added", outcome);
+
+        var doc = Read(opencodeJson);
+        Assert.Equal("https://opencode.ai/config.json", doc.GetProperty("$schema").GetString());
+        var csmesh = doc.GetProperty("mcp").GetProperty("csmesh");
+        Assert.Equal("local", csmesh.GetProperty("type").GetString());
+        Assert.True(csmesh.GetProperty("enabled").GetBoolean());
+        var cmd = csmesh.GetProperty("command");
+        Assert.True(cmd.GetArrayLength() >= 2);
+        Assert.Equal("serve", cmd[1].GetString());
+        Assert.Equal("--repo", cmd[2].GetString());
+        Assert.Equal(Path.GetFullPath(_root), cmd[3].GetString());
+    }
+
+    [Fact]
+    public void RegisterOpencodeServerPreservesOtherServersAndUnrelatedKeys()
+    {
+        var opencodeJson = Path.Combine(_root, "opencode.json");
+        File.WriteAllText(opencodeJson, """
+            {
+              "$schema": "https://opencode.ai/config.json",
+              "mcp": {
+                "other": { "type": "local", "command": ["other-tool"] }
+              },
+              "theme": "dark"
+            }
+            """);
+
+        Assert.True(AgentIntegration.RegisterOpencodeServer(opencodeJson, null, out var outcome));
+        Assert.Equal("added", outcome);
+
+        var doc = Read(opencodeJson);
+        Assert.Equal("dark", doc.GetProperty("theme").GetString());
+        Assert.True(doc.GetProperty("mcp").TryGetProperty("other", out _));
+        Assert.True(doc.GetProperty("mcp").TryGetProperty("csmesh", out _));
+    }
+
+    [Fact]
+    public void UnregisterOpencodeServerRemovesOnlyCsmesh()
+    {
+        var opencodeJson = Path.Combine(_root, "opencode.json");
+        File.WriteAllText(opencodeJson, """
+            {
+              "mcp": {
+                "csmesh": { "type": "local", "command": ["csmesh", "serve"] },
+                "other": { "type": "local", "command": ["other"] }
+              }
+            }
+            """);
+
+        Assert.True(AgentIntegration.UnregisterOpencodeServer(opencodeJson, out var outcome));
+        Assert.Equal("removed", outcome);
+
+        var doc = Read(opencodeJson);
+        var mcp = doc.GetProperty("mcp");
+        Assert.False(mcp.TryGetProperty("csmesh", out _));
+        Assert.True(mcp.TryGetProperty("other", out _));
+    }
+
+    [Fact]
     public void HookInstallWritesAScriptAndRegistersIt()
     {
         Assert.True(AgentIntegration.InstallHook(ClaudeDir, out var scriptPath));
