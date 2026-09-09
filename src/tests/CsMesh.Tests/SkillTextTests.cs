@@ -41,6 +41,7 @@ public sealed class SkillTextTests
     [InlineData("csmesh silence")]
     [InlineData("csmesh diff")]
     [InlineData("csmesh changes")]
+    [InlineData("csmesh review")]
     public void The_compact_rules_name_every_command_an_agent_would_otherwise_skip(string phrase)
     {
         // The compact form is what lands in AGENTS.md, and it is what an agent actually reads.
