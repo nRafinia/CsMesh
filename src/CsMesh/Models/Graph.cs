@@ -101,6 +101,19 @@ public sealed class Graph
     public int RazorComponentsIndexed { get; set; }
 
     /// <summary>
+    /// Generated Razor sources found on disk but skipped because the .razor/.cshtml file they were
+    /// compiled from is newer than they are -- edited after the last build that produced them.
+    ///
+    /// Indexing them anyway would bind against text that no longer matches the source, and the
+    /// FileStamp this indexer would then write comes from the .razor file's own current mtime, not
+    /// the generated file's -- so the next freshness check would find nothing to disagree with and
+    /// report the graph clean while it silently holds pre-edit content. Skipping is what keeps that
+    /// from happening: the file stays untracked and out of the graph until an actual rebuild makes
+    /// the generated source current again.
+    /// </summary>
+    public int RazorStaleSources { get; set; }
+
+    /// <summary>
     /// Project files left out of the index because nothing builds them. Named rather than
     /// silently dropped: quietly ignoring source is worse than indexing dead source, since the
     /// reader has no way to find out it happened.

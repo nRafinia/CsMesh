@@ -191,7 +191,15 @@ public static partial class Indexer
                     // The generator's own directory is named after its assembly-qualified type --
                     // Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator -- so a segment
                     // is matched by suffix, not by an exact "RazorSourceGenerator" path component.
-                    files = Directory.EnumerateFiles(generatedDir, "*_razor.g.cs", SearchOption.AllDirectories)
+                    //
+                    // Both suffixes come from the same generator: a Blazor component compiles to
+                    // *_razor.g.cs, a Razor Page or MVC view to *_cshtml.g.cs. Matching only the
+                    // first meant a repository built entirely of .cshtml never found anything here,
+                    // no matter how it was built -- doctor would still recommend the exact build
+                    // that had already run.
+                    files = Directory.EnumerateFiles(generatedDir, "*.g.cs", SearchOption.AllDirectories)
+                        .Where(f => f.EndsWith("_razor.g.cs", StringComparison.OrdinalIgnoreCase) ||
+                                    f.EndsWith("_cshtml.g.cs", StringComparison.OrdinalIgnoreCase))
                         .Where(f => f.Replace('\\', '/').Split('/')
                                      .Any(segment => segment.EndsWith("RazorSourceGenerator", StringComparison.OrdinalIgnoreCase)))
                         .ToList();
@@ -241,11 +249,21 @@ public static partial class Indexer
     /// Generated Razor sources for every project in scope, paired with the .razor file each one
     /// actually came from. A project excluded from the index does not get its components indexed
     /// either -- the same reasoning ProjectScope applies to .cs files applies here.
+    ///
+    /// A generated file older than the source it names is skipped rather than indexed: it was
+    /// compiled from whatever the .razor file held before the edit that made it newer, and this
+    /// indexer has no way to bind against text that no longer exists. Indexing it anyway would not
+    /// merely be stale -- the FileStamp this pass writes afterwards comes from the .razor file's
+    /// own current mtime, not the generated file's, so the next freshness check would find nothing
+    /// to disagree with and call the graph clean while it silently holds pre-edit content forever,
+    /// until some unrelated edit happens to touch the same file again. Skipping leaves the .razor
+    /// file untracked instead, which is the honest state: unknown, not confidently wrong.
     /// </summary>
-    private static List<(string RazorPath, string Text)> CollectGeneratedRazorSources(ProjectScope scope)
+    private static (List<(string RazorPath, string Text)> Sources, int Stale) CollectGeneratedRazorSources(ProjectScope scope)
     {
         var result = new List<(string, string)>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var stale = 0;
 
         foreach (var projectDir in scope.LiveDirectories)
         {
@@ -258,11 +276,21 @@ public static partial class Indexer
                 if (razorPath == null || !File.Exists(razorPath)) continue;
                 if (!seen.Add(razorPath)) continue;
 
+                DateTime razorWrite, generatedWrite;
+                try { razorWrite = File.GetLastWriteTimeUtc(razorPath); } catch { continue; }
+                try { generatedWrite = File.GetLastWriteTimeUtc(generated); } catch { continue; }
+
+                if (razorWrite > generatedWrite)
+                {
+                    stale++;
+                    continue;
+                }
+
                 result.Add((razorPath, text));
             }
         }
 
-        return result;
+        return (result, stale);
     }
 
     public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false)
@@ -309,7 +337,7 @@ public static partial class Indexer
         // node built from it -- NodeFor, SyntheticNode -- takes its File from the syntax tree's
         // path, so this one substitution is what keeps components pointing at source a user can
         // actually open instead of an obj/ path that a clean deletes.
-        var razorSources = CollectGeneratedRazorSources(scope);
+        var (razorSources, staleRazorSources) = CollectGeneratedRazorSources(scope);
         foreach (var (razorPath, text) in razorSources)
         {
             trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath));
@@ -360,6 +388,7 @@ public static partial class Indexer
             GlobalUsingSources = globalUsings.Count,
             RazorFileCount = CountRazorFiles(root),
             RazorComponentsIndexed = razorSources.Count,
+            RazorStaleSources = staleRazorSources,
             IndexedAllProjects = includeAllProjects,
             SkippedProjects = scope.Excluded,
             SkippedProjectsReason = scope.Reason,
@@ -819,13 +848,43 @@ public static partial class Indexer
             var endLine = 0;
             if (l is { IsInSource: true })
             {
-                var span = l.GetLineSpan();
                 file = Path.GetRelativePath(g.Root, l.SourceTree!.FilePath);
-                line = span.StartLinePosition.Line + 1;
-                endLine = span.EndLinePosition.Line + 1;
+                (line, endLine) = LineRange(l, file);
             }
 
             return AddNode(key, FullName(sym), ShortName(sym), kind, file, line, endLine);
+        }
+
+        /// <summary>
+        /// The line range to report for a location, honouring a "#line" directive when the compiler
+        /// actually applied one.
+        ///
+        /// A generated Razor source carries one for @code content -- Razor maps a user's method or
+        /// field straight back to its real line in the .razor file, and GetMappedLineSpan() reads
+        /// that mapping for free. It does not cover the scaffolding Razor writes around that content
+        /// (the class declaration itself, BuildRenderTree, [Inject] property backing fields): those
+        /// sit under "#line hidden" on purpose, because none of them corresponds to one line of the
+        /// source. For those, GetLineSpan()'s physical position is a line number in a ~100-line
+        /// generated .g.cs the caller was never shown -- reported as a line in a ~10-line .razor
+        /// file, it points past the end of a file the user can actually open. Line 1 is at least a
+        /// place that file has.
+        /// </summary>
+        private static (int Line, int EndLine) LineRange(Location l, string file)
+        {
+            var mapped = l.GetMappedLineSpan();
+            if (mapped.HasMappedPath)
+            {
+                return (mapped.StartLinePosition.Line + 1, mapped.EndLinePosition.Line + 1);
+            }
+
+            if (file.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ||
+                file.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase))
+            {
+                return (1, 1);
+            }
+
+            var span = l.GetLineSpan();
+            return (span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
         }
 
         /// <summary>
@@ -1337,6 +1396,16 @@ public static partial class Indexer
                 // generated code never carries a using for it, so AttrArg's bare-name match would
                 // silently miss every one of these.
                 foreach (var page in RazorPageRoutes(decl)) yield return $"http:GET {page}";
+            }
+            // A Razor Page or MVC view compiles through the same generator to an internal, mangled
+            // class name (Pages/Index.cshtml becomes Pages_Index) with no RouteAttribute at all --
+            // routing there is by file convention or a Page directive string, not an attribute this
+            // indexer can read reliably. Tagged separately from razor-component rather than folded
+            // into it: a View is not a component, and inventing a route tag with no attribute behind
+            // it would be a guess wearing the same "read straight off a symbol" tag other routes use.
+            else if (decl.SyntaxTree.FilePath.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return "razor-view";
             }
         }
 

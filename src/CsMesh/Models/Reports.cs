@@ -59,6 +59,9 @@ public sealed class DoctorReport
     /// <summary>Component types recovered from generated Razor sources. See Graph.RazorComponentsIndexed.</summary>
     public int RazorComponentsIndexed { get; set; }
 
+    /// <summary>Generated sources skipped as stale relative to their .razor/.cshtml file. See Graph.RazorStaleSources.</summary>
+    public int RazorStaleSources { get; set; }
+
     public List<string> SkippedProjects { get; set; } = [];
     public string ScopeDecision { get; set; } = string.Empty;
 
