@@ -264,4 +264,255 @@ public sealed class WiringSiteHopTests(GraphFixture fixture) : IClassFixture<Gra
             try { Directory.Delete(temp, true); } catch { }
         }
     }
+
+    [Fact]
+    public void Sibling_lookup_omits_site_when_no_binding_targets_implementation()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "csmesh-nobindingtarget-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(temp);
+            File.WriteAllText(Path.Combine(temp, "Services.cs"), """
+                namespace TestApp
+                {
+                    public interface IGreeter { void Greet(); }
+                    public class GreeterA : IGreeter { public void Greet() { } }
+                    public class GreeterB : IGreeter { public void Greet() { } }
+                }
+                """);
+            File.WriteAllText(Path.Combine(temp, "Caller.cs"), """
+                namespace TestApp
+                {
+                    public class Caller
+                    {
+                        private readonly IGreeter _g;
+                        public Caller(IGreeter g) => _g = g;
+                        public void Run() => _g.Greet();
+                    }
+                }
+                """);
+            File.WriteAllText(Path.Combine(temp, "Wiring.cs"), """
+                namespace TestApp
+                {
+                    public static class Wiring
+                    {
+                        public static void Configure(Microsoft.Extensions.DependencyInjection.IServiceCollection s)
+                        {
+                            s.AddScoped<IGreeter, GreeterA>();
+                        }
+                    }
+                }
+                namespace Microsoft.Extensions.DependencyInjection
+                {
+                    public interface IServiceCollection { }
+                    public static class Ext
+                    {
+                        public static IServiceCollection AddScoped<TService, TImpl>(this IServiceCollection s) => s;
+                    }
+                }
+                """);
+
+            var graph = Indexer.Build(temp);
+            graph.Freeze();
+
+            var caller = graph.Nodes.Single(n => n.Short == "Caller.Run");
+            var greeterB = graph.Nodes.Single(n => n.Short == "GreeterB.Greet");
+
+            // Path to GreeterB (which has no DI binding targeting it)
+            var wPath = Writer();
+            var exitPath = Queries.Path(graph, caller, greeterB, 6, wPath, []);
+            Assert.Equal(Exit.Ok, exitPath);
+
+            var pathHop = Assert.Single(wPath.Lines, l => l.Contains("-> GreeterB.Greet"));
+            Assert.Contains("[impl]", pathHop);
+            Assert.DoesNotContain("@", pathHop);
+
+            var pathRow = Assert.Single(wPath.Rows, r => r.Symbol == "GreeterB.Greet");
+            Assert.Null(pathRow.Site);
+        }
+        finally
+        {
+            try { Directory.Delete(temp, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void FormatSite_shortens_to_line_when_site_in_target_file()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "csmesh-samefile-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(temp);
+            File.WriteAllText(Path.Combine(temp, "App.cs"), """
+                namespace TestApp
+                {
+                    public interface IWorker { void DoWork(); }
+                    public class Worker : IWorker
+                    {
+                        public void DoWork() { }
+
+                        public static void Register(Microsoft.Extensions.DependencyInjection.IServiceCollection s)
+                        {
+                            s.AddScoped<IWorker, Worker>();
+                        }
+                    }
+                    public class Caller
+                    {
+                        private readonly IWorker _w;
+                        public Caller(IWorker w) => _w = w;
+                        public void Run() => _w.DoWork();
+                    }
+                }
+                namespace Microsoft.Extensions.DependencyInjection
+                {
+                    public interface IServiceCollection { }
+                    public static class Ext
+                    {
+                        public static IServiceCollection AddScoped<TService, TImpl>(this IServiceCollection s) => s;
+                    }
+                }
+                """);
+
+            var graph = Indexer.Build(temp);
+            graph.Freeze();
+
+            var caller = graph.Nodes.Single(n => n.Short == "Caller.Run");
+            var workerMethod = graph.Nodes.Single(n => n.Short == "Worker.DoWork");
+
+            var wTrace = Writer();
+            var exitTrace = Queries.Trace(graph, caller, 6, wTrace, []);
+            Assert.Equal(Exit.Ok, exitTrace);
+
+            var traceHop = Assert.Single(wTrace.Lines, l => l.Contains("-> Worker.DoWork"));
+            Assert.Matches(@"@ line \d+", traceHop);
+            Assert.DoesNotContain("@ App.cs:", traceHop);
+
+            var traceRow = Assert.Single(wTrace.Rows, r => r.Symbol == "Worker.DoWork");
+            Assert.NotNull(traceRow.Site);
+            Assert.Matches(@"App\.cs:\d+", traceRow.Site);
+        }
+        finally
+        {
+            try { Directory.Delete(temp, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void Interface_dispatch_with_no_binding_prints_no_site_suffix()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "csmesh-nobinding-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(temp);
+            File.WriteAllText(Path.Combine(temp, "App.cs"), """
+                namespace TestApp
+                {
+                    public interface IWorker { void DoWork(); }
+                    public class Worker : IWorker { public void DoWork() { } }
+                    public class Caller
+                    {
+                        private readonly IWorker _w;
+                        public Caller(IWorker w) => _w = w;
+                        public void Run() => _w.DoWork();
+                    }
+                }
+                """);
+
+            var graph = Indexer.Build(temp);
+            graph.Freeze();
+
+            var caller = graph.Nodes.Single(n => n.Short == "Caller.Run");
+            var workerMethod = graph.Nodes.Single(n => n.Short == "Worker.DoWork");
+
+            var wTrace = Writer();
+            var exitTrace = Queries.Trace(graph, caller, 6, wTrace, []);
+            Assert.Equal(Exit.Ok, exitTrace);
+
+            var traceHop = Assert.Single(wTrace.Lines, l => l.Contains("-> Worker.DoWork"));
+            Assert.Contains("[impl]", traceHop);
+            Assert.DoesNotContain("@", traceHop);
+
+            var traceRow = Assert.Single(wTrace.Rows, r => r.Symbol == "Worker.DoWork");
+            Assert.Null(traceRow.Site);
+        }
+        finally
+        {
+            try { Directory.Delete(temp, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void Hop_site_suffix_overflows_tight_budget_with_exit_code_2()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "csmesh-budget-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(temp);
+            File.WriteAllText(Path.Combine(temp, "Services.cs"), """
+                namespace TestApp
+                {
+                    public interface IGreeter { void Greet(); }
+                    public class Greeter : IGreeter { public void Greet() { } }
+                }
+                """);
+            File.WriteAllText(Path.Combine(temp, "Caller.cs"), """
+                namespace TestApp
+                {
+                    public class Caller
+                    {
+                        private readonly IGreeter _g;
+                        public Caller(IGreeter g) => _g = g;
+                        public void Run() => _g.Greet();
+                    }
+                }
+                """);
+            File.WriteAllText(Path.Combine(temp, "Wiring.cs"), """
+                namespace TestApp
+                {
+                    public static class Wiring
+                    {
+                        public static void Configure(Microsoft.Extensions.DependencyInjection.IServiceCollection s)
+                        {
+                            s.AddScoped<IGreeter, Greeter>();
+                        }
+                    }
+                }
+                namespace Microsoft.Extensions.DependencyInjection
+                {
+                    public interface IServiceCollection { }
+                    public static class Ext
+                    {
+                        public static IServiceCollection AddScoped<TService, TImpl>(this IServiceCollection s) => s;
+                    }
+                }
+                """);
+
+            var graph = Indexer.Build(temp);
+            graph.Freeze();
+
+            var caller = graph.Nodes.Single(n => n.Short == "Caller.Run");
+            var greeterMethod = graph.Nodes.Single(n => n.Short == "Greeter.Greet");
+
+            var rootLine = $"Caller.Run  Caller.cs:{caller.Line}";
+            var hopWithoutSite = $"  -> Greeter.Greet  [impl, di-bound]  Services.cs:{greeterMethod.Line}";
+            var costWithoutSite = BudgetWriter.Estimate(rootLine) + BudgetWriter.Estimate(hopWithoutSite);
+
+            // A budget set to exactly costWithoutSite fits the bare hop but overflows with the suffix.
+            var wTight = new BudgetWriter(costWithoutSite);
+            var exitTight = Queries.Trace(graph, caller, 6, wTight, []);
+            Assert.Equal(Exit.OverBudget, exitTight);
+
+            // Raising budget to include the suffix allows it to pass
+            var siteSuffix = "  @ Wiring.cs:7";
+            var costWithSite = BudgetWriter.Estimate(rootLine) + BudgetWriter.Estimate(hopWithoutSite + siteSuffix);
+            var wGenerous = new BudgetWriter(costWithSite + 10);
+            var exitGenerous = Queries.Trace(graph, caller, 6, wGenerous, []);
+            Assert.Equal(Exit.Ok, exitGenerous);
+        }
+        finally
+        {
+            try { Directory.Delete(temp, true); } catch { }
+        }
+    }
 }
+
