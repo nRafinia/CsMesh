@@ -182,6 +182,7 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
 | 64 | bad command line | run `csmesh <cmd> --help` |
 | 70 | csmesh itself failed | re-run with `--debug`; that is a bug, not your query |
+| 75 | index file contended by another process | nothing was written and nothing is broken — wait briefly and retry the command; do not report it |
 
 ## Rules
 
