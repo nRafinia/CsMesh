@@ -131,8 +131,12 @@ public static partial class Queries
                     if (to == null) continue;
                     if (to.Kind == "type" && e.Kind == EdgeKind.Construct && level > 1) continue;
 
-                    var line = $"{prefix}-> {to.Short}{Marker(e)}{TagSuffix(to)}{Loc(to)}{StaleTag(to, dirty)}";
-                    if (!w.Add(line, Row(to, level + 1, e, dirty)))
+                    var site = ResolveHopSite(g, node, to, e);
+                    var siteSuffix = FormatSite(site, to);
+                    var line = $"{prefix}-> {to.Short}{Marker(e)}{TagSuffix(to)}{Loc(to)}{siteSuffix}{StaleTag(to, dirty)}";
+                    var row = Row(to, level + 1, e, dirty);
+                    if (site != null) row.Site = site;
+                    if (!w.Add(line, row))
                     {
                         truncatedAt.Add(node.Short);
                         return false;
@@ -258,10 +262,7 @@ public static partial class Queries
 
             // Registering a type in the file that declares it is common; printing the path twice
             // on one line is noise, so only the line number survives.
-            var site = wiring == null ? ""
-                : wiring.StartsWith(to.File + ":", StringComparison.OrdinalIgnoreCase)
-                    ? $"  @ line {wiring[(to.File.Length + 1)..]}"
-                    : $"  @ {wiring}";
+            var site = FormatSite(wiring, to);
 
             if (!w.Add($"  {to.Short}{mark}{Loc(to)}{site}{StaleTag(to, dirty)}", row))
             {
@@ -422,6 +423,22 @@ public static partial class Queries
         g.Out(serviceId)
             .FirstOrDefault(e => e.Kind == EdgeKind.DiBinding && e.To == implementationId && e.Site != null)?
             .Site;
+
+    /// <summary>
+    /// Formats a wiring or dispatch site for output, shortening to line-only when it lives
+    /// in the target's own file.
+    /// </summary>
+    internal static string FormatSite(string? site, Node target) =>
+        site == null ? ""
+            : !string.IsNullOrEmpty(target.File) && site.StartsWith(target.File + ":", StringComparison.OrdinalIgnoreCase)
+                ? $"  @ line {site[(target.File.Length + 1)..]}"
+                : $"  @ {site}";
+
+    /// <summary>
+    /// Resolves the site for a hop if the edge carries one directly.
+    /// </summary>
+    internal static string? ResolveHopSite(Graph g, Node from, Node to, Edge edge) =>
+        edge.Site;
 
     private static int Overflow(BudgetWriter w, int total)
     {

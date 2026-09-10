@@ -91,8 +91,13 @@ public static partial class Queries
         for (var i = 1; i < chain.Count; i++)
         {
             var (node, via) = chain[i];
-            var line = $"{indent}-> {node.Short}{Marker(via!)}{TagSuffix(node)}{Loc(node)}{StaleTag(node, dirty)}";
-            if (!w.Add(line, Row(node, i, via!, dirty)))
+            var fromNode = chain[i - 1].Node;
+            var site = ResolveHopSite(g, fromNode, node, via!);
+            var siteSuffix = FormatSite(site, node);
+            var line = $"{indent}-> {node.Short}{Marker(via!)}{TagSuffix(node)}{Loc(node)}{siteSuffix}{StaleTag(node, dirty)}";
+            var row = Row(node, i, via!, dirty);
+            if (site != null) row.Site = site;
+            if (!w.Add(line, row))
             {
                 w.Force("");
                 w.Force($"OVER BUDGET: path is {chain.Count - 1} hop(s). Raise --budget.");
