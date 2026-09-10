@@ -585,6 +585,7 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 | `5` | **Changed** (`review` only) | Unaccepted structural change vs. the base revision. | Review the finding, then `csmesh review --accept` if it's fine to keep. |
 | `64`| **Usage Error** | Invalid flags, syntax, or arguments. | Run `csmesh <cmd> --help`. |
 | `70`| **Internal Error** | Unhandled failure inside csmesh. | Re-run with `--debug` and open an issue. |
+| `75`| **Contended** | The graph file is held by another process; the write did not happen. | Nothing is broken — wait briefly and re-run the command. |
 
 ---
 
