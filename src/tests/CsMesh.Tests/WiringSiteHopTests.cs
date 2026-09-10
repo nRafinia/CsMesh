@@ -1,4 +1,4 @@
-﻿using CsMesh.Analysis;
+using CsMesh.Analysis;
 using CsMesh.Common;
 using Xunit;
 
