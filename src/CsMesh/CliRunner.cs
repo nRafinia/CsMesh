@@ -87,4 +87,30 @@ public static class CliRunner
         Console.WriteLine(s);
         return code;
     }
+
+    /// <summary>
+    /// Dispatches a command and turns an unhandled fault into <see cref="Exit.Internal"/>.
+    ///
+    /// The catch-all used to report <see cref="Exit.Usage"/> for everything, so a crash inside a
+    /// command was indistinguishable from a mistyped flag: an agent branching on the exit code --
+    /// the entire contract -- read 64, concluded its own arguments were wrong and re-sent them
+    /// instead of reporting a fault. Usage errors are returned rather than thrown everywhere
+    /// above this point (no arguments, an unknown command, mutually exclusive flags), so an
+    /// exception reaching the catch is an internal fault by definition and 70 is the honest
+    /// answer. If a usage error ever starts being thrown, it will surface here as a crash -- loud
+    /// and misclassified rather than quiet and plausible.
+    /// </summary>
+    public static int RunGuarded(string[] args, Func<string[], int> run)
+    {
+        try
+        {
+            return run(args);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"csmesh: {ex.Message}");
+            if (Dbg.On) Console.Error.WriteLine(ex.StackTrace);
+            return Exit.Internal;
+        }
+    }
 }

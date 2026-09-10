@@ -2,16 +2,13 @@ using CsMesh;
 using CsMesh.Common;
 using CsMesh.Telemetry;
 
-var exit = Exit.Usage;
+// The initial value matters. If anything ever escapes the guard itself, the finally still records
+// a crash: telemetry must never log a fault as a misused command line, which is what reporting
+// Exit.Usage here did.
+var exit = Exit.Internal;
 try
 {
-    exit = CliRunner.Run(args);
-}
-catch (Exception ex)
-{
-    Console.Error.WriteLine($"csmesh: {ex.Message}");
-    if (Dbg.On) Console.Error.WriteLine(ex.StackTrace);
-    exit = Exit.Usage;
+    exit = CliRunner.RunGuarded(args, CliRunner.Run);
 }
 finally
 {
