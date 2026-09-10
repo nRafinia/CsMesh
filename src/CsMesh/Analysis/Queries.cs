@@ -135,7 +135,7 @@ public static partial class Queries
                     var siteSuffix = FormatSite(site, to);
                     var line = $"{prefix}-> {to.Short}{Marker(e)}{TagSuffix(to)}{Loc(to)}{siteSuffix}{StaleTag(to, dirty)}";
                     var row = Row(to, level + 1, e, dirty);
-                    if (site != null) row.Site = site;
+                    if (site != null) row.Site = site.Value.Site;
                     if (!w.Add(line, row))
                     {
                         truncatedAt.Add(node.Short);
@@ -456,13 +456,39 @@ public static partial class Queries
     }
 
     /// <summary>
+    /// Site information resolved for a hop.
+    /// </summary>
+    internal readonly record struct HopSite(string Site, int MatchingBindings, int TotalBindings, double Score, string? Source);
+
+    internal static string FormatSite(HopSite? hop, Node target)
+    {
+        if (hop == null) return "";
+        var baseSite = FormatSite(hop.Value.Site, target);
+        if (string.IsNullOrEmpty(baseSite)) return "";
+
+        var parts = new List<string>();
+        if (hop.Value.Score < Edge.TrustThreshold)
+        {
+            parts.Add($"?{hop.Value.Score:0.00}{(hop.Value.Source != null ? " " + hop.Value.Source : "")}");
+        }
+        if (hop.Value.TotalBindings > 1)
+        {
+            parts.Add($"({hop.Value.MatchingBindings} of {hop.Value.TotalBindings} bindings)");
+        }
+
+        return parts.Count > 0 ? $"{baseSite} {string.Join(" ", parts)}" : baseSite;
+    }
+
+    /// <summary>
     /// Resolves the wiring or invocation site for a hop. Hops carrying a site directly report it.
     /// Interface and override hops resolve it via sibling DiBinding lookup on the enclosing types.
-    /// When the service has multiple bindings, returns null to avoid a misleading single site.
     /// </summary>
-    internal static string? ResolveHopSite(Graph g, Node from, Node to, Edge edge)
+    internal static HopSite? ResolveHopSite(Graph g, Node from, Node to, Edge edge)
     {
-        if (edge.Site != null) return edge.Site;
+        if (edge.Site != null)
+        {
+            return new HopSite(edge.Site, 1, 1, 1.0, null);
+        }
 
         if (edge.Kind is EdgeKind.Interface or EdgeKind.Override)
         {
@@ -470,14 +496,18 @@ public static partial class Queries
             var implId = DeclaringTypeId(g, to);
             if (serviceId == null || implId == null) return null;
 
-            var bindings = g.Out(serviceId.Value)
+            var allBindings = g.Out(serviceId.Value)
                 .Where(e => e.Kind == EdgeKind.DiBinding && e.Site != null)
                 .ToList();
 
-            if (bindings.Count == 1 && bindings[0].To == implId.Value)
-            {
-                return bindings[0].Site;
-            }
+            var targetBindings = allBindings
+                .Where(e => e.To == implId.Value)
+                .ToList();
+
+            if (targetBindings.Count == 0) return null;
+
+            var chosen = targetBindings.OrderByDescending(b => b.Score).First();
+            return new HopSite(chosen.Site!, targetBindings.Count, allBindings.Count, chosen.Score, chosen.Source);
         }
 
         return null;
