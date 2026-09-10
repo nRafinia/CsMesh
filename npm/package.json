@@ -12,6 +12,7 @@
     "bin/run.js",
     "scripts/install.js"
   ],
+  "homepage": "https://csmesh.rafinia.info",
   "repository": {
     "type": "git",
     "url": "https://github.com/nRafinia/CsMesh.git"
