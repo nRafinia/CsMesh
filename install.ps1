@@ -100,10 +100,12 @@ function Verify-Checksum([string]$ReleaseUrl, [string]$AssetPath, [string]$Asset
         return
     }
 
-    # Expected line format: "<sha256>  <filename>" (two spaces, as produced by sha256sum).
+	# Expected line format: "<sha256>  <filename>" (two spaces, as produced by sha256sum).
     $expected = $null
+    $escapedAssetName = [regex]::Escape($AssetName)
+    
     foreach ($line in Get-Content $checksumsPath) {
-        if ($line -match "^\s*([0-9a-fA-F]{64})\s+\S*\Q$AssetName\E\s*$") {
+        if ($line -match "^\s*([0-9a-fA-F]{64})\s+\S*$escapedAssetName\s*$") {
             $expected = $Matches[1].ToLowerInvariant()
             break
         }
