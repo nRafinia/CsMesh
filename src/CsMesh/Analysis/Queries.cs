@@ -435,10 +435,53 @@ public static partial class Queries
                 : $"  @ {site}";
 
     /// <summary>
-    /// Resolves the site for a hop if the edge carries one directly.
+    /// Identifies the declaring type node id for a symbol (or the symbol itself if already a type).
     /// </summary>
-    internal static string? ResolveHopSite(Graph g, Node from, Node to, Edge edge) =>
-        edge.Site;
+    private static int? DeclaringTypeId(Graph g, Node n)
+    {
+        if (n.Kind is "interface" or "type" or "enum" or "struct") return n.Id;
+
+        var ownerEdge = g.In(n.Id).FirstOrDefault(x => x.Kind == EdgeKind.TypeUse && x.Note is "member" or "ctor");
+        if (ownerEdge != null) return ownerEdge.From;
+
+        var dot = n.Short.LastIndexOf('.');
+        if (dot > 0)
+        {
+            var ownerShort = n.Short[..dot];
+            var ownerNode = g.Nodes.FirstOrDefault(x => (x.Kind is "interface" or "type" or "struct") && x.Short == ownerShort);
+            if (ownerNode != null) return ownerNode.Id;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves the wiring or invocation site for a hop. Hops carrying a site directly report it.
+    /// Interface and override hops resolve it via sibling DiBinding lookup on the enclosing types.
+    /// When the service has multiple bindings, returns null to avoid a misleading single site.
+    /// </summary>
+    internal static string? ResolveHopSite(Graph g, Node from, Node to, Edge edge)
+    {
+        if (edge.Site != null) return edge.Site;
+
+        if (edge.Kind is EdgeKind.Interface or EdgeKind.Override)
+        {
+            var serviceId = DeclaringTypeId(g, from);
+            var implId = DeclaringTypeId(g, to);
+            if (serviceId == null || implId == null) return null;
+
+            var bindings = g.Out(serviceId.Value)
+                .Where(e => e.Kind == EdgeKind.DiBinding && e.Site != null)
+                .ToList();
+
+            if (bindings.Count == 1 && bindings[0].To == implId.Value)
+            {
+                return bindings[0].Site;
+            }
+        }
+
+        return null;
+    }
 
     private static int Overflow(BudgetWriter w, int total)
     {
