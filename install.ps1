@@ -63,12 +63,21 @@ function Install-ViaDotnet() {
 # PROCESSOR_ARCHITEW6432 exists only for that emulation case; .NET's
 # RuntimeInformation is the authoritative fallback.
 function Get-OSArchitecture() {
+    # 1. Try .NET Core / PowerShell 7+ method
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    switch ($arch) {
-        ([System.Runtime.InteropServices.Architecture]::X64)   { return "x64" }
-        ([System.Runtime.InteropServices.Architecture]::Arm64) { return "arm64" }
-        default { return "unknown" }
+    if ($null -ne $arch) {
+        switch ($arch) {
+            ([System.Runtime.InteropServices.Architecture]::X64)   { return "x64" }
+            ([System.Runtime.InteropServices.Architecture]::Arm64) { return "arm64" }
+        }
     }
+
+    # 2. Fallback for Windows PowerShell 5.1
+    $envArch = $env:PROCESSOR_ARCHITECTURE
+    if ($envArch -eq "AMD64") { return "x64" }
+    if ($envArch -eq "ARM64") { return "arm64" }
+
+    return "unknown"
 }
 
 # Verify the downloaded archive against the release's checksums.txt.
@@ -91,10 +100,12 @@ function Verify-Checksum([string]$ReleaseUrl, [string]$AssetPath, [string]$Asset
         return
     }
 
-    # Expected line format: "<sha256>  <filename>" (two spaces, as produced by sha256sum).
+	# Expected line format: "<sha256>  <filename>" (two spaces, as produced by sha256sum).
     $expected = $null
+    $escapedAssetName = [regex]::Escape($AssetName)
+    
     foreach ($line in Get-Content $checksumsPath) {
-        if ($line -match "^\s*([0-9a-fA-F]{64})\s+\S*\Q$AssetName\E\s*$") {
+        if ($line -match "^\s*([0-9a-fA-F]{64})\s+\S*$escapedAssetName\s*$") {
             $expected = $Matches[1].ToLowerInvariant()
             break
         }
