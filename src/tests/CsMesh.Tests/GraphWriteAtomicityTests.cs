@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CsMesh.Analysis;
 using CsMesh.Common;
 using CsMesh.Models;
@@ -150,7 +151,6 @@ public sealed class GraphWriteAtomicityTests
     /// when the destination is locked by a handle without FILE_SHARE_DELETE.
     /// </summary>
     [Fact]
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void AWriteThatLosesTheRaceLeavesPreviousGraphIntactAndNoOrphan()
     {
         if (!OperatingSystem.IsWindows()) return; // rename() is handle-agnostic on Unix
@@ -165,11 +165,34 @@ public sealed class GraphWriteAtomicityTests
         // Hold the file open with a handle that blocks File.Replace / File.Move on Windows.
         // FileShare.None means no sharing at all: neither read nor delete, so any attempt to
         // replace the destination will fail with UnauthorizedAccessException or IOException
-        // for longer than the 10-attempt retry budget.
+        // for longer than the 10-attempt retry budget (10 attempts * up to 2 s each = ~7-10 s).
+        int exit;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
         using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
         {
+            // LockContentedException propagates from the storage layer ...
             Assert.Throws<LockContentedException>(() => GraphStore.SaveInPlace(graph));
+
+            // ... and RunGuarded turns it into exit 75: the contract an agent branches on.
+            var origErr = Console.Error;
+            try
+            {
+                Console.SetError(new StringWriter());
+                exit = CliRunner.RunGuarded(["index"], _ => throw new LockContentedException(
+                    "test-contention", new IOException("test")));
+            }
+            finally { Console.SetError(origErr); }
         }
+
+        Assert.Equal(Exit.Contended, exit);
+
+        // Exponential backoff: 25 ms doubling per attempt, capped at 2 s.
+        // 10 attempts = 25+50+100+200+400+800+1600+2000+2000+... sum exceeds 5 s.
+        // We assert the retry budget was at least partially consumed (> 3 s), not an
+        // exact timing, because CI environments can be slow.
+        Assert.True(sw.Elapsed.TotalSeconds > 3,
+            $"Expected retries to consume > 3s but elapsed {sw.Elapsed.TotalSeconds:F1}s");
 
         // The graph file must be unchanged.
         var afterBytes = File.ReadAllBytes(path);

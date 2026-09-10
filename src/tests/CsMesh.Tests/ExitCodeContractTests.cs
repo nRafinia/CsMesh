@@ -30,6 +30,57 @@ public sealed class ExitCodeContractTests
     }
 
     /// <summary>
+    /// Only IOException and UnauthorizedAccessException exhausted on the rename path become
+    /// LockContentedException and therefore exit 75. Any other exception -- including
+    /// NullReferenceException or ArgumentException -- must stay at exit 70.
+    ///
+    /// If this boundary is blurred, a real crash in the indexer gets classified as "contended" and
+    /// the agent waits and retries forever instead of reporting the fault.
+    /// </summary>
+    [Fact]
+    public void OnlyIoExceptionsOnTheRenamePathReach75()
+    {
+        // LockContentedException (wrapping an IO exception) -> 75.
+        Assert.Equal(Exit.Contended,
+            RunGuardedQuietly(["index"],
+                _ => throw new LockContentedException("contended", new IOException("blocked"))));
+
+        // A generic exception not from the rename path -> 70, not 75.
+        Assert.Equal(Exit.Internal,
+            RunGuardedQuietly(["index"],
+                _ => throw new InvalidOperationException("not a lock")));
+
+        // NullReferenceException (a real crash) -> 70.
+        Assert.Equal(Exit.Internal,
+            RunGuardedQuietly(["index"],
+                _ => throw new NullReferenceException("null crash")));
+    }
+
+    /// <summary>
+    /// The stderr line emitted on a contended write must tell the agent to retry, and must name
+    /// the exit code so a log-scraper can confirm the classification without running a subprocess.
+    /// The word "Retry" is what distinguishes this from a crash report ("that is a bug, not your
+    /// query") -- an agent that does not see it will report a fault instead of waiting.
+    /// </summary>
+    [Fact]
+    public void TheStderrMessageOnAContentionTellsTheAgentToRetry()
+    {
+        var errCapture = new StringWriter();
+        var origErr = Console.Error;
+        try
+        {
+            Console.SetError(errCapture);
+            CliRunner.RunGuarded(["index"],
+                _ => throw new LockContentedException("held", new IOException("blocked")));
+        }
+        finally { Console.SetError(origErr); }
+
+        var stderr = errCapture.ToString();
+        Assert.Contains("Retry", stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("75", stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The guard's stderr line and the usage help are diagnostics for a human at a terminal; in the
     /// test host they are noise. Capture both streams the way the agent integration tests do.
     /// </summary>
