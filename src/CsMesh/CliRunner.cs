@@ -99,12 +99,24 @@ public static class CliRunner
     /// exception reaching the catch is an internal fault by definition and 70 is the honest
     /// answer. If a usage error ever starts being thrown, it will surface here as a crash -- loud
     /// and misclassified rather than quiet and plausible.
+    ///
+    /// One exception is remapped before that catch: storage contention
+    /// (<see cref="LockContentedException"/>) becomes <see cref="Exit.Contended"/> -- the write
+    /// did not happen but nothing is broken, so the stderr message says retry rather than report.
     /// </summary>
     public static int RunGuarded(string[] args, Func<string[], int> run)
     {
         try
         {
             return run(args);
+        }
+        catch (LockContentedException ex)
+        {
+            Console.Error.WriteLine(
+                $"csmesh: {ex.Message} The graph is held by another process; nothing was written. " +
+                "Retry shortly (exit 75).");
+            if (Dbg.On) Console.Error.WriteLine(ex.StackTrace);
+            return Exit.Contended;
         }
         catch (Exception ex)
         {
