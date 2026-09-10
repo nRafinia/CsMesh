@@ -42,6 +42,7 @@ PaymentController.Post  {http:POST /charge}  Api/PaymentController.cs:14
 - [Dual Mode: CLI and MCP Server Support](#-dual-mode-cli-and-mcp-server-support)
 - [Empirical Benchmarks](#-empirical-benchmarks)
 - [Key Features](#-key-features)
+- [Confidence & Provenance](#-confidence--provenance)
 - [Installation](#-installation)
   - [Global .NET Tool](#1-as-a-global-net-tool)
   - [Standalone Native AOT Binary](#2-as-a-standalone-native-aot-binary-zero-runtime-dependency)
@@ -84,7 +85,7 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
 4. **Attribute-based & Blazor Endpoint Routing** (`[HttpGet]`, `[HttpPost]`, `@page "/..."`)
 5. **Razor & Blazor Components** (types, `@code` methods, and parameter bindings compiled via Roslyn source generators)
 
-**`csmesh` solves this in a single shell command.** It parses your codebase's AST and semantic model via Roslyn into a pre-compiled, frozen symbol graph that returns exact answers in milliseconds.
+**`csmesh` solves this in a single shell command.** It parses your codebase's AST and semantic model via Roslyn into a pre-compiled, frozen symbol graph and answers in milliseconds — and every edge it hands back carries how it was derived and how sure it is, so an answer can be checked instead of trusted.
 
 ---
 
@@ -94,7 +95,7 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
 
 * **⚡ Fast CLI-First Execution:**
   - **Zero Idle Context Overhead:** Incurs zero token spend until explicitly invoked.
-  - **Hard Token Caps (`--budget`):** Guarantees answers fit within strict limits (e.g. `--budget 300` or `--budget 600`), exiting cleanly with code `2` on overflow instead of polluting conversation history.
+  - **Bounded Output (`--budget`):** Every answer is capped at an estimated token count (`--budget 300`, `--budget 600`), exiting cleanly with code `2` on overflow instead of polluting conversation history. The estimate is `ceil((chars + 1) / 4)`, not a model tokenizer — close enough to size a reply, not a billing figure.
   - **Command Chaining:** Chain queries in a single turn (`csmesh impl IStore --budget 200 && csmesh blast-radius Order.Submit --budget 400`).
 
 * **🤖 Native Model Context Protocol (MCP) Server:**
@@ -124,7 +125,7 @@ The evaluation measured four critical dimensions:
 | **2. Deep Call Chain Trace**<br>`csmesh trace OrderEndpoints.CreateOrderAsync` | **156 ms**<br>*(1 command to specified depth)* | **5 to 7 iterative turns**<br>*(manually hopping across controllers, interfaces & handlers)* | **~30x faster** end-to-end task time | **~85% reduction**<br>*(~450 tokens vs. ~4,000 tokens)* |
 | **3. Change Impact & Blast Radius**<br>`csmesh blast-radius OrderRepository.UpdateAsync` | **161 ms**<br>*(reverse graph separating test vs. prod callers)* | **4 to 6 manual turns**<br>*(grep for method name with dozens of false positives)* | Eliminates error-prone manual caller matching | **~80% reduction**<br>*(filters out comments, docs, & unrelated homonyms)* |
 | **4. Multi-Hop Path Finding**<br>`csmesh path Endpoint -> Repository` | **157 ms**<br>*(deterministic 4-hop path across DI & services)* | **Impossible with grep**<br>*(requires multi-file inference, guessing, and trial-and-error)* | Solves in 1 deterministic step | **~95% reduction**<br>*(no intermediate exploratory reads)* |
-| **5. Endpoint & Worker Discovery**<br>`csmesh entrypoints` | **143 ms**<br>*(both HTTP routes & background HostedServices)* | **Multiple grep commands + manual parsing**<br>*(high risk of missing background workers and consumers)* | 100% automated structural coverage | Structured, clean, noise-free output |
+| **5. Endpoint & Worker Discovery**<br>`csmesh entrypoints` | **143 ms**<br>*(both HTTP routes & background HostedServices)* | **Multiple grep commands + manual parsing**<br>*(high risk of missing background workers and consumers)* | One pass over every routing form it knows: attribute routes, minimal APIs, `@page`, hosted services, consumers | Structured, clean, noise-free output |
 | **6. Type Structure & Signature**<br>`csmesh context OrderRecord` | **166 ms**<br>*(fields, nullability, signatures without reading disk)* | `rg` to locate file path + `view_file` to read entire source | 3x fewer steps | **~70% reduction**<br>*(symbol members only, no boilerplate)* |
 | **7. Full Architecture Mapping**<br>`csmesh map` | **174 ms**<br>*(29 projects, dependency flow & entrypoint clusters)* | Read `.slnx` + inspect 29 `.csproj` project files manually | Hundreds of times faster | **~95% reduction** |
 
@@ -174,9 +175,9 @@ The evaluation measured four critical dimensions:
 
 ## ✨ Key Features
 
-- **🚀 Native AOT & .NET 10 Ready:** Instantaneous sub-millisecond execution, zero JIT warm-up, and zero-allocation queries via `System.Collections.Frozen`.
+- **🚀 Native AOT & .NET 10 Ready:** No JIT warm-up, no runtime to install, and lookup tables frozen once at load (`System.Collections.Frozen`) so a query walks the graph instead of rebuilding indexes. Median query on a 29-project solution: ~150 ms, dominated by graph load, not by the walk.
 - **🎨 Blazor & Razor Component Intelligence:** Indexes Blazor components, `@code` methods, component parameters, and Razor Pages / MVC views. Automatically discovers `@page "/..."` routes as HTTP entrypoints and accurately maps line numbers back to `.razor` and `.cshtml` source files via Roslyn `#line` directives.
-- **🛡️ Token-Budget Enforcement (`--budget N`):** Hard limits on output tokens. Prevents agent context exhaustion by exiting with actionable tips when a query is too broad.
+- **🛡️ Output Budget (`--budget N`):** A hard cap on estimated output tokens. Prevents agent context exhaustion by exiting with actionable tips when a query is too broad.
 - **💉 DI & IoC Container Intelligence:** Reads service registrations in every form they take — two-argument, `typeof` pairs, keyed, factory lambdas, and alias registrations such as `sp => sp.GetRequiredService<Concrete>()` — and ranks the class the container actually returns ahead of the ones nobody registered.
 - **📨 MediatR & CQRS Linking:** Resolves `_mediator.Send(...)` and `Publish(...)` calls to their concrete request handlers across decoupled project boundaries.
 - **💥 Blast Radius & Impact Analysis:** Computes the reverse call graph to surface all direct/indirect callers, affected controllers, and background consumers before modifying a symbol.
@@ -186,6 +187,37 @@ The evaluation measured four critical dimensions:
 - **🧭 Entry by Description, Not by Name:** `csmesh where <term>` searches names, namespaces, file paths and route templates, then ranks by how many entrypoints reach each hit — so the handler outranks the DTO that shares its name.
 
 ---
+
+## 🔬 Confidence & Provenance
+
+Not every edge deserves the same trust, and a tool that flattens that distinction is one an agent learns to double-check anyway. `AddScoped<IStore, SqlStore>()` is read straight off the compiler's symbol table. A Scrutor assembly scan says a family of types is wired, not which pair. Both belong in the graph; only one is a fact.
+
+So every edge carries three fields:
+
+| Field | What it holds |
+|:---|:---|
+| `Confidence` | `1.0` when the compiler bound the symbol. `0.75` for a filtered assembly scan, `0.55` for an unfiltered one. `0.8` is the trust threshold — below it, an edge is a lead to verify, not an answer, and it never outranks an explicit registration. |
+| `Source` | What produced it: `roslyn-symbol`, `semantic-registration`, `semantic-request`, `factory-lambda`, `assembly-scan`, `short-name-match`. |
+| `Site` | The `file:line` of the registration or of the `Send()` call. The target's own location is on the node; this is the other half, so "now change the binding" doesn't start with a grep. |
+
+Anything below the threshold prints its score and origin inline rather than blending in:
+
+```text
+$ csmesh impl IStore --budget 300
+IStore  -- 2 implementation(s)
+  SqlStore  [di:scoped, ?0.75 assembly-scan]  src/Data/SqlStore.cs:12  @ src/Api/Startup.cs:41
+  InMemoryStore  [test]  tests/Fakes/InMemoryStore.cs:8
+```
+
+And what csmesh could not resolve is an answer too, not a silence:
+
+```bash
+csmesh unresolved --kind di   # registrations that produced no edge, with the reason each failed
+csmesh silence IStore         # why a symbol has no callers: unbound sites, out-of-scope types
+csmesh doctor                 # index health, reference count, stale generated sources, version drift
+```
+
+The graph is a semantic reconstruction of what the code most likely does at runtime, built from Roslyn plus project structure plus known framework conventions. On a compilation with unresolved references it still answers — and `doctor` tells you how much of it stands on solid ground.
 
 ## 📦 Installation
 

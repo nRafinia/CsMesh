@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>csmesh — structural code intelligence for C# and .NET</title>
-<meta name="description" content="csmesh traces what a C# codebase actually runs — through dependency injection, MediatR and interface dispatch — in one command, under a hard token budget.">
+<meta name="description" content="csmesh traces what a C# codebase actually runs — through dependency injection, MediatR and interface dispatch — in one command, under a token budget it will not exceed.">
 <meta property="og:title" content="csmesh — structural code intelligence for C# and .NET">
-<meta property="og:description" content="One command instead of four file reads. Roslyn symbol graph, hard token budget, deterministic exit codes.">
+<meta property="og:description" content="One command instead of four file reads. Roslyn symbol graph, capped output, deterministic exit codes.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -220,6 +220,7 @@ footer .right{margin-left:auto}
     <a class="brand" href="#top"><i></i>csmesh</a>
     <nav>
       <a href="#loop" class="hs">Why</a>
+      <a href="#trust" class="hs">Confidence</a>
       <a href="#commands">Commands</a>
       <a href="#numbers" class="hs">Numbers</a>
       <a href="#install">Install</a>
@@ -271,7 +272,7 @@ footer .right{margin-left:auto}
 
   <div class="wrap">
     <h1>Trace what a C# codebase actually runs.</h1>
-    <p class="lede">Text search stops at the interface. csmesh compiles your solution with Roslyn into a frozen symbol graph and prints the resolved path — <b>which implementation the container injects, which handler a <code>Send()</code> reaches, which endpoints break if you touch a property</b> — with a hard cap on how many tokens come back.</p>
+    <p class="lede">Text search stops at the interface. csmesh compiles your solution with Roslyn into a frozen symbol graph and prints the resolved path — <b>which implementation the container injects, which handler a <code>Send()</code> reaches, which endpoints break if you touch a property</b> — with a fixed cap on how much comes back, and a confidence score on every edge it draws.</p>
     <div class="hero-actions">
       <div class="cmdbox dark">
         <code>curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | sh</code>
@@ -353,11 +354,59 @@ footer .right{margin-left:auto}
   </div>
 </section>
 
+<section class="sect" id="trust">
+  <div class="wrap">
+    <div class="head">
+      <h2>Every edge says how it got there</h2>
+      <p>A two-argument <code>AddScoped</code> is read off the compiler’s symbol table. A Scrutor assembly scan says a family of types is wired, not which pair. Both belong in the graph. Only one is a fact, and an engine that flattens the difference is one an agent goes back to grep to double-check.</p>
+    </div>
+    <div class="blind">
+      <article>
+        <div class="code">Confidence = 1.0 | 0.75 | 0.55</div>
+        <div class="body">
+          <h3>How sure</h3>
+          <p>1.0 when the compiler bound the symbol. 0.75 for a filtered assembly scan, 0.55 for an unfiltered one. The trust threshold is 0.8 — below it an edge is a lead to verify, and it never outranks an explicit registration in <code>impl</code>.</p>
+        </div>
+      </article>
+      <article>
+        <div class="code">Source = semantic-registration</div>
+        <div class="body">
+          <h3>From where</h3>
+          <p><span class="mono-i">roslyn-symbol</span>, <span class="mono-i">semantic-registration</span>, <span class="mono-i">semantic-request</span>, <span class="mono-i">factory-lambda</span>, <span class="mono-i">assembly-scan</span>, <span class="mono-i">short-name-match</span>. The reasoning that produced the edge, not just its endpoints.</p>
+        </div>
+      </article>
+      <article>
+        <div class="code">Site = src/Api/Startup.cs:41</div>
+        <div class="body">
+          <h3>Wired where</h3>
+          <p>The file and line of the registration, or of the <code>Send()</code> call. The class’s own location is already on the node; this is the other half, so “now change the binding” doesn’t start with a search.</p>
+        </div>
+      </article>
+    </div>
+
+    <div class="term" style="margin-top:34px">
+      <div class="term-bar">
+        <span class="prompt">$ <em>csmesh impl IStore --budget 300</em></span>
+        <span class="meta"><span class="ok">exit 0</span></span>
+      </div>
+      <div class="term-body"><pre>IStore  -- 2 implementation(s)
+  <span style="color:var(--bound)">SqlStore</span>  [di:scoped, <span style="color:var(--med)">?0.75 assembly-scan</span>]  src/Data/SqlStore.cs:12  @ src/Api/Startup.cs:41
+  InMemoryStore  [test]  tests/Fakes/InMemoryStore.cs:8</pre></div>
+    </div>
+    <p style="font-size:15px;color:var(--ink2);font-weight:300;max-width:58ch;margin:18px 0 0">The scan-derived binding is still ranked first, still tagged — and still marked as a guess, with the score and the reason that produced it.</p>
+
+    <div class="head" style="margin:56px 0 0">
+      <h2>And what it could not resolve</h2>
+      <p>A graph that answers “none” for every question it failed at reads like a graph that understood everything. <code>csmesh unresolved --kind di</code> lists the registrations that produced no edge and why each one failed. <code>csmesh silence</code> explains why a symbol has no callers. <code>csmesh doctor</code> reports index health, reference count, stale generated sources and version drift — run it before trusting an answer that surprises you.</p>
+    </div>
+  </div>
+</section>
+
 <section class="sect" id="commands">
   <div class="wrap">
     <div class="head">
       <h2>Core commands, real output</h2>
-      <p>Pick one. Every answer is capped by <code>--budget</code>; pass <code>--heal</code> to auto-refresh stale nodes on the fly. When the answer is bigger than the cap, the process exits 2 with a hint.</p>
+      <p>Pick one. Every answer is capped by <code>--budget</code>, counted as roughly four characters per token — an estimate to size a reply, not a model’s tokenizer. Pass <code>--heal</code> to auto-refresh stale nodes on the fly. When the answer is bigger than the cap, the process exits 2 with a hint.</p>
     </div>
     <div class="cmdgrid">
       <div class="cmdlist" role="tablist" aria-label="csmesh commands"></div>
@@ -381,16 +430,16 @@ footer .right{margin-left:auto}
     <div class="figs">
       <div><b>150<i>ms</i></b><span>median query</span><p>Delivers deterministic architectural facts in milliseconds, bypassing multi-hop model reasoning latency.</p></div>
       <div><b>80–95<i>%</i></b><span>less context</span><p>Returns dense symbol graph edges instead of polluting the context window with thousands of raw source lines.</p></div>
-      <div><b>1</b><span>shell command</span><p>Replaces 3 to 7 exploratory turns into a single deterministic invocation under a hard token budget.</p></div>
+      <div><b>1</b><span>shell command</span><p>Replaces 3 to 7 exploratory turns into a single invocation that cannot overflow the budget it was given.</p></div>
     </div>
     <table class="tbl">
       <thead><tr><th style="width:28%">Workflow Scenario</th><th style="width:26%">grep &amp; sequential reads</th><th style="width:24%">csmesh (single command)</th><th>Turn &amp; Token Savings</th></tr></thead>
       <tbody>
         <tr><td>DI binding (e.g. IOrderRepository)</td><td class="old">~3 turns (~1,500 tokens)</td><td class="win">244 ms (1 command)</td><td>~15× faster turnaround, ~90% token reduction</td></tr>
         <tr><td>Call chain trace (OrderEndpoints)</td><td class="old">5–7 turns (~4,000 tokens)</td><td class="win">156 ms (depth 2)</td><td>~30× faster task time, ~85% token reduction</td></tr>
-        <tr><td>Blast radius (OrderRepository)</td><td class="old">4–6 turns (24+ noisy hits)</td><td class="win">161 ms (reverse graph)</td><td>Zero false positives, ~80% token reduction</td></tr>
+        <tr><td>Blast radius (OrderRepository)</td><td class="old">4–6 turns (24+ noisy hits)</td><td class="win">161 ms (reverse graph)</td><td>Callers, not text matches, ~80% token reduction</td></tr>
         <tr><td>Path finding (Endpoint &rarr; Repo)</td><td class="old">Impossible with grep</td><td class="win">157 ms (4-hop route)</td><td>1 deterministic step, ~95% token reduction</td></tr>
-        <tr><td>Entrypoint &amp; worker discovery</td><td class="old">Multiple greps + manual parsing</td><td class="win">143 ms (csmesh entrypoints)</td><td>100% automated coverage (HTTP + HostedServices)</td></tr>
+        <tr><td>Entrypoint &amp; worker discovery</td><td class="old">Multiple greps + manual parsing</td><td class="win">143 ms (csmesh entrypoints)</td><td>Every routing form it knows: attribute, minimal API, @page, hosted services, consumers</td></tr>
         <tr><td>Type signature (OrderRecord)</td><td class="old">Path search + full file read</td><td class="win">166 ms (csmesh context)</td><td>3× fewer steps, ~70% token reduction</td></tr>
         <tr><td>Architecture mapping (29 projects)</td><td class="old">Read .slnx + 29 .csproj files</td><td class="win">174 ms (csmesh map)</td><td>Hundreds of times faster, ~95% token reduction</td></tr>
       </tbody>
