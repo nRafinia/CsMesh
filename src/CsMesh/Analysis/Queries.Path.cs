@@ -96,7 +96,7 @@ public static partial class Queries
             var siteSuffix = FormatSite(site, node);
             var line = $"{indent}-> {node.Short}{Marker(via!)}{TagSuffix(node)}{Loc(node)}{siteSuffix}{StaleTag(node, dirty)}";
             var row = Row(node, i, via!, dirty);
-            if (site != null) row.Site = site;
+            if (site != null) row.Site = site.Value.Site;
             if (!w.Add(line, row))
             {
                 w.Force("");

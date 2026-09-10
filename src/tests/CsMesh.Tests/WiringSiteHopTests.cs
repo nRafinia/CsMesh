@@ -122,7 +122,7 @@ public sealed class WiringSiteHopTests(GraphFixture fixture) : IClassFixture<Gra
     }
 
     [Fact]
-    public void Sibling_lookup_omits_site_when_service_has_multiple_bindings()
+    public void Sibling_lookup_prints_site_with_count_when_service_has_multiple_bindings()
     {
         var temp = Path.Combine(Path.GetTempPath(), "csmesh-multisibling-" + Guid.NewGuid().ToString("N")[..8]);
         try
@@ -175,15 +175,89 @@ public sealed class WiringSiteHopTests(GraphFixture fixture) : IClassFixture<Gra
             var caller = graph.Nodes.Single(n => n.Short == "Caller.Run");
             var greeterA = graph.Nodes.Single(n => n.Short == "GreeterA.Greet");
 
+            // Verify Path
             var wPath = Writer();
             var exitPath = Queries.Path(graph, caller, greeterA, 6, wPath, []);
             Assert.Equal(Exit.Ok, exitPath);
 
             var pathHop = Assert.Single(wPath.Lines, l => l.Contains("-> GreeterA.Greet"));
-            Assert.DoesNotContain("@ Wiring.cs", pathHop);
+            Assert.Matches(@"@ Wiring\.cs:\d+ \(1 of 2 bindings\)", pathHop);
 
             var pathRow = Assert.Single(wPath.Rows, r => r.Symbol == "GreeterA.Greet");
-            Assert.Null(pathRow.Site);
+            Assert.NotNull(pathRow.Site);
+            Assert.Matches(@"Wiring\.cs:\d+", pathRow.Site);
+
+            // Verify Trace
+            var wTrace = Writer();
+            var exitTrace = Queries.Trace(graph, caller, 6, wTrace, []);
+            Assert.Equal(Exit.Ok, exitTrace);
+
+            var traceHop = Assert.Single(wTrace.Lines, l => l.Contains("-> GreeterA.Greet"));
+            Assert.Matches(@"@ Wiring\.cs:\d+ \(1 of 2 bindings\)", traceHop);
+
+            var traceRow = Assert.Single(wTrace.Rows, r => r.Symbol == "GreeterA.Greet");
+            Assert.NotNull(traceRow.Site);
+            Assert.Matches(@"Wiring\.cs:\d+", traceRow.Site);
+        }
+        finally
+        {
+            try { Directory.Delete(temp, true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void Sibling_lookup_annotates_low_confidence_scan_binding()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "csmesh-lowconf-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            Directory.CreateDirectory(temp);
+            File.WriteAllText(Path.Combine(temp, "Services.cs"), """
+                namespace TestApp
+                {
+                    public interface IGreeter { void Greet(); }
+                    public class Greeter : IGreeter { public void Greet() { } }
+                }
+                """);
+            File.WriteAllText(Path.Combine(temp, "Caller.cs"), """
+                namespace TestApp
+                {
+                    public class Caller
+                    {
+                        private readonly IGreeter _g;
+                        public Caller(IGreeter g) => _g = g;
+                        public void Run() => _g.Greet();
+                    }
+                }
+                """);
+
+            var graph = Indexer.Build(temp);
+            var caller = graph.Nodes.Single(n => n.Short == "Caller.Run");
+            var greeterIface = graph.Nodes.Single(n => n.Short == "IGreeter");
+            var greeterImpl = graph.Nodes.Single(n => n.Short == "Greeter");
+
+            // Add an assembly scan binding edge with score 0.55 < Edge.TrustThreshold (0.8)
+            graph.Edges.Add(new CsMesh.Models.Edge
+            {
+                From = greeterIface.Id,
+                To = greeterImpl.Id,
+                Kind = CsMesh.Models.EdgeKind.DiBinding,
+                Confidence = 0.55,
+                Source = "assembly-scan",
+                Site = "Startup.cs:41",
+                Note = "scoped"
+            });
+            graph.Freeze();
+
+            var wTrace = Writer();
+            var exitTrace = Queries.Trace(graph, caller, 6, wTrace, []);
+            Assert.Equal(Exit.Ok, exitTrace);
+
+            var traceHop = Assert.Single(wTrace.Lines, l => l.Contains("-> Greeter.Greet"));
+            Assert.Contains("@ Startup.cs:41 ?0.55 assembly-scan", traceHop);
+
+            var traceRow = Assert.Single(wTrace.Rows, r => r.Symbol == "Greeter.Greet");
+            Assert.Equal("Startup.cs:41", traceRow.Site);
         }
         finally
         {
