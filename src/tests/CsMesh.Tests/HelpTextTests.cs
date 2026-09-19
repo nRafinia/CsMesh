@@ -1,4 +1,5 @@
 using CsMesh.Commands;
+using CsMesh.Common;
 using Xunit;
 
 namespace CsMesh.Tests;
@@ -27,4 +28,32 @@ public sealed class HelpTextTests
     {
         Assert.Contains("default: 850", HelpCommand.MapHelp, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Every command's documented default, checked against the value the writer is built with. The
+    /// two drifted apart for map, where, unresolved and entrypoints over separate budget changes,
+    /// and a documented number that is not the real one is read as a promise the tool is not
+    /// keeping -- an agent sizes its query from it.
+    /// </summary>
+    [Theory]
+    [InlineData("trace", HelpCommand.TraceHelp)]
+    [InlineData("impl", HelpCommand.ImplHelp)]
+    [InlineData("blast", HelpCommand.BlastRadiusHelp)]
+    [InlineData("entrypoints", HelpCommand.EntrypointsHelp)]
+    [InlineData("context", HelpCommand.ContextHelp)]
+    [InlineData("path", HelpCommand.PathHelp)]
+    [InlineData("cycles", HelpCommand.CyclesHelp)]
+    [InlineData("unresolved", HelpCommand.UnresolvedHelp)]
+    [InlineData("diff", HelpCommand.DiffHelp)]
+    [InlineData("changes", HelpCommand.ChangesHelp)]
+    [InlineData("where", HelpCommand.WhereHelp)]
+    [InlineData("map", HelpCommand.MapHelp)]
+    [InlineData("silence", HelpCommand.SilenceHelp)]
+    public void Documented_budget_matches_the_code_default(string kind, string help)
+    {
+        var budget = QueryCommand.WriterFor(kind, new Options([])).Budget;
+
+        Assert.Contains($"default: {budget}", help, StringComparison.Ordinal);
+    }
 }
+
