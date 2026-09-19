@@ -384,7 +384,7 @@ public static class HelpCommand
 
         OPTIONS:
             --kind <K>         Filter to one kind: call, type, di, mediatr
-            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 700, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -392,7 +392,12 @@ public static class HelpCommand
         NOTES:
             'doctor' reports that a graph is, say, 91% resolved. This says which 9%. A missing
             edge and an absent one look identical in every other command; this is the only place
-            they can be told apart. The sample is capped at 400 sites per index.
+            they can be told apart.
+
+            The list is a sample, not a log: the index keeps only a few hundred sites per kind, and
+            this prints the most actionable groups and the top rows within each. A footer names how
+            many groups and rows were withheld and the --kind filter that narrows to them. Exit 2
+            means the budget ran out before those caps, not that the sample was exhaustive.
 
         EXAMPLES:
             csmesh unresolved
