@@ -22,6 +22,11 @@ public static class CallerDetector
         ("GEMINI_CLI",             "gemini-cli"),
         ("WINDSURF_SESSION",       "windsurf"),
         ("CONTINUE_SESSION_ID",    "continue"),
+        // opencode sets OPENCODE and OPENCODE_PID on every shell it spawns; OPENCODE_SESSION is
+        // not one it exports, so checking only that label meant an opencode session reported as
+        // unknown-automation.
+        ("OPENCODE",               "opencode"),
+        ("OPENCODE_PID",           "opencode"),
         ("OPENCODE_SESSION",       "opencode"),
         ("MIMO_SESSION",           "mimo"),
         ("AGENT_NAME",             "generic-agent"),
@@ -32,10 +37,15 @@ public static class CallerDetector
         "claude", "codex", "cline", "cursor", "aider", "opencode", "goose", "gemini", "windsurf", "mimo"
     };
 
-    public static (string Caller, string Via) Detect()
+    public static (string Caller, string Via) Detect() => Detect(Environment.GetEnvironmentVariable);
+
+    /// <summary>
+    /// The same detection against an injected environment reader, so a test can present one host's
+    /// markers without mutating the process environment that every other test shares.
+    /// </summary>
+    internal static (string Caller, string Via) Detect(Func<string, string?> read)
     {
-        var forced = Environment.GetEnvironmentVariable("CSMESH_CALLER")
-            ?? Environment.GetEnvironmentVariable("CSGRAPH_CALLER");
+        var forced = read("CSMESH_CALLER") ?? read("CSGRAPH_CALLER");
         if (!string.IsNullOrWhiteSpace(forced))
         {
             return (forced, "env:CSMESH_CALLER");
@@ -43,7 +53,7 @@ public static class CallerDetector
 
         foreach (var (env, name) in EnvMarkers)
         {
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(env)))
+            if (!string.IsNullOrEmpty(read(env)))
             {
                 return (name, "env:" + env);
             }
@@ -64,7 +74,7 @@ public static class CallerDetector
             }
         }
 
-        if (Environment.GetEnvironmentVariable("TERM_PROGRAM") == "vscode")
+        if (read("TERM_PROGRAM") == "vscode")
         {
             return ("vscode-ext", "env:TERM_PROGRAM");
         }
