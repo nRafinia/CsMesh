@@ -69,6 +69,19 @@ public sealed class SkillTextTests
     /// The reverse-edge question is the one an agent answers with trace or grep; the skill has to
     /// name blast-radius --depth 1 as the command, in both the full skill and the compact rules.
     /// </summary>
+    /// <summary>
+    /// The documented budgets are what agents pass; six of the exit=2 rows came from the skill's own
+    /// "600 for trace" sitting just under the tail of real trace output.
+    /// </summary>
+    [Fact]
+    public void The_skill_recommends_raised_budgets_for_trace_and_context()
+    {
+        Assert.Contains("700 for `trace`", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("900 for `context`", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("700 `trace`", SkillText.Rules, StringComparison.Ordinal);
+        Assert.Contains("900 `context`", SkillText.Rules, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_skill_names_the_reverse_edge_for_who_calls_this()
     {

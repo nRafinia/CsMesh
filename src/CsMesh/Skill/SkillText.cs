@@ -161,8 +161,8 @@ public static class SkillText
         ```bash
         csmesh map                                          # orient first in an unfamiliar repo
         csmesh where discount                               # find symbol or route when you have words
-        csmesh context PaymentService.Process --budget 800  # everything about one symbol, one call
-        csmesh trace PaymentController.Post --budget 600
+        csmesh context PaymentService.Process --budget 900  # everything about one symbol, one call
+        csmesh trace PaymentController.Post --budget 700
         csmesh impl IPaymentGateway --budget 300
         csmesh blast-radius Order.Status --budget 800 --depth 2
         csmesh path PaymentController.Post StripeGateway.Authorize
@@ -217,8 +217,8 @@ public static class SkillText
           `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
           a member, **always use `where <member-name>` first** to discover the correct qualified name
           rather than guessing from the file or outer class name.
-        - Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for `blast-radius`,
-          `context` and `diff`, 400 for `path`.
+        - Always pass `--budget`. Default it to 700 for `trace`, 300 for `impl`, 800 for `blast-radius`
+          and `diff`, 900 for `context`, 400 for `path`.
         - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
           question is cheaper than paying for the whole tree.
         - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3.
@@ -241,10 +241,10 @@ public static class SkillText
 
         Your VERY FIRST action when exploring or investigating C# code MUST be running `csmesh` (via your available shell/bash/command tool, or via `csmesh_*` MCP tools if configured):
         - To find a symbol or route: `csmesh where <term>`
-        - To trace call paths: `csmesh trace <Type.Member> --budget 600`
+        - To trace call paths: `csmesh trace <Type.Member> --budget 700`
         - To find implementations: `csmesh impl <IThing> --budget 300`
         - To check blast radius: `csmesh blast-radius <Type.Member> --budget 800`
-        - To inspect a type: `csmesh context <TypeName> --budget 800`
+        - To inspect a type: `csmesh context <TypeName> --budget 900`
         - To orient in a repo: `csmesh map`
 
         Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
@@ -258,9 +258,9 @@ public static class SkillText
 
         | you are about to | run instead |
         |---|---|
-        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 800` |
+        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 900` |
         | list directories to orient in an unfamiliar repo | `csmesh map` |
-        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 600` |
+        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 700` |
         | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
         | guess which class implements an interface | `csmesh impl IThing --budget 300` |
         | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
@@ -318,7 +318,7 @@ public static class SkillText
         - **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
           nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
           Use `csmesh where <member-name>` first to discover the correct qualified name.
-        - Always pass `--budget`: 600 `trace`, 300 `impl`, 800 `blast-radius`/`context`/`diff`, 400 `path`.
+        - Always pass `--budget`: 700 `trace`, 300 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 400 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
         - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
@@ -343,10 +343,10 @@ public static class SkillText
 
         Your VERY FIRST action when exploring or investigating C# code MUST be running `csmesh` (via your available shell/bash/command tool, or via `csmesh_*` MCP tools if configured):
         - To find a symbol or route: `csmesh where <term>`
-        - To trace call paths: `csmesh trace <Type.Member> --budget 600`
+        - To trace call paths: `csmesh trace <Type.Member> --budget 700`
         - To find implementations: `csmesh impl <IThing> --budget 300`
         - To check blast radius: `csmesh blast-radius <Type.Member> --budget 800`
-        - To inspect a type: `csmesh context <TypeName> --budget 800`
+        - To inspect a type: `csmesh context <TypeName> --budget 900`
         - To orient in a repo: `csmesh map`
 
         Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
@@ -360,9 +360,9 @@ public static class SkillText
 
         | you are about to | run instead |
         |---|---|
-        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 800` |
+        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 900` |
         | list directories to orient in an unfamiliar repo | `csmesh map` |
-        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 600` |
+        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 700` |
         | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
         | guess which class implements an interface | `csmesh impl IThing --budget 300` |
         | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
@@ -420,7 +420,7 @@ public static class SkillText
         - **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
           nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
           Use `csmesh where <member-name>` first to discover the correct qualified name.
-        - Always pass `--budget`: 600 `trace`, 300 `impl`, 800 `blast-radius`/`context`/`diff`, 400 `path`.
+        - Always pass `--budget`: 700 `trace`, 300 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 400 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
         - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.

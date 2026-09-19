@@ -146,8 +146,8 @@ String literals, config values, TODOs, error messages, log text, anything in a `
 ```bash
 csmesh map                                          # orient first in an unfamiliar repo
 csmesh where discount                               # find symbol or route when you have words
-csmesh context PaymentService.Process --budget 800  # everything about one symbol, one call
-csmesh trace PaymentController.Post --budget 600
+csmesh context PaymentService.Process --budget 900  # everything about one symbol, one call
+csmesh trace PaymentController.Post --budget 700
 csmesh impl IPaymentGateway --budget 300
 csmesh blast-radius Order.Status --budget 800 --depth 2
 csmesh path PaymentController.Post StripeGateway.Authorize
@@ -202,8 +202,8 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
   `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
   a member, **always use `where <member-name>` first** to discover the correct qualified name
   rather than guessing from the file or outer class name.
-- Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for `blast-radius`,
-  `context` and `diff`, 400 for `path`.
+- Always pass `--budget`. Default it to 700 for `trace`, 300 for `impl`, 800 for `blast-radius`
+  and `diff`, 900 for `context`, 400 for `path`.
 - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
   question is cheaper than paying for the whole tree.
 - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3.
