@@ -3,6 +3,7 @@ using CsMesh.Analysis;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Storage;
+using CsMesh.Telemetry;
 
 namespace CsMesh.Commands;
 
@@ -358,6 +359,8 @@ public static class ReviewCommand
         result.Truncated = writer.Overflowed;
 
         Console.WriteLine(JsonSerializer.Serialize(result, AppJsonContext.Default.QueryResult));
+        CsMesh.Telemetry.Telemetry.Current.OutTokens = writer.Tokens;
+        CsMesh.Telemetry.Telemetry.Current.WouldBeTokens = writer.WouldBeTokens;
         return exitCode;
     }
 

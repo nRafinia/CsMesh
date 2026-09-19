@@ -26,6 +26,19 @@ public sealed class BudgetWriter(int budgetTokens)
     public int Remaining => Math.Max(0, budgetTokens - _tokens);
     public bool Overflowed { get; private set; }
 
+    private int _wouldBeTokens;
+
+    /// <summary>
+    /// The size the answer wanted on the first refusal: the emitted total plus the line that did not
+    /// fit. Lower bound, not the full answer -- a query returns at the first refusal, so everything
+    /// after it is never measured. Frozen at that moment, so the forced "OVER BUDGET" prose that
+    /// follows does not inflate it. Equal to <see cref="Tokens"/> when nothing overflowed.
+    /// </summary>
+    public int WouldBeTokens => Overflowed ? _wouldBeTokens : _tokens;
+
+    /// <summary>How far the first refused line went past the cap; zero when nothing overflowed.</summary>
+    public int OverBudgetBy => Overflowed ? Math.Max(0, _wouldBeTokens - budgetTokens) : 0;
+
     /// <summary>Rows emitted so far, excluding headers and warnings.</summary>
     public IReadOnlyList<QueryRow> Rows => _rows;
     public IReadOnlyList<string> Lines => _lines;
@@ -41,6 +54,7 @@ public sealed class BudgetWriter(int budgetTokens)
         var cost = Estimate(line);
         if (_tokens + cost > budgetTokens)
         {
+            if (!Overflowed) _wouldBeTokens = _tokens + cost;
             Overflowed = true;
             return false;
         }
@@ -76,5 +90,6 @@ public sealed class BudgetWriter(int budgetTokens)
         foreach (var l in _lines) sb.AppendLine(l);
         Console.Out.Write(sb.ToString());
         Telemetry.Telemetry.Current.OutTokens = _tokens;
+        Telemetry.Telemetry.Current.WouldBeTokens = WouldBeTokens;
     }
 }

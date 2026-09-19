@@ -442,6 +442,7 @@ public static class QueryCommand
 
         Console.WriteLine(JsonSerializer.Serialize(result, AppJsonContext.Default.QueryResult));
         Telemetry.Telemetry.Current.OutTokens = writer.Tokens;
+        Telemetry.Telemetry.Current.WouldBeTokens = writer.WouldBeTokens;
         return exitCode;
     }
 }
