@@ -112,6 +112,12 @@ public static partial class Queries
         w.Force($"{query} -- {candidates.Count} match(es), ranked by what reaches them",
                 Row(ranked[0].Node, 0, "query", query, dirty));
 
+        // The boundary, stated because it is not what a reader assumes. Rank is a composite of
+        // lexical strength and reach, not exact-name-first: an exact match with nothing calling it
+        // scores 100 + bonuses, while a substring match under an entrypoint can collect up to 72
+        // for entrypoints alone. The exact name can sit below it, and is not special-cased.
+        w.Force("  rank is reach-weighted, not exact-name-first: an exact name nothing calls can sit below a substring the entrypoints reach.");
+
         var shown = 0;
         foreach (var c in ranked.Take(WhereRowCap))
         {
