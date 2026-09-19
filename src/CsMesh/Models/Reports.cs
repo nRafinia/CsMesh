@@ -62,6 +62,9 @@ public sealed class DoctorReport
     /// <summary>Generated sources skipped as stale relative to their .razor/.cshtml file. See Graph.RazorStaleSources.</summary>
     public int RazorStaleSources { get; set; }
 
+    /// <summary>Non-Razor generated .g.cs files compiled into the graph. See Graph.GeneratedSourcesIndexed.</summary>
+    public int GeneratedSourcesIndexed { get; set; }
+
     public List<string> SkippedProjects { get; set; } = [];
     public string ScopeDecision { get; set; } = string.Empty;
 

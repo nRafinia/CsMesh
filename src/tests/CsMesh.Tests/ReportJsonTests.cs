@@ -2,6 +2,7 @@ using System.Text.Json;
 using CsMesh.Commands;
 using CsMesh.Common;
 using CsMesh.Models;
+using CsMesh.Storage;
 using Xunit;
 
 namespace CsMesh.Tests;
@@ -115,6 +116,39 @@ public sealed class ReportJsonTests
 
         Assert.Contains("repo", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("\"command\"", raw, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 99.97% must not print as "100.0%". Two unresolved call sites against six thousand bound
+    /// ones rounded to a clean hundred, and the one number a reader trusts said there was nothing
+    /// left to look at. The rate is floored now, so it reads 99.9% and the raw 6161/6163 sits
+    /// beside it.
+    /// </summary>
+    [Fact]
+    public void TwoUnresolvedCallSitesNeverReadAsAHundred()
+    {
+        using var sandbox = new Sandbox();
+
+        var graph = new Graph
+        {
+            Root = sandbox.Root,
+            FormatVersion = Graph.CurrentFormatVersion,
+            BuiltAt = DateTimeOffset.UtcNow,
+            BuiltByVersion = AppVersion.Get(),
+            TotalCallSites = 6163,
+            UnresolvedCallSites = 2,
+            ReferenceCount = 388,
+            RuntimeReferences = 365,
+            OutputReferences = 23
+        };
+        graph.Freeze();
+        GraphStore.Save(graph);
+
+        var raw = Capture(() => DoctorCommand.Execute(sandbox.Root, new Options([])));
+
+        Assert.Contains("99.9%", raw, StringComparison.Ordinal);
+        Assert.Contains("(6161/6163)", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("100.0%", raw, StringComparison.Ordinal);
     }
 
     [Fact]
