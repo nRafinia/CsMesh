@@ -25,6 +25,16 @@ public static class UsageCommand
         "path", "cycles", "unresolved", "diff", "changes", "silence"
     };
 
+    /// <summary>
+    /// A zero here is a fact about the host, not about usage: some agents (opencode among them)
+    /// export no conversation id at all, only a process id that is not a session. Printing a bare 0
+    /// reads as "no sessions happened" and would be quoted as such later.
+    /// </summary>
+    internal static string SessionLine(int distinctSessions) =>
+        distinctSessions > 0
+            ? $"  distinct sessions {distinctSessions}"
+            : "  distinct sessions none (this host exposes no session id)";
+
     public static int Execute(string root, Options opt)
     {
         var all = Telemetry.Telemetry.Read(root);
@@ -59,13 +69,8 @@ public static class UsageCommand
         Console.WriteLine($"csmesh usage, last {days} day(s)");
         Console.WriteLine($"  invocations       {rows.Count}");
         Console.WriteLine($"  agent-attributed  {agentRows.Count} ({FormattingUtils.Pct(agentRows.Count, rows.Count)})");
-        // A zero here is a fact about the host, not about usage: some agents (opencode among them)
-        // export no conversation id at all, only a process id that is not a session. Printing a
-        // bare 0 reads as "no sessions happened" and would be quoted as such later.
         var distinctSessions = rows.Select(r => r.Session).Where(s => !string.IsNullOrEmpty(s)).Distinct().Count();
-        new Emit(false).Line(distinctSessions > 0
-            ? $"  distinct sessions {distinctSessions}"
-            : "  distinct sessions none (this host exposes no session id)");
+        new Emit(false).Line(SessionLine(distinctSessions));
         Console.WriteLine();
 
         Console.WriteLine("  by caller");
