@@ -109,6 +109,16 @@ public static partial class Indexer
                 Dbg.Log($"incremental declined: {relative} is a Razor source; its compiled C# does not change until the next build");
                 return null;
             }
+
+            // A generated .g.cs is build output. Rebinding it in place would bind against bytes a
+            // plain edit cannot produce, and the generated half of a partial is exactly what a
+            // full pass has to re-read alongside source -- so decline and let Build() redo it.
+            if (normalized.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) ||
+                normalized.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase))
+            {
+                Dbg.Log($"incremental declined: {relative} is generated build output; it changes on rebuild, not on an edit");
+                return null;
+            }
         }
 
         foreach (var relative in dirty)
@@ -190,6 +200,22 @@ public static partial class Indexer
             syntax.Add(CSharpSyntaxTree.ParseText(globalUsings[i], parseOptions, path: $"<global-usings-{i}>"));
         }
 
+        // The compilation is whole-solution even though binding is not: a partial used by an edited
+        // file has its other half in a generated tree, and a compilation missing it binds the edit
+        // against nothing. Parse them here too, without stamping -- this pass may not move the
+        // freshness baseline for build output it did not produce.
+        var (razorSources, _) = CollectGeneratedRazorSources(scope);
+        foreach (var (razorPath, text) in razorSources)
+        {
+            syntax.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath));
+        }
+
+        var (generatedSources, _) = CollectGeneratedSources(root, scope);
+        foreach (var (generated, text) in generatedSources)
+        {
+            syntax.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: generated));
+        }
+
         var references = ReferenceSet(root, scope, out _);
 
         var compilation = CSharpCompilation.Create(
@@ -250,11 +276,18 @@ public static partial class Indexer
         // Carrying the old stamps forward unconditionally is safe here: a dirty .razor/.cshtml
         // file already declined this whole pass above, so none of the stamps below describe a
         // file that changed since Build() wrote them.
-        var razorStamps = previous.Files.Where(f =>
-            f.Path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ||
-            f.Path.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase)).ToList();
+        // freshStamps only ever holds .cs files -- it comes from EnumerateSourceFiles, which never
+        // returns a .razor, .cshtml or generated .g.cs path. Carrying every such tracked path
+        // forward keeps the stamps Build() wrote for them; without that, the next DirtyFiles has no
+        // entry to compare a rebuild against and the change that rewrote generated output becomes
+        // invisible. A deleted .cs is still dropped, because it matches none of these shapes.
+        var freshPaths = freshStamps.Select(s => s.Path.Replace('\\', '/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var carried = previous.Files
+            .Where(f => !freshPaths.Contains(f.Path.Replace('\\', '/')))
+            .Where(f => IsGeneratedTrackedPath(f.Path))
+            .ToList();
 
-        previous.Files = freshStamps.Concat(razorStamps).ToList();
+        previous.Files = freshStamps.Concat(carried).ToList();
         previous.Dirs = DirectoryStamps(root, files);
         previous.BuiltAt = DateTimeOffset.UtcNow;
         previous.BuiltFromCommit = RepositoryLocator.GitHead(root);

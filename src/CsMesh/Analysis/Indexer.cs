@@ -173,8 +173,31 @@ public static partial class Indexer
     }
 
     /// <summary>
-    /// Generated Razor component sources already on disk for one project, newest configuration and
-    /// target framework combination first.
+    /// Whether a generated file belongs to Razor. Razor is the one generator given a special path:
+    /// its output names the .razor/.cshtml file it came from on a checksum line, so a type can be
+    /// mapped back to source a user can open rather than the obj/ path a clean deletes.
+    /// </summary>
+    private static bool IsRazorGenerated(string file) =>
+        (file.EndsWith("_razor.g.cs", StringComparison.OrdinalIgnoreCase) ||
+         file.EndsWith("_cshtml.g.cs", StringComparison.OrdinalIgnoreCase)) &&
+        file.Replace('\\', '/').Split('/')
+            .Any(segment => segment.EndsWith("RazorSourceGenerator", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Paths the source enumerator never returns: Razor sources and generated build output. Build()
+    /// stamps them, and an incremental pass must carry those stamps forward -- it replaces Files
+    /// wholesale with the .cs files it re-parsed, and a dropped stamp makes the next rebuild's
+    /// changed generated output invisible to freshness.
+    /// </summary>
+    private static bool IsGeneratedTrackedPath(string path) =>
+        path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Generated .g.cs files already on disk for one project, newest configuration and target
+    /// framework combination first, filtered by <paramref name="accept"/>.
     ///
     /// These exist only when the project was last built with both -p:EmitCompilerGeneratedFiles=true
     /// and a non-incremental build -- a warm build with only the property set writes nothing, because
@@ -184,8 +207,13 @@ public static partial class Indexer
     /// The path is walked one level at a time -- obj/{config}/{tfm}/generated/... -- rather than
     /// globbed with a fixed Debug/net10.0 guess, because both segments are whatever the last build
     /// used, on a repository this indexer knows nothing else about.
+    ///
+    /// The generator's own directory is named after its assembly-qualified type, so nothing here
+    /// keys on the directory name. Newest wins on purpose: Debug and Release both hold a copy of
+    /// every generated type, and the same type arriving twice is CS0101 across the whole graph.
+    /// Taking only the newest generated directory is what stops that.
     /// </summary>
-    private static IReadOnlyList<string> GeneratedRazorFiles(string projectDir)
+    private static IReadOnlyList<string> GeneratedSourceFiles(string projectDir, Func<string, bool> accept)
     {
         var objDir = Path.Combine(projectDir, "obj");
         if (!Directory.Exists(objDir)) return [];
@@ -211,20 +239,12 @@ public static partial class Indexer
                 List<string> files;
                 try
                 {
-                    // The generator's own directory is named after its assembly-qualified type --
-                    // Microsoft.NET.Sdk.Razor.SourceGenerators.RazorSourceGenerator -- so a segment
-                    // is matched by suffix, not by an exact "RazorSourceGenerator" path component.
-                    //
-                    // Both suffixes come from the same generator: a Blazor component compiles to
-                    // *_razor.g.cs, a Razor Page or MVC view to *_cshtml.g.cs. Matching only the
-                    // first meant a repository built entirely of .cshtml never found anything here,
-                    // no matter how it was built -- doctor would still recommend the exact build
-                    // that had already run.
+                    // The generator's own directory is named after its assembly-qualified type, so
+                    // nothing here keys on the directory name; accept decides per file. Razor's two
+                    // suffixes (*_razor.g.cs, *_cshtml.g.cs) live in IsRazorGenerated; every other
+                    // generator's output is accepted as plain .g.cs.
                     files = Directory.EnumerateFiles(generatedDir, "*.g.cs", SearchOption.AllDirectories)
-                        .Where(f => f.EndsWith("_razor.g.cs", StringComparison.OrdinalIgnoreCase) ||
-                                    f.EndsWith("_cshtml.g.cs", StringComparison.OrdinalIgnoreCase))
-                        .Where(f => f.Replace('\\', '/').Split('/')
-                                     .Any(segment => segment.EndsWith("RazorSourceGenerator", StringComparison.OrdinalIgnoreCase)))
+                        .Where(accept)
                         .ToList();
                 }
                 catch { continue; }
@@ -243,6 +263,13 @@ public static partial class Indexer
 
         return newestFiles ?? [];
     }
+
+    private static IReadOnlyList<string> GeneratedRazorFiles(string projectDir) =>
+        GeneratedSourceFiles(projectDir, IsRazorGenerated);
+
+    /// <summary>Everything under obj/**/generated that Razor does not own.</summary>
+    private static IReadOnlyList<string> GeneratedNonRazorFiles(string projectDir) =>
+        GeneratedSourceFiles(projectDir, f => !IsRazorGenerated(f));
 
     /// <summary>
     /// The .razor file a generated source came from, read off its own "#pragma checksum" line
@@ -319,6 +346,44 @@ public static partial class Indexer
         return (result, stale);
     }
 
+    /// <summary>
+    /// Generated .g.cs for every non-Razor generator in scope, paired with the generated file's own
+    /// absolute path. Unlike Razor there is no source file to map a type back to: a
+    /// JsonSerializerContext's output names no origin, and no single source edit can be attributed
+    /// as the cause of a stale artifact.
+    ///
+    /// Razor's 2 s staleness check is therefore dropped here and the files are counted instead. The
+    /// only file a generic generated source could be compared against is itself; comparing it to
+    /// any newer project source would invalidate every generated type after any unrelated edit and
+    /// reintroduce the unresolved calls this ingestion exists to close. What is indexed is what the
+    /// last build wrote; an edited source still marks its own file [STALE], and a clean rebuild is
+    /// what refreshes the generated half. A file that cannot be read is skipped rather than counted.
+    /// </summary>
+    private static (List<(string File, string Text)> Sources, int Unreadable) CollectGeneratedSources(
+        string root, ProjectScope scope)
+    {
+        var result = new List<(string, string)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unreadable = 0;
+
+        foreach (var projectDir in scope.LiveDirectories)
+        {
+            foreach (var generated in GeneratedNonRazorFiles(projectDir))
+            {
+                var relative = Path.GetRelativePath(root, generated);
+                if (!seen.Add(relative)) continue;
+
+                string text;
+                try { text = File.ReadAllText(generated); }
+                catch { unreadable++; continue; }
+
+                result.Add((generated, text));
+            }
+        }
+
+        return (result, unreadable);
+    }
+
     public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false)
     {
         var scope = includeAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
@@ -377,6 +442,26 @@ public static partial class Indexer
             });
         }
 
+        // Non-Razor generators: System.Text.Json, Regex, LibraryImport, LoggerMessage and the rest.
+        // Their output is real C# the compiler binds against, so without it every call that takes a
+        // generated member -- JsonSerializer.Serialize(x, Ctx.Default.T), a partial method body --
+        // is left unresolved, or resolved to the wrong overload. The .g.cs exclusion in
+        // EnumerateSourceFiles stays: these are added through their own path so the two sets cannot
+        // collide, exactly as Razor already did.
+        var (generatedSources, _) = CollectGeneratedSources(root, scope);
+        foreach (var (generated, text) in generatedSources)
+        {
+            trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: generated));
+
+            var generatedInfo = new FileInfo(generated);
+            stamps.Add(new FileStamp
+            {
+                Path = Path.GetRelativePath(root, generated),
+                Ticks = generatedInfo.LastWriteTimeUtc.Ticks,
+                Size = generatedInfo.Length
+            });
+        }
+
         // The repository root itself may gain a new source file without any tracked directory changing.
         if (!dirs.ContainsKey("."))
         {
@@ -415,6 +500,7 @@ public static partial class Indexer
             RazorFileCount = CountRazorFiles(root, scope),
             RazorComponentsIndexed = razorSources.Count,
             RazorStaleSources = staleRazorSources,
+            GeneratedSourcesIndexed = generatedSources.Count,
             IndexedAllProjects = includeAllProjects,
             SkippedProjects = scope.Excluded,
             SkippedProjectsReason = scope.Reason,
