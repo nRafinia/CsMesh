@@ -508,7 +508,7 @@ public static class HelpCommand
 
         OPTIONS:
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
-            --budget <N>       Maximum output tokens (default: 400, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information

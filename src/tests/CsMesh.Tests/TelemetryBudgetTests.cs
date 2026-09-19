@@ -18,8 +18,8 @@ public sealed class TelemetryBudgetTests
 
         var writer = QueryCommand.WriterFor("where", new Options([]));
 
-        Assert.Equal(400, writer.Budget);
-        Assert.Equal(400, CsMesh.Telemetry.Telemetry.Current.Budget);
+        Assert.Equal(600, writer.Budget);
+        Assert.Equal(600, CsMesh.Telemetry.Telemetry.Current.Budget);
     }
 
     [Fact]
@@ -35,14 +35,15 @@ public sealed class TelemetryBudgetTests
 
     /// <summary>
     /// The two code defaults raised on the exit=2 distribution: entrypoints and unresolved answers
-    /// clustered just past 600. where and review stay -- their p90s are well under the cap.
+    /// clustered just past 600. where moved too: its job is to surface the one symbol the task is
+    /// about, and dropping the candidate that mattered is the failure mode, so it stops at 600.
     /// </summary>
     [Fact]
     public void Entrypoints_and_unresolved_carry_the_raised_defaults()
     {
         Assert.Equal(700, QueryCommand.WriterFor("entrypoints", new Options([])).Budget);
         Assert.Equal(700, QueryCommand.WriterFor("unresolved", new Options([])).Budget);
-        Assert.Equal(400, QueryCommand.WriterFor("where", new Options([])).Budget);
+        Assert.Equal(600, QueryCommand.WriterFor("where", new Options([])).Budget);
         // map's old 700 was clipping it: every exit=0 sample sat 2-27 tokens under the cap and one
         // explicit-budget row reached 760, so the ceiling above 700 was never observable.
         Assert.Equal(850, QueryCommand.WriterFor("map", new Options([])).Budget);

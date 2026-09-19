@@ -233,7 +233,7 @@ public static class QueryCommand
     /// The budget a query runs under, resolved once and given to both the writer that enforces it
     /// and telemetry that records it. These used to be resolved separately -- the writer from the
     /// per-kind default, the log from a flat 600 in CliRunner -- so every command whose default is
-    /// not 600 (where 400, impl 300, path 400, map 700, silence 700) logged a cap it was never held to.
+    /// not 600 (impl 300, path 400, map 850, silence 700) logged a cap it was never held to.
     /// </summary>
     internal static BudgetWriter WriterFor(string kind, Options opt)
     {
@@ -255,7 +255,7 @@ public static class QueryCommand
         "silence" => 700,
         "map" => 850,
         "path" => 400,
-        "where" => 400,
+        "where" => 600,
         _ => 600
     };
 
