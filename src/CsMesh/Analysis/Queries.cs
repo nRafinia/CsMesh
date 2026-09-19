@@ -436,23 +436,36 @@ public static partial class Queries
 
     /// <summary>
     /// Identifies the declaring type node id for a symbol (or the symbol itself if already a type).
+    ///
+    /// An explicit owner edge is the common case. The name fallback exists for a member kind the
+    /// declaration pass never links -- a node created by a reference rather than a declaration --
+    /// and it qualifies on the member's fully-qualified <see cref="Node.Name"/>, not its
+    /// <see cref="Node.Short"/>. Short is enclosing-type-relative, so `A.Widget.Changed` and
+    /// `B.Widget.Changed` are both "Widget.Changed" and a Short match cannot tell them apart.
+    ///
+    /// When the qualified prefix still matches more than one type it returns null rather than the
+    /// first: a miss is recoverable, a confidently wrong owner is not.
+    ///
+    /// Public only to the test assembly, which constructs the collision cases directly -- the
+    /// declaration pass gives every declared member an owner edge, so the fallback cannot be
+    /// reached through an ordinary index.
     /// </summary>
-    private static int? DeclaringTypeId(Graph g, Node n)
+    internal static int? DeclaringTypeId(Graph g, Node n)
     {
         if (n.Kind is "interface" or "type" or "enum" or "struct") return n.Id;
 
         var ownerEdge = g.In(n.Id).FirstOrDefault(x => x.Kind == EdgeKind.TypeUse && x.Note is "member" or "ctor");
         if (ownerEdge != null) return ownerEdge.From;
 
-        var dot = n.Short.LastIndexOf('.');
-        if (dot > 0)
-        {
-            var ownerShort = n.Short[..dot];
-            var ownerNode = g.Nodes.FirstOrDefault(x => (x.Kind is "interface" or "type" or "struct") && x.Short == ownerShort);
-            if (ownerNode != null) return ownerNode.Id;
-        }
+        var dot = n.Name.LastIndexOf('.');
+        if (dot <= 0) return null;
 
-        return null;
+        var ownerName = n.Name[..dot];
+        var matches = g.Nodes
+            .Where(x => (x.Kind is "interface" or "type" or "enum" or "struct") && x.Name == ownerName)
+            .ToList();
+
+        return matches.Count == 1 ? matches[0].Id : null;
     }
 
     /// <summary>
