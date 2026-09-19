@@ -25,6 +25,11 @@ public sealed class Invocation
     ///
     /// Without this, an exit=2 row read as "under budget" whenever the refused line was what pushed
     /// it over, and the amount over was unrecoverable from the log.
+    ///
+    /// The other half of the same warning: it is recorded only when an overflow happens, so it
+    /// cannot reveal the ceiling of answers that currently fit the default -- establishing that
+    /// needs a deliberate high-budget run. And as a lower bound it can understate badly: map's own
+    /// marker reported ~828 while the unclipped answer was 1463.
     /// </summary>
     public int WouldBeTokens { get; set; }
 
