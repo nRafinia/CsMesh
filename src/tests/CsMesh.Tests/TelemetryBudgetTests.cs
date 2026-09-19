@@ -43,5 +43,8 @@ public sealed class TelemetryBudgetTests
         Assert.Equal(700, QueryCommand.WriterFor("entrypoints", new Options([])).Budget);
         Assert.Equal(700, QueryCommand.WriterFor("unresolved", new Options([])).Budget);
         Assert.Equal(400, QueryCommand.WriterFor("where", new Options([])).Budget);
+        // map's old 700 was clipping it: every exit=0 sample sat 2-27 tokens under the cap and one
+        // explicit-budget row reached 760, so the ceiling above 700 was never observable.
+        Assert.Equal(850, QueryCommand.WriterFor("map", new Options([])).Budget);
     }
 }

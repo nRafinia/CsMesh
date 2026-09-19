@@ -253,7 +253,7 @@ public static class QueryCommand
         "changes" => 800,
         "diff" => 800,
         "silence" => 700,
-        "map" => 700,
+        "map" => 850,
         "path" => 400,
         "where" => 400,
         _ => 600
