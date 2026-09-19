@@ -257,11 +257,16 @@ csmesh index
 ```
 
 > [!TIP]
-> **For Blazor & Razor projects:** Run your build with compiler-generated files enabled once, so Roslyn outputs component sources for `csmesh` to discover:
+> **Using source generators — or starting from a cold checkout?** A fresh clone resolves less
+> completely than a built one: package and framework types come from `bin/`, and generated sources
+> (Blazor/Razor, System.Text.Json, `[GeneratedRegex]`, `[LibraryImport]`, `[LoggerMessage]`, ...)
+> live under `obj/`. A plain build restores the references; the flags additionally write the
+> generated sources to disk where `csmesh` can read them:
 > ```bash
 > dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true
 > csmesh index
 > ```
+> `csmesh doctor` reports what it found, and marks unresolved calls when it could not see them.
 
 ### 2. Configure Your AI Coding Assistants
 ```bash

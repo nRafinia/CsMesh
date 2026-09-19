@@ -520,7 +520,7 @@ footer .right{margin-left:auto}
         <h3>.NET global tool</h3>
         <div class="cmdbox" style="margin-bottom:10px"><code>dotnet tool install --global CsMesh</code><button data-copy="dotnet tool install --global CsMesh">Copy</button></div>
         <div class="cmdbox"><code>dotnet tool update --global CsMesh</code><button data-copy="dotnet tool update --global CsMesh">Copy</button></div>
-        <p class="note">Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: run <code>csmesh index</code> once. Use <code>--heal</code> on any query or rerun <code>csmesh index</code> when files change.</p>
+        <p class="note">Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: build first (<code>dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true</code>) so package references and source-generated files are on disk, then run <code>csmesh index</code>. A cold checkout resolves less completely than a built one. Use <code>--heal</code> on any query or rerun <code>csmesh index</code> when files change.</p>
       </div>
     </div>
   </div>

@@ -196,7 +196,8 @@ public static class HelpCommand
             Build the solution first. Without bin/ assemblies many call sites cannot be bound
             and the resulting graph will be missing edges; 'index' reports the count.
 
-            For Blazor/Razor projects, emit generated sources so components are discovered:
+            For source generators (Blazor/Razor, System.Text.Json, and others), emit generated
+            sources too so their types are discovered:
             dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true
 
         EXAMPLES:
