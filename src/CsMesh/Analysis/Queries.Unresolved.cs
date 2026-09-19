@@ -58,9 +58,15 @@ public static partial class Queries
             return Exit.NotFound;
         }
 
-        var total = g.UnresolvedByReason.Values.Sum();
+        // The index keeps only a bounded sample of locations per kind while the reason counts are
+        // complete. Saying "N shown" for the bigger of the two read as "these are all of them" when
+        // the displayed rows are a subset of the sample on top of that -- so the header names the
+        // locations as a sample and lets the footer account for the rows actually printed.
+        var total = kind == null
+            ? g.UnresolvedByReason.Values.Sum()
+            : g.UnresolvedByReason.Where(x => x.Key.StartsWith(kind + "/", StringComparison.Ordinal)).Sum(x => x.Value);
         w.Force(total > sites.Count
-            ? $"{total} unresolved site(s) in total; {sites.Count} shown"
+            ? $"{total} unresolved site(s) in total; {sites.Count} with locations in the sample"
             : $"{sites.Count} unresolved site(s)");
 
         // The sample is capped in traversal order, so its proportions are about the first files

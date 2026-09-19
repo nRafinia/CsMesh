@@ -46,6 +46,31 @@ public sealed class UnresolvedCapTests
         return graph;
     }
 
+    /// <summary>
+    /// The index caps the locations it keeps per kind while the reason counts are complete. Calling
+    /// the sampled locations "shown" let a reader take them for all of them; the header has to say
+    /// sample and leave the row accounting to the footer.
+    /// </summary>
+    [Fact]
+    public void A_sampled_index_is_not_reported_as_if_every_location_were_shown()
+    {
+        var graph = new Graph { Root = "/tmp" };
+        graph.UnresolvedByReason["call/no-candidate-symbol"] = 100;
+        graph.Unresolved.Add(new UnresolvedSite
+        {
+            Kind = "call", Reason = "no-candidate-symbol",
+            File = "src/Only.cs", Line = 1, Expression = "Only()"
+        });
+
+        var w = Writer();
+        Queries.Unresolved(graph, null, null, w, []);
+
+        var text = Text(w);
+        Assert.Contains("100 unresolved site(s) in total", text, StringComparison.Ordinal);
+        Assert.Contains("with locations in the sample", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("1 shown", text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void A_bounded_sample_exits_zero_and_names_what_it_withheld()
     {
