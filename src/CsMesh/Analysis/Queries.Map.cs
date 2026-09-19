@@ -66,8 +66,11 @@ public static partial class Queries
 
         if (capped.Count > 0)
         {
+            // The closing line of a capped answer, so it goes through the reserve rather than the
+            // content note path. Written as a note it was the first thing dropped when the sections
+            // filled the content cap, which is exactly when a map most needs to say it is a summary.
             var footer = $"# map is a summary; withheld {Detail(capped)}";
-            w.AddNote(footer.Length <= 170 ? footer : footer[..167] + "...");
+            w.AddMarker(footer.Length <= 170 ? footer : footer[..167] + "...");
         }
 
         return Exit.Ok;
