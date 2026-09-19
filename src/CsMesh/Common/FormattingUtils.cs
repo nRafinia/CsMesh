@@ -5,8 +5,12 @@ namespace CsMesh.Common;
 /// </summary>
 public static class FormattingUtils
 {
+    /// <summary>
+    /// Integer percentage, floored. {value:F0} rounded 199/200 to "100%", which reads exactly like
+    /// a complete result; integer division floors, so 100% is reserved for a true 100%.
+    /// </summary>
     public static string Pct(int numerator, int denominator) =>
-        denominator == 0 ? "0%" : $"{100.0 * numerator / denominator:F0}%";
+        denominator == 0 ? "0%" : $"{100L * numerator / denominator}%";
 
     public static double Median(IEnumerable<double> values)
     {
