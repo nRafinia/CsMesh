@@ -21,4 +21,10 @@
     <ProjectReference Include="..\..\CsMesh\CsMesh.csproj" />
   </ItemGroup>
 
+  <!-- Golden fixtures are real, checked-in solutions indexed by the test, not source compiled into
+       the test assembly. Without this their types would collide with the test code. -->
+  <ItemGroup>
+    <Compile Remove="Fixtures\**" />
+  </ItemGroup>
+
 </Project>

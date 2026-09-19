@@ -1,0 +1,30 @@
+# csmesh graph snapshot: notification-handler
+# format 1
+# regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests
+
+## nodes
+# key | kind | name | file
+Demo::global::Demo.AuditOnShipped|NamedType | type | Demo.AuditOnShipped | Bus.cs
+Demo::global::Demo.EmailOnShipped|NamedType | type | Demo.EmailOnShipped | Bus.cs
+Demo::global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
+Demo::global::Demo.INotificationHandler<T>|NamedType | interface | Demo.INotificationHandler<T> | Bus.cs
+Demo::global::Demo.OrderShipped|NamedType | type | Demo.OrderShipped | Bus.cs
+Demo::global::Demo.Publisher|NamedType | type | Demo.Publisher | Bus.cs
+global::Demo.AuditOnShipped::Handle`0(global::Demo.OrderShipped)|Method | method | Demo.AuditOnShipped.Handle | Bus.cs
+global::Demo.EmailOnShipped::Handle`0(global::Demo.OrderShipped)|Method | method | Demo.EmailOnShipped.Handle | Bus.cs
+global::Demo.IMediator::Publish`1(T)|Method | method | Demo.IMediator.Publish | Bus.cs
+global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | method | Demo.Publisher.Go | Bus.cs
+global::Demo.Publisher::_mediator|Field | field | Demo.Publisher._mediator | Bus.cs
+
+## edges
+# from | kind | to | confidence | source | site | note
+Demo::global::Demo.AuditOnShipped|NamedType | TypeUse | global::Demo.AuditOnShipped::Handle`0(global::Demo.OrderShipped)|Method | 1.00 | - | - | member
+Demo::global::Demo.EmailOnShipped|NamedType | TypeUse | global::Demo.EmailOnShipped::Handle`0(global::Demo.OrderShipped)|Method | 1.00 | - | - | member
+Demo::global::Demo.IMediator|NamedType | TypeUse | global::Demo.IMediator::Publish`1(T)|Method | 1.00 | - | - | member
+Demo::global::Demo.INotificationHandler<T>|NamedType | Interface | Demo::global::Demo.AuditOnShipped|NamedType | 1.00 | - | - | -
+Demo::global::Demo.INotificationHandler<T>|NamedType | Interface | Demo::global::Demo.EmailOnShipped|NamedType | 1.00 | - | - | -
+Demo::global::Demo.Publisher|NamedType | TypeUse | global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | 1.00 | - | - | member
+Demo::global::Demo.Publisher|NamedType | TypeUse | global::Demo.Publisher::_mediator|Field | 1.00 | - | - | member
+global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | Call | global::Demo.IMediator::Publish`1(T)|Method | 1.00 | - | - | -
+global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | Mediatr | global::Demo.AuditOnShipped::Handle`0(global::Demo.OrderShipped)|Method | 1.00 | semantic-request | Bus.cs:28 | via Publish(OrderShipped)
+global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | Mediatr | global::Demo.EmailOnShipped::Handle`0(global::Demo.OrderShipped)|Method | 1.00 | semantic-request | Bus.cs:28 | via Publish(OrderShipped)
