@@ -155,7 +155,7 @@ public static partial class Queries
                 : ["--under <path>"];
 
             var footer = $"# unresolved is a sample; withheld {withheld} (see: {string.Join(", ", filters)})";
-            w.AddNote(footer.Length <= 170 ? footer : footer[..167] + "...");
+            w.AddMarker(footer.Length <= 170 ? footer : footer[..167] + "...");
         }
 
         return Exit.Ok;

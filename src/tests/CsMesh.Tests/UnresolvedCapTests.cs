@@ -86,6 +86,27 @@ public sealed class UnresolvedCapTests
         Assert.DoesNotContain("INCOMPLETE", text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The footer is the whole point of the bound: without it a capped answer reads as complete.
+    /// Written as a content note it was the first thing dropped when the rows filled the content
+    /// cap -- reachable at the default on a real repo -- so it goes through the reserve as the
+    /// closing line. The sweep is the honest check: a few round budgets would miss the window.
+    /// </summary>
+    [Fact]
+    public void The_withheld_footer_survives_a_budget_that_barely_fits_the_rows()
+    {
+        for (var budget = 60; budget <= 1200; budget += 5)
+        {
+            var w = Writer(budget);
+            var exit = Queries.Unresolved(ManySites(), null, null, w, []);
+
+            if (exit != Exit.Ok) continue;
+
+            Assert.Contains("unresolved is a sample; withheld", Text(w), StringComparison.Ordinal);
+            Assert.True(w.Tokens <= budget, $"the footer pushed {w.Tokens} past the {budget} budget");
+        }
+    }
+
     [Fact]
     public void The_budget_running_out_is_still_an_incomplete_answer()
     {

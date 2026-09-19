@@ -11,10 +11,10 @@ namespace CsMesh.Common;
 public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
 {
     /// <summary>
-    /// Tokens held back from content so the completion marker always fits inside the budget it
-    /// reports on. Content is capped at <see cref="Budget"/> minus this. A query that does not
-    /// overflow emits no marker and spends none of the reserve on output; the reserve only reduces
-    /// how much content fits before the answer is truncated.
+    /// Tokens held back from content so the closing line always fits inside the budget it reports
+    /// on. Content is capped at <see cref="Budget"/> minus this. A query that does not overflow
+    /// emits no marker and spends none of the reserve on output; the reserve only reduces how much
+    /// content fits before the answer is truncated.
     /// </summary>
     public const int CompletionMarkerReserve = 40;
 
@@ -102,13 +102,15 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     }
 
     /// <summary>
-    /// Emits the completion marker through the writer, inside the full budget rather than the content
-    /// cap. This is the one line allowed past the content cap, and only on overflow.
+    /// Writes the line that closes an answer: the completion marker on overflow, or the footer
+    /// naming what a bounded sample withheld. This is the one line allowed past the content cap,
+    /// because a closing line dropped for room is exactly the silent truncation the reserve exists
+    /// to prevent -- and a capped answer at exit 0 has no completion marker to yield to.
     ///
-    /// Forced headers can consume the reserve before the marker is reached, so if the full marker
-    /// will not fit it is shortened to the room that is left rather than dropped. The invariant is
-    /// that an incomplete answer is always marked; only a budget already overrun by forced content
-    /// leaves no room, and then it returns false.
+    /// Forced headers can consume the reserve before the closing line is reached, so if the full
+    /// line will not fit it is shortened to the room that is left rather than dropped. The invariant
+    /// is that an incomplete or capped answer is always closed; only a budget already overrun by
+    /// forced content leaves no room, and then it returns false.
     /// </summary>
     public bool AddMarker(string line)
     {
