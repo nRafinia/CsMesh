@@ -506,6 +506,10 @@ public static partial class Queries
 
             if (targetBindings.Count == 0) return null;
 
+            // Highest score wins because every candidate here points at the same implementation:
+            // these are one wiring path detected more than once at different confidence, not two
+            // competing destinations. The best-evidenced registration is the one to print; the
+            // count that goes out beside it is what tells the reader the pair was seen N times.
             var chosen = targetBindings.OrderByDescending(b => b.Score).First();
             return new HopSite(chosen.Site!, targetBindings.Count, allBindings.Count, chosen.Score, chosen.Source);
         }
