@@ -13,11 +13,11 @@ namespace CsMesh.Analysis;
 /// bearing. The graph knows: what depends on what, where the entrypoints cluster, and which
 /// handful of members everything else runs through.
 ///
-/// Deliberately one screen. A map that does not fit on one is a directory listing. So it selects
-/// rather than emit-until-full: each section is capped, and the closing footer names what the caps
-/// withheld and the query that returns the full list where one exists. That cap is the summary's
-/// design, so a capped map still exits 0; the incomplete marker and exit 2 are reserved for the
-/// budget actually running out, which is a genuinely incomplete answer.
+/// One screen by design: it selects rather than emit-until-full, so each section shows its top N
+/// and the closing footer names what the caps withheld and the query that returns the full list
+/// where one exists. That cap is the summary's design, so a capped map still exits 0. On a very
+/// large solution the budget itself can still run out before the caps are reached, and then the map
+/// says so (INCOMPLETE, exit 2) rather than passing a partial map off as the whole answer.
 /// </summary>
 public static partial class Queries
 {

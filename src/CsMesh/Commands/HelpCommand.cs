@@ -546,7 +546,7 @@ public static class HelpCommand
 
         OPTIONS:
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
-            --budget <N>       Maximum output tokens (default: 700, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 850, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -557,7 +557,9 @@ public static class HelpCommand
             anything in it is load bearing. This answers which projects lean on which, where the
             entrypoints cluster, and which handful of members everything runs through.
 
-            Deliberately one screen. A map that needs two is a directory listing.
+            One screen by design: each section shows its top N and the footer names what was
+            withheld. On a very large solution the budget itself can run out before those caps,
+            and the map says so (INCOMPLETE, exit 2) instead of reading as a complete answer.
 
         EXAMPLES:
             csmesh map
