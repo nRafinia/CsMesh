@@ -8,12 +8,20 @@ namespace CsMesh.Tests;
 
 /// <summary>
 /// Golden graphs for the dispatch shapes. Each fixture under Fixtures/&lt;case&gt;/ is a small, real
-/// solution; its checked-in snapshot is what the indexer must produce. The snapshot is keyed on
-/// <see cref="Node.Key"/>, never the positional Id, so a diff reads as "this edge lost its
-/// confidence" instead of "every id after line 10 shifted".
+/// solution; its checked-in snapshot is what the indexer must produce.
 ///
-/// Edge ordering is total and deterministic (from, kind, to, source, site, note), and the fields a
-/// regression would quietly change -- Confidence, Source, Site -- are all present.
+/// Built from source alone: the harness never restores or builds the fixture, so the graph depends
+/// only on the fixture text, the pinned Roslyn version, and the shared framework. Fixtures therefore
+/// declare every handler interface and message locally and reference no NuGet package -- a package
+/// type would be unbound and the snapshot would encode a machine-dependent degraded graph.
+///
+/// Identity is <see cref="Node.Key"/>, never the positional Id, so a diff reads as "this edge lost
+/// its confidence" instead of "every id after line 10 shifted". Edge lines carry <see cref="Node.Name"/>
+/// for readability; Key stays the anchor in the nodes section, and any name shared by more than one
+/// node is shown by key and listed in the header.
+///
+/// The unchecked fields a regression would quietly change -- Confidence, Source, Site -- are all
+/// present, and unresolved sites are pinned in their own section.
 ///
 /// Regenerate every snapshot with:
 ///   set CSMESH_UPDATE_SNAPSHOTS=1 &amp;&amp; dotnet test --filter FullyQualifiedName~GoldenGraphTests
@@ -53,18 +61,30 @@ public sealed class GoldenGraphTests
         var caseDir = Path.Combine(FixturesDir(), caseName);
         var snapshotPath = Path.Combine(caseDir, "expected.graph.txt");
 
+        // Build output would be scanned into the reference set and change the graph. The harness
+        // builds from source alone; a bin/obj here means someone built the fixture by hand.
+        foreach (var artifact in new[] { "bin", "obj" })
+        {
+            Assert.False(
+                Directory.Exists(Path.Combine(caseDir, artifact)),
+                $"fixture '{caseName}' contains {artifact}/; remove it -- the graph is built from source alone");
+        }
+
         var graph = Indexer.Build(caseDir);
         graph.Freeze();
         var actual = Render(graph, caseName);
 
+        // Update mode overwrites existing snapshots as well as creating missing ones; a regeneration
+        // command that cannot rewrite an existing file is not a regeneration command. Off CI (no
+        // variable) a missing snapshot fails and is never written.
+        if (Environment.GetEnvironmentVariable("CSMESH_UPDATE_SNAPSHOTS") == "1")
+        {
+            File.WriteAllText(snapshotPath, actual);
+            return;
+        }
+
         if (!File.Exists(snapshotPath))
         {
-            if (Environment.GetEnvironmentVariable("CSMESH_UPDATE_SNAPSHOTS") == "1")
-            {
-                File.WriteAllText(snapshotPath, actual);
-                return;
-            }
-
             Assert.Fail(
                 $"no snapshot for '{caseName}': {snapshotPath}{Environment.NewLine}" +
                 "regenerate: set CSMESH_UPDATE_SNAPSHOTS=1 && dotnet test --filter FullyQualifiedName~GoldenGraphTests");
@@ -81,20 +101,33 @@ public sealed class GoldenGraphTests
 
     private static string Render(Graph g, string caseName)
     {
-        var keyById = g.Nodes.ToDictionary(
-            n => n.Id,
-            n => n.Key.Length > 0 ? n.Key : "!" + n.Name);
+        var byId = g.Nodes.ToDictionary(n => n.Id);
+        var namesById = g.Nodes.ToDictionary(n => n.Id, n => n.Key.Length > 0 ? n.Key : "!" + n.Name);
 
-        string KeyOf(int id) => keyById.TryGetValue(id, out var key) ? key : "?id:" + id;
+        // A name shared by two nodes cannot address an edge, so those nodes are shown by key.
+        var nameCounts = g.Nodes
+            .GroupBy(n => n.Name, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.Count(), StringComparer.Ordinal);
+        var ambiguous = nameCounts.Where(kv => kv.Value > 1).Select(kv => kv.Key).OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+        string Ref(int id)
+        {
+            if (!byId.TryGetValue(id, out var node)) return "?id:" + id;
+            return nameCounts[node.Name] > 1 ? namesById[id] : node.Name;
+        }
 
         var sb = new StringBuilder();
         sb.AppendLine($"# csmesh graph snapshot: {caseName}");
-        sb.AppendLine("# format 1");
+        sb.AppendLine("# format 2");
         sb.AppendLine("# regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests");
+        if (ambiguous.Count > 0)
+        {
+            sb.AppendLine($"# names shared by more than one node (shown by key): {string.Join(", ", ambiguous)}");
+        }
+
         sb.AppendLine();
         sb.AppendLine("## nodes");
         sb.AppendLine("# key | kind | name | file");
-
         foreach (var n in g.Nodes
                      .OrderBy(n => n.Key.Length > 0 ? n.Key : "!" + n.Name, StringComparer.Ordinal)
                      .ThenBy(n => n.Kind, StringComparer.Ordinal)
@@ -107,13 +140,12 @@ public sealed class GoldenGraphTests
         sb.AppendLine();
         sb.AppendLine("## edges");
         sb.AppendLine("# from | kind | to | confidence | source | site | note");
-
         var edges = g.Edges
             .Select(e => new
             {
-                From = KeyOf(e.From),
+                From = Ref(e.From),
                 Kind = e.Kind.ToString(),
-                To = KeyOf(e.To),
+                To = Ref(e.To),
                 Confidence = (e.Confidence ?? 1.0).ToString("0.00", CultureInfo.InvariantCulture),
                 Source = e.Source ?? "-",
                 Site = (e.Site ?? "-").Replace('\\', '/'),
@@ -131,26 +163,55 @@ public sealed class GoldenGraphTests
             sb.AppendLine($"{e.From} | {e.Kind} | {e.To} | {e.Confidence} | {e.Source} | {e.Site} | {e.Note}");
         }
 
+        sb.AppendLine();
+        sb.AppendLine("## unresolved");
+        sb.AppendLine("# kind/reason | site | expression");
+        var unresolved = g.Unresolved
+            .Select(u => new
+            {
+                Reason = $"{u.Kind}/{u.Reason}",
+                Site = u.File.Length > 0 ? $"{u.File.Replace('\\', '/')}:{u.Line}" : "-",
+                Expression = u.Expression
+            })
+            .OrderBy(u => u.Reason, StringComparer.Ordinal)
+            .ThenBy(u => u.Site, StringComparer.Ordinal)
+            .ThenBy(u => u.Expression, StringComparer.Ordinal);
+
+        foreach (var u in unresolved)
+        {
+            sb.AppendLine($"{u.Reason} | {u.Site} | {u.Expression}");
+        }
+
         return sb.ToString();
     }
 
     /// <summary>
-    /// Set difference, not positional: a line that moved is not a change. Reads as the old edge
-    /// removed and the changed one added, which is the actual regression.
+    /// Positional over the total order, deliberately. A set difference cannot see a duplicate: if
+    /// the indexer starts emitting one edge twice -- the exact regression the newest-config rule
+    /// exists to prevent -- the line sets stay equal and a set comparison stays green. Comparing the
+    /// sorted sequence catches both a changed line and a repeated one.
     /// </summary>
     private static string Diff(string expected, string actual)
     {
-        var expectedLines = expected.Split('\n');
-        var actualLines = actual.Split('\n');
-
-        var removed = expectedLines.Except(actualLines, StringComparer.Ordinal).Take(40).ToList();
-        var added = actualLines.Except(expectedLines, StringComparer.Ordinal).Take(40).ToList();
-
+        var e = expected.Split('\n');
+        var a = actual.Split('\n');
         var sb = new StringBuilder();
-        sb.AppendLine("removed:");
-        foreach (var line in removed) sb.AppendLine("  - " + line);
-        sb.AppendLine("added:");
-        foreach (var line in added) sb.AppendLine("  + " + line);
+
+        var max = Math.Max(e.Length, a.Length);
+        var shown = 0;
+        for (var i = 0; i < max && shown < 40; i++)
+        {
+            var el = i < e.Length ? e[i] : "<end of snapshot>";
+            var al = i < a.Length ? a[i] : "<end of graph>";
+            if (string.Equals(el, al, StringComparison.Ordinal)) continue;
+
+            sb.AppendLine($"line {i + 1}:");
+            sb.AppendLine($"  snapshot: {el}");
+            sb.AppendLine($"  graph:    {al}");
+            shown++;
+        }
+
+        if (e.Length != a.Length) sb.AppendLine($"line count: snapshot {e.Length}, graph {a.Length}");
         return sb.ToString();
     }
 }

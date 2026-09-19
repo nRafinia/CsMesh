@@ -1,5 +1,5 @@
 # csmesh graph snapshot: notification-handler
-# format 1
+# format 2
 # regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests
 
 ## nodes
@@ -18,13 +18,16 @@ global::Demo.Publisher::_mediator|Field | field | Demo.Publisher._mediator | Bus
 
 ## edges
 # from | kind | to | confidence | source | site | note
-Demo::global::Demo.AuditOnShipped|NamedType | TypeUse | global::Demo.AuditOnShipped::Handle`0(global::Demo.OrderShipped)|Method | 1.00 | - | - | member
-Demo::global::Demo.EmailOnShipped|NamedType | TypeUse | global::Demo.EmailOnShipped::Handle`0(global::Demo.OrderShipped)|Method | 1.00 | - | - | member
-Demo::global::Demo.IMediator|NamedType | TypeUse | global::Demo.IMediator::Publish`1(T)|Method | 1.00 | - | - | member
-Demo::global::Demo.INotificationHandler<T>|NamedType | Interface | Demo::global::Demo.AuditOnShipped|NamedType | 1.00 | - | - | -
-Demo::global::Demo.INotificationHandler<T>|NamedType | Interface | Demo::global::Demo.EmailOnShipped|NamedType | 1.00 | - | - | -
-Demo::global::Demo.Publisher|NamedType | TypeUse | global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | 1.00 | - | - | member
-Demo::global::Demo.Publisher|NamedType | TypeUse | global::Demo.Publisher::_mediator|Field | 1.00 | - | - | member
-global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | Call | global::Demo.IMediator::Publish`1(T)|Method | 1.00 | - | - | -
-global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | Mediatr | global::Demo.AuditOnShipped::Handle`0(global::Demo.OrderShipped)|Method | 1.00 | semantic-request | Bus.cs:28 | via Publish(OrderShipped)
-global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | Mediatr | global::Demo.EmailOnShipped::Handle`0(global::Demo.OrderShipped)|Method | 1.00 | semantic-request | Bus.cs:28 | via Publish(OrderShipped)
+Demo.AuditOnShipped | TypeUse | Demo.AuditOnShipped.Handle | 1.00 | - | - | member
+Demo.EmailOnShipped | TypeUse | Demo.EmailOnShipped.Handle | 1.00 | - | - | member
+Demo.IMediator | TypeUse | Demo.IMediator.Publish | 1.00 | - | - | member
+Demo.INotificationHandler<T> | Interface | Demo.AuditOnShipped | 1.00 | - | - | -
+Demo.INotificationHandler<T> | Interface | Demo.EmailOnShipped | 1.00 | - | - | -
+Demo.Publisher | TypeUse | Demo.Publisher.Go | 1.00 | - | - | member
+Demo.Publisher | TypeUse | Demo.Publisher._mediator | 1.00 | - | - | member
+Demo.Publisher.Go | Call | Demo.IMediator.Publish | 1.00 | - | - | -
+Demo.Publisher.Go | Mediatr | Demo.AuditOnShipped.Handle | 1.00 | semantic-request | Bus.cs:28 | via Publish(OrderShipped)
+Demo.Publisher.Go | Mediatr | Demo.EmailOnShipped.Handle | 1.00 | semantic-request | Bus.cs:28 | via Publish(OrderShipped)
+
+## unresolved
+# kind/reason | site | expression
