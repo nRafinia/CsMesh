@@ -59,7 +59,13 @@ public static class UsageCommand
         Console.WriteLine($"csmesh usage, last {days} day(s)");
         Console.WriteLine($"  invocations       {rows.Count}");
         Console.WriteLine($"  agent-attributed  {agentRows.Count} ({FormattingUtils.Pct(agentRows.Count, rows.Count)})");
-        Console.WriteLine($"  distinct sessions {rows.Select(r => r.Session).Where(s => s != null).Distinct().Count()}");
+        // A zero here is a fact about the host, not about usage: some agents (opencode among them)
+        // export no conversation id at all, only a process id that is not a session. Printing a
+        // bare 0 reads as "no sessions happened" and would be quoted as such later.
+        var distinctSessions = rows.Select(r => r.Session).Where(s => !string.IsNullOrEmpty(s)).Distinct().Count();
+        new Emit(false).Line(distinctSessions > 0
+            ? $"  distinct sessions {distinctSessions}"
+            : "  distinct sessions none (this host exposes no session id)");
         Console.WriteLine();
 
         Console.WriteLine("  by caller");
