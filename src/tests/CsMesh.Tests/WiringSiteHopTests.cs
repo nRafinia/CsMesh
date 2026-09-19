@@ -490,23 +490,26 @@ public sealed class WiringSiteHopTests(GraphFixture fixture) : IClassFixture<Gra
             var graph = Indexer.Build(temp);
             graph.Freeze();
 
-            var caller = graph.Nodes.Single(n => n.Short == "Caller.Run");
-            var greeterMethod = graph.Nodes.Single(n => n.Short == "Greeter.Greet");
+            // Path from the interface method to its implementation: a single Interface hop.
+            // Using Path (BFS shortest) rather than Trace avoids the intermediate IGreeter.Greet
+            // hop that Caller.Run → IGreeter.Greet → Greeter.Greet would introduce.
+            var iface = graph.Nodes.Single(n => n.Short == "IGreeter.Greet");
+            var impl = graph.Nodes.Single(n => n.Short == "Greeter.Greet");
 
-            var rootLine = $"Caller.Run  Caller.cs:{caller.Line}";
-            var hopWithoutSite = $"  -> Greeter.Greet  [impl, di-bound]  Services.cs:{greeterMethod.Line}";
+            var rootLine = $"IGreeter.Greet  Services.cs:{iface.Line}";
+            var hopWithoutSite = $"  -> Greeter.Greet  [impl, di-bound]  Services.cs:{impl.Line}";
             var costWithoutSite = BudgetWriter.Estimate(rootLine) + BudgetWriter.Estimate(hopWithoutSite);
 
             // A budget set to exactly costWithoutSite fits the bare hop but overflows with the suffix.
             var wTight = new BudgetWriter(costWithoutSite);
-            var exitTight = Queries.Trace(graph, caller, 6, wTight, []);
+            var exitTight = Queries.Path(graph, iface, impl, 6, wTight, []);
             Assert.Equal(Exit.OverBudget, exitTight);
 
-            // Raising budget to include the suffix allows it to pass
+            // Raising budget to include the suffix allows it to pass.
             var siteSuffix = "  @ Wiring.cs:7";
             var costWithSite = BudgetWriter.Estimate(rootLine) + BudgetWriter.Estimate(hopWithoutSite + siteSuffix);
             var wGenerous = new BudgetWriter(costWithSite + 10);
-            var exitGenerous = Queries.Trace(graph, caller, 6, wGenerous, []);
+            var exitGenerous = Queries.Path(graph, iface, impl, 6, wGenerous, []);
             Assert.Equal(Exit.Ok, exitGenerous);
         }
         finally
