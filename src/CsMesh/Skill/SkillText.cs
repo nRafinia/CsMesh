@@ -63,6 +63,12 @@ public static class SkillText
         Run it before you open a **second** file to follow a call chain. It crosses container bindings and
         mediator dispatch, which reading files in sequence does not.
 
+        **"Who calls this? Where is it invoked from?"**
+        -> `csmesh blast-radius Type.Member --depth 1`
+
+        Reverse edges. `trace` walks forward from a symbol, `blast-radius` walks backward. If you are
+        enumerating call sites, this is the command -- not `trace`, and not grep.
+
         **"Which class runs behind this interface?"**
         -> `csmesh impl IThing`
 
@@ -123,6 +129,11 @@ public static class SkillText
         Enums, enum members, delegates and fields are all in the graph. Do not grep for the enum name.
 
         ## When something comes back empty
+
+        **A command exits 2.** The answer was too large, not absent. Apply the remedy in order: the depth
+        the message names, then `--under <path>`, then `--depth 1` for direct edges only. `silence` belongs
+        to a *narrowed* query that then comes back exit 1 -- never to exit 2 itself, where nothing was
+        missing and narrowing is what removes the overflow.
 
         **A command exits 1.** Do not fall back to grep. Run `csmesh silence <symbol>`, or
         `csmesh silence <from> <to>` for a missing path. Exit 1 means the graph had nothing, which is not
@@ -191,7 +202,7 @@ public static class SkillText
         |---|---|---|
         | 0 | complete answer | use it |
         | 1 | nothing found | `csmesh silence <symbol>` before anything else |
-        | 2 | answer exists but exceeds the budget | narrow with `--under`, or use the depth the message names. Do **not** just raise `--budget` to a huge number |
+        | 2 | answer exists but exceeds the budget | in order: the depth the message names, then `--under <path>`, then `--depth 1` for direct edges only. Do **not** just raise `--budget` to a huge number, and do **not** run `silence` here -- a *narrowed* query that then exits 1 is when `silence` applies |
         | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
         | 4 | no index, or one written by an older csmesh | run `csmesh index` |
         | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
@@ -250,6 +261,7 @@ public static class SkillText
         | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 800` |
         | list directories to orient in an unfamiliar repo | `csmesh map` |
         | open a second file to follow a call chain | `csmesh trace Type.Member --budget 600` |
+        | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
         | guess which class implements an interface | `csmesh impl IThing --budget 300` |
         | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
         | grep for a mediator handler | `csmesh trace` on the calling method |
@@ -276,6 +288,9 @@ public static class SkillText
 
         ## When something comes back empty
 
+        - **Exit 2**: the answer was too large, not absent. In order: the depth the message names, then
+          `--under <path>`, then `--depth 1` for direct edges only. `silence` is for a *narrowed* query that
+          then exits 1 -- never for exit 2 itself, where nothing was missing.
         - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
           whether the symbol was mistyped, lives in a package, was never bound because the solution was not
           built, or is reached only through a container scan. Only one of those is fixed by searching here.
@@ -348,6 +363,7 @@ public static class SkillText
         | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 800` |
         | list directories to orient in an unfamiliar repo | `csmesh map` |
         | open a second file to follow a call chain | `csmesh trace Type.Member --budget 600` |
+        | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
         | guess which class implements an interface | `csmesh impl IThing --budget 300` |
         | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
         | grep for a mediator handler | `csmesh trace` on the calling method |
@@ -374,6 +390,9 @@ public static class SkillText
 
         ## When something comes back empty
 
+        - **Exit 2**: the answer was too large, not absent. In order: the depth the message names, then
+          `--under <path>`, then `--depth 1` for direct edges only. `silence` is for a *narrowed* query that
+          then exits 1 -- never for exit 2 itself, where nothing was missing.
         - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
           whether the symbol was mistyped, lives in a package, was never bound because the solution was not
           built, or is reached only through a container scan. Only one of those is fixed by searching here.
