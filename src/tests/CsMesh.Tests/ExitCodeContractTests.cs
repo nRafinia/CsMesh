@@ -8,6 +8,7 @@ namespace CsMesh.Tests;
 /// contract, not a detail. The catch-all used to report Exit.Usage for both, which told an agent
 /// that hit a crash its syntax was wrong and sent it back to retry the same arguments.
 /// </summary>
+[Collection("console-capture")]
 public sealed class ExitCodeContractTests
 {
     [Fact]

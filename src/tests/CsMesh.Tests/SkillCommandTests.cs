@@ -4,6 +4,7 @@ using Xunit;
 
 namespace CsMesh.Tests;
 
+[Collection("console-capture")]
 public sealed class SkillCommandTests : IDisposable
 {
     private readonly string _root;

@@ -21,6 +21,7 @@ namespace CsMesh.Tests;
 /// against real output from 'dotnet new blazor' and 'dotnet new webapp' built with
 /// '--no-incremental -p:EmitCompilerGeneratedFiles=true'.
 /// </summary>
+[Collection("console-capture")]
 public sealed class RazorCshtmlIndexingTests : IDisposable
 {
     private readonly string _root;
@@ -144,6 +145,7 @@ public sealed class RazorCshtmlIndexingTests : IDisposable
 /// mtime rather than the generated file's, the next freshness check finds nothing to disagree with
 /// and calls the graph clean while it silently serves pre-edit content, permanently.
 /// </summary>
+[Collection("console-capture")]
 public sealed class RazorStaleGeneratedSourceTests : IDisposable
 {
     private readonly string _root;
