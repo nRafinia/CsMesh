@@ -66,7 +66,7 @@ public static class QueryCommand
         {
             var note = $"# index is {dirty.Count} file(s) behind working tree; rows from those files are marked [STALE]. run: csmesh index";
             result.Notes.Add(note);
-            if (!json) writer.Force(note);
+            if (!json) writer.AddNote(note);
         }
 
         // A version gap is invisible in the rows themselves -- every line looks as confident as
@@ -77,7 +77,7 @@ public static class QueryCommand
         {
             var note = $"# {GraphStore.VersionGap(graph)}; detections added since then are missing. run: csmesh index --full";
             result.Notes.Add(note);
-            if (!json) writer.Force(note);
+            if (!json) writer.AddNote(note);
         }
 
         // The forced notes above are spent before the query starts, so the query's real allowance is

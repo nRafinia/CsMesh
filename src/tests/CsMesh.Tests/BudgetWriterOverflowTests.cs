@@ -45,6 +45,26 @@ public sealed class BudgetWriterOverflowTests
         Assert.True(w.Tokens > 18, "the forced warning does inflate the emitted total");
     }
 
+    /// <summary>
+    /// The pathological case: forced notes and headers consume the content cap, and the marker must
+    /// still appear. Before the truncating AddMarker, it returned false and a truncated answer could
+    /// come back unmarked -- the same failure map had, reintroduced through a different door.
+    /// </summary>
+    [Fact]
+    public void An_incomplete_answer_is_marked_even_when_notes_and_headers_consume_the_cap()
+    {
+        var w = new BudgetWriter(90, BudgetWriter.CompletionMarkerReserve);
+
+        Assert.True(w.AddNote(new string('n', 120)));   // ~30 tokens against a 50-token content cap
+        w.Force(new string('h', 120));                   // forced header, past the cap
+        Assert.False(w.Add("content that does not fit"));
+
+        Assert.True(w.AddMarker("INCOMPLETE: " + new string('x', 300)));
+
+        Assert.Contains(w.Lines, line => line.StartsWith("INCOMPLETE", StringComparison.Ordinal));
+        Assert.True(w.Tokens <= w.Budget);
+    }
+
     [Fact]
     public void A_clean_run_reports_would_be_equal_to_emitted_and_zero_over()
     {

@@ -87,15 +87,42 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     }
 
     /// <summary>
-    /// Emits the completion marker through the writer, inside the full budget rather than the
-    /// content cap. This is the one line allowed past the content cap, and only on overflow. Returns
-    /// false if even the reserve cannot hold it, so the caller knows the marker was dropped rather
-    /// than assuming it printed.
+    /// A pre-query note: content, not a result. It respects the content cap and is dropped rather
+    /// than run into the room the completion marker needs -- an incomplete answer must always be
+    /// marked, and a stale-index note is the less important of the two.
+    /// </summary>
+    public bool AddNote(string line)
+    {
+        var cost = Estimate(line);
+        if (_tokens + cost > ContentCap) return false;
+
+        _lines.Add(line);
+        _tokens += cost;
+        return true;
+    }
+
+    /// <summary>
+    /// Emits the completion marker through the writer, inside the full budget rather than the content
+    /// cap. This is the one line allowed past the content cap, and only on overflow.
+    ///
+    /// Forced headers can consume the reserve before the marker is reached, so if the full marker
+    /// will not fit it is shortened to the room that is left rather than dropped. The invariant is
+    /// that an incomplete answer is always marked; only a budget already overrun by forced content
+    /// leaves no room, and then it returns false.
     /// </summary>
     public bool AddMarker(string line)
     {
         var cost = Estimate(line);
-        if (_tokens + cost > budgetTokens) return false;
+        if (_tokens + cost > budgetTokens)
+        {
+            var room = budgetTokens - _tokens;
+            if (room < 2) return false;
+
+            var maxChars = Math.Max(0, room * 4 - 1);
+            line = line[..Math.Min(line.Length, maxChars)];
+            cost = Estimate(line);
+            if (_tokens + cost > budgetTokens) return false;
+        }
 
         _lines.Add(line);
         _tokens += cost;
