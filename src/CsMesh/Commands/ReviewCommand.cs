@@ -23,6 +23,7 @@ public static class ReviewCommand
     {
         var json = opt.Flag("json");
         var budget = opt.Int("budget", 800);
+        CsMesh.Telemetry.Telemetry.Current.Budget = budget;
         var includeCalls = opt.Flag("calls");
         var accept = opt.Flag("accept");
 

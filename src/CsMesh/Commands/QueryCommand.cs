@@ -11,8 +11,8 @@ public static class QueryCommand
     public static int Execute(string root, Options opt, string kind)
     {
         var json = opt.Flag("json");
-        var budget = opt.Int("budget", DefaultBudget(kind));
-        var writer = new BudgetWriter(budget);
+        var writer = WriterFor(kind, opt);
+        var budget = writer.Budget;
         var result = new QueryResult { Command = kind, Query = opt.Positional.FirstOrDefault() };
 
         var graph = GraphStore.Load(root, out var problem);
@@ -79,6 +79,11 @@ public static class QueryCommand
             result.Notes.Add(note);
             if (!json) writer.Force(note);
         }
+
+        // The forced notes above are spent before the query starts, so the query's real allowance is
+        // the cap minus this. Recorded so two otherwise identical queries can be told apart by whether
+        // the index happened to be stale, which the log previously could not do.
+        CsMesh.Telemetry.Telemetry.Current.ReservedTokens = writer.Tokens;
 
         int exitCode;
 
@@ -222,6 +227,19 @@ public static class QueryCommand
         writer.Flush();
         Dbg.Log($"emitted {writer.Tokens} tokens (budget {budget}), exit {exitCode}");
         return exitCode;
+    }
+
+    /// <summary>
+    /// The budget a query runs under, resolved once and given to both the writer that enforces it
+    /// and telemetry that records it. These used to be resolved separately -- the writer from the
+    /// per-kind default, the log from a flat 600 in CliRunner -- so every command whose default is
+    /// not 600 (where 400, impl 300, path 400, map 700, silence 700) logged a cap it was never held to.
+    /// </summary>
+    internal static BudgetWriter WriterFor(string kind, Options opt)
+    {
+        var budget = opt.Int("budget", DefaultBudget(kind));
+        CsMesh.Telemetry.Telemetry.Current.Budget = budget;
+        return new BudgetWriter(budget);
     }
 
     private static int DefaultBudget(string kind) => kind switch

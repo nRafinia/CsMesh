@@ -19,13 +19,22 @@ public sealed class Invocation
     /// <summary>
     /// The size the answer wanted, when the emitted output was cut by the budget. <see cref="OutTokens"/>
     /// is what was emitted; this is the emitted total plus the first line the budget refused, which is
-    /// a lower bound on the untruncated answer -- a query stops at the first refusal, so the rest is
-    /// never measured. Equal to <see cref="OutTokens"/> when nothing overflowed.
+    /// a lower bound on the untruncated answer: a query stops at the first refusal, so everything after
+    /// it is never measured, and this stays a lower bound until truncate-and-mark measures past the
+    /// first refusal. Equal to <see cref="OutTokens"/> when nothing overflowed.
     ///
     /// Without this, an exit=2 row read as "under budget" whenever the refused line was what pushed
     /// it over, and the amount over was unrecoverable from the log.
     /// </summary>
     public int WouldBeTokens { get; set; }
+
+    /// <summary>
+    /// Tokens the forced pre-query notes spent before the query ran -- a stale-index line, a
+    /// version-gap line. <see cref="Budget"/> is the cap the writer was given; the query's real
+    /// allowance was <c>Budget - ReservedTokens</c>. Recorded because two identical queries otherwise
+    /// differ only by whether the index happened to be stale, and nothing in the log said so.
+    /// </summary>
+    public int ReservedTokens { get; set; }
 
     /// <summary>Distinct source files the answer pointed the caller at.</summary>
     public int FilesReferenced { get; set; }

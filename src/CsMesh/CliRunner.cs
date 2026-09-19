@@ -46,7 +46,6 @@ public static class CliRunner
 
         var root = RepositoryLocator.FindRoot(opt.Value("repo") ?? Directory.GetCurrentDirectory());
         Telemetry.Telemetry.Current.Root = root;
-        Telemetry.Telemetry.Current.Budget = opt.Int("budget", 600);
         Telemetry.Telemetry.Begin(cmd, rest);
 
         Dbg.Log($"root={root} caller={Telemetry.Telemetry.Current.Caller} via={Telemetry.Telemetry.Current.CallerVia} " +
