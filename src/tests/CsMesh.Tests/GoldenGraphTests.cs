@@ -191,7 +191,7 @@ public sealed class GoldenGraphTests
     /// exists to prevent -- the line sets stay equal and a set comparison stays green. Comparing the
     /// sorted sequence catches both a changed line and a repeated one.
     /// </summary>
-    private static string Diff(string expected, string actual)
+    internal static string Diff(string expected, string actual)
     {
         var e = expected.Split('\n');
         var a = actual.Split('\n');
@@ -213,5 +213,38 @@ public sealed class GoldenGraphTests
 
         if (e.Length != a.Length) sb.AppendLine($"line count: snapshot {e.Length}, graph {a.Length}");
         return sb.ToString();
+    }
+
+    // The comparer is a property of the guard, so it is tested directly: two line arrays, no
+    // corrupted snapshot on disk.
+
+    [Fact]
+    public void The_comparer_reports_a_duplicated_line_as_a_mismatch()
+    {
+        var snapshot = "## edges\na | Call | b\nc | Call | d";
+        var graph = "## edges\na | Call | b\nc | Call | d\nc | Call | d";
+
+        var diff = Diff(snapshot, graph);
+
+        Assert.NotEmpty(diff);
+        Assert.Contains("line count: snapshot 3, graph 4", diff, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_comparer_is_silent_on_identical_input()
+    {
+        Assert.Empty(Diff("a\nb\nc", "a\nb\nc"));
+    }
+
+    [Fact]
+    public void The_comparer_reports_a_changed_field()
+    {
+        var snapshot = "Demo.Go | Mediatr | Demo.Handle | 1.00 | semantic-request | Bus.cs:22 | -";
+        var graph = "Demo.Go | Mediatr | Demo.Handle | 0.70 | short-name-match | Bus.cs:22 | -";
+
+        var diff = Diff(snapshot, graph);
+
+        Assert.Contains("0.70", diff, StringComparison.Ordinal);
+        Assert.Contains("1.00", diff, StringComparison.Ordinal);
     }
 }
