@@ -1,0 +1,28 @@
+# csmesh graph snapshot: message-handler
+# format 2
+# regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests
+
+## nodes
+# key | kind | name | file
+Demo::global::Demo.IBus|NamedType | interface | Demo.IBus | Bus.cs
+Demo::global::Demo.IHandleMessages<T>|NamedType | interface | Demo.IHandleMessages<T> | Bus.cs
+Demo::global::Demo.OrderPlacedConsumer|NamedType | type | Demo.OrderPlacedConsumer | Bus.cs
+Demo::global::Demo.OrderPlaced|NamedType | type | Demo.OrderPlaced | Bus.cs
+Demo::global::Demo.Publisher|NamedType | type | Demo.Publisher | Bus.cs
+global::Demo.IBus::Publish`1(T)|Method | method | Demo.IBus.Publish | Bus.cs
+global::Demo.OrderPlacedConsumer::Handle`0(global::Demo.OrderPlaced)|Method | method | Demo.OrderPlacedConsumer.Handle | Bus.cs
+global::Demo.Publisher::Go`0(global::Demo.OrderPlaced)|Method | method | Demo.Publisher.Go | Bus.cs
+global::Demo.Publisher::_bus|Field | field | Demo.Publisher._bus | Bus.cs
+
+## edges
+# from | kind | to | confidence | source | site | note
+Demo.IBus | TypeUse | Demo.IBus.Publish | 1.00 | - | - | member
+Demo.IHandleMessages<T> | Interface | Demo.OrderPlacedConsumer | 1.00 | - | - | -
+Demo.OrderPlacedConsumer | TypeUse | Demo.OrderPlacedConsumer.Handle | 1.00 | - | - | member
+Demo.Publisher | TypeUse | Demo.Publisher.Go | 1.00 | - | - | member
+Demo.Publisher | TypeUse | Demo.Publisher._bus | 1.00 | - | - | member
+Demo.Publisher.Go | Call | Demo.IBus.Publish | 1.00 | - | - | -
+Demo.Publisher.Go | Mediatr | Demo.OrderPlacedConsumer.Handle | 1.00 | semantic-request | Bus.cs:22 | via Publish(OrderPlaced)
+
+## unresolved
+# kind/reason | site | expression

@@ -1,0 +1,29 @@
+# csmesh graph snapshot: command-handler
+# format 2
+# regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests
+
+## nodes
+# key | kind | name | file
+Demo::global::Demo.Caller|NamedType | type | Demo.Caller | Bus.cs
+Demo::global::Demo.CreateOrderHandler|NamedType | type | Demo.CreateOrderHandler | Bus.cs
+Demo::global::Demo.CreateOrder|NamedType | type | Demo.CreateOrder | Bus.cs
+Demo::global::Demo.ICommandHandler<T>|NamedType | interface | Demo.ICommandHandler<T> | Bus.cs
+Demo::global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
+global::Demo.Caller::Go`0()|Method | method | Demo.Caller.Go | Bus.cs
+global::Demo.Caller::_mediator|Field | field | Demo.Caller._mediator | Bus.cs
+global::Demo.CreateOrderHandler::Handle`0(global::Demo.CreateOrder)|Method | method | Demo.CreateOrderHandler.Handle | Bus.cs
+global::Demo.IMediator::Send`1(T)|Method | method | Demo.IMediator.Send | Bus.cs
+
+## edges
+# from | kind | to | confidence | source | site | note
+Demo.Caller | TypeUse | Demo.Caller.Go | 1.00 | - | - | member
+Demo.Caller | TypeUse | Demo.Caller._mediator | 1.00 | - | - | member
+Demo.Caller.Go | Call | Demo.IMediator.Send | 1.00 | - | - | -
+Demo.Caller.Go | Construct | Demo.CreateOrder | 1.00 | - | - | -
+Demo.Caller.Go | Mediatr | Demo.CreateOrderHandler.Handle | 1.00 | semantic-request | Bus.cs:22 | via Send(CreateOrder)
+Demo.CreateOrderHandler | TypeUse | Demo.CreateOrderHandler.Handle | 1.00 | - | - | member
+Demo.ICommandHandler<T> | Interface | Demo.CreateOrderHandler | 1.00 | - | - | -
+Demo.IMediator | TypeUse | Demo.IMediator.Send | 1.00 | - | - | member
+
+## unresolved
+# kind/reason | site | expression

@@ -1,0 +1,28 @@
+# csmesh graph snapshot: publish-async
+# format 2
+# regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests
+
+## nodes
+# key | kind | name | file
+Demo::global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
+Demo::global::Demo.INotificationHandler<T>|NamedType | interface | Demo.INotificationHandler<T> | Bus.cs
+Demo::global::Demo.Notifier|NamedType | type | Demo.Notifier | Bus.cs
+Demo::global::Demo.OrderShipped|NamedType | type | Demo.OrderShipped | Bus.cs
+Demo::global::Demo.Publisher|NamedType | type | Demo.Publisher | Bus.cs
+global::Demo.IMediator::PublishAsync`1(T)|Method | method | Demo.IMediator.PublishAsync | Bus.cs
+global::Demo.Notifier::Handle`0(global::Demo.OrderShipped)|Method | method | Demo.Notifier.Handle | Bus.cs
+global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | method | Demo.Publisher.Go | Bus.cs
+global::Demo.Publisher::_mediator|Field | field | Demo.Publisher._mediator | Bus.cs
+
+## edges
+# from | kind | to | confidence | source | site | note
+Demo.IMediator | TypeUse | Demo.IMediator.PublishAsync | 1.00 | - | - | member
+Demo.INotificationHandler<T> | Interface | Demo.Notifier | 1.00 | - | - | -
+Demo.Notifier | TypeUse | Demo.Notifier.Handle | 1.00 | - | - | member
+Demo.Publisher | TypeUse | Demo.Publisher.Go | 1.00 | - | - | member
+Demo.Publisher | TypeUse | Demo.Publisher._mediator | 1.00 | - | - | member
+Demo.Publisher.Go | Call | Demo.IMediator.PublishAsync | 1.00 | - | - | -
+Demo.Publisher.Go | Mediatr | Demo.Notifier.Handle | 1.00 | semantic-request | Bus.cs:22 | via PublishAsync(OrderShipped)
+
+## unresolved
+# kind/reason | site | expression

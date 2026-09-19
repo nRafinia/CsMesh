@@ -1,0 +1,29 @@
+# csmesh graph snapshot: invoke
+# format 2
+# regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests
+
+## nodes
+# key | kind | name | file
+Demo::global::Demo.Caller|NamedType | type | Demo.Caller | Bus.cs
+Demo::global::Demo.IMessageBus|NamedType | interface | Demo.IMessageBus | Bus.cs
+Demo::global::Demo.IRequestHandler<T>|NamedType | interface | Demo.IRequestHandler<T> | Bus.cs
+Demo::global::Demo.PingHandler|NamedType | type | Demo.PingHandler | Bus.cs
+Demo::global::Demo.Ping|NamedType | type | Demo.Ping | Bus.cs
+global::Demo.Caller::Go`0()|Method | method | Demo.Caller.Go | Bus.cs
+global::Demo.Caller::_bus|Field | field | Demo.Caller._bus | Bus.cs
+global::Demo.IMessageBus::Invoke`1(T)|Method | method | Demo.IMessageBus.Invoke | Bus.cs
+global::Demo.PingHandler::Handle`0(global::Demo.Ping)|Method | method | Demo.PingHandler.Handle | Bus.cs
+
+## edges
+# from | kind | to | confidence | source | site | note
+Demo.Caller | TypeUse | Demo.Caller.Go | 1.00 | - | - | member
+Demo.Caller | TypeUse | Demo.Caller._bus | 1.00 | - | - | member
+Demo.Caller.Go | Call | Demo.IMessageBus.Invoke | 1.00 | - | - | -
+Demo.Caller.Go | Construct | Demo.Ping | 1.00 | - | - | -
+Demo.Caller.Go | Mediatr | Demo.PingHandler.Handle | 1.00 | semantic-request | Bus.cs:22 | via Invoke(Ping)
+Demo.IMessageBus | TypeUse | Demo.IMessageBus.Invoke | 1.00 | - | - | member
+Demo.IRequestHandler<T> | Interface | Demo.PingHandler | 1.00 | - | - | -
+Demo.PingHandler | TypeUse | Demo.PingHandler.Handle | 1.00 | - | - | member
+
+## unresolved
+# kind/reason | site | expression
