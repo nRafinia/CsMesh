@@ -96,7 +96,6 @@ public static partial class Queries
         // otherwise whole branches of the tree silently disappear. onPath guards against cycles.
         var expandedAt = new Dictionary<int, int>();
         var onPath = new HashSet<int>();
-        var truncatedAt = new List<string>();
         var emitted = 0;
 
         // Cost per level, so an overflow can name a depth that fits instead of telling the caller
@@ -136,11 +135,7 @@ public static partial class Queries
                     var line = $"{prefix}-> {to.Short}{Marker(e)}{TagSuffix(to)}{Loc(to)}{siteSuffix}{StaleTag(to, dirty)}";
                     var row = Row(to, level + 1, e, dirty);
                     if (site != null) row.Site = site.Value.Site;
-                    if (!w.Add(line, row))
-                    {
-                        truncatedAt.Add(node.Short);
-                        return false;
-                    }
+                    if (!w.Add(line, row)) return false;
 
                     costByLevel[level + 1] = costByLevel.GetValueOrDefault(level + 1) + BudgetWriter.Estimate(line);
                     emitted++;
@@ -159,23 +154,12 @@ public static partial class Queries
 
         if (!complete)
         {
-            w.Force("");
-            w.Force($"OVER BUDGET at {string.Join(", ", truncatedAt.Distinct().Take(3))}.");
-
             var fits = DepthThatFits(costByLevel, w.Budget);
-            if (fits > 0 && rerun != null)
-            {
-                w.Force($"depth {fits} fits. Re-run: {rerun} --depth {fits}");
-            }
-            else if (fits > 0)
-            {
-                w.Force($"depth {fits} fits within this budget.");
-            }
-            else
-            {
-                w.Force("Even depth 1 does not fit. Raise --budget, or trace a narrower symbol.");
-            }
+            var remedy = fits > 0
+                ? (rerun != null ? $"re-run: {rerun} --depth {fits}" : $"re-run with --depth {fits}")
+                : null;
 
+            w.AddMarker(IncompleteMarker(w, remedy));
             return Exit.OverBudget;
         }
 
@@ -232,6 +216,7 @@ public static partial class Queries
         w.Force($"{target.Short}{Loc(target)}  -- {impls.Count} implementation(s)",
                 Row(target, 0, "root", null, dirty));
 
+        var shown = 0;
         foreach (var e in impls
                      .OrderByDescending(x => x.Kind == EdgeKind.DiBinding || x.Note == "di-bound")
                      .ThenBy(x => g.ById(x.To) is { } n && IsTest(n) ? 1 : 0)
@@ -266,10 +251,11 @@ public static partial class Queries
 
             if (!w.Add($"  {to.Short}{mark}{Loc(to)}{site}{StaleTag(to, dirty)}", row))
             {
-                w.Force("");
-                w.Force($"OVER BUDGET: {impls.Count} implementations. Raise --budget or query a narrower type.");
+                w.AddMarker(IncompleteMarker(w, "raise --budget, or query a narrower type", shown, impls.Count));
                 return Exit.OverBudget;
             }
+
+            shown++;
         }
 
         return Exit.Ok;
@@ -530,10 +516,31 @@ public static partial class Queries
         return null;
     }
 
+    /// <summary>
+    /// The line a truncated answer ends with, emitted through <see cref="BudgetWriter.AddMarker"/>
+    /// so it lands inside the budget it reports on. A near-complete answer says how near it is and
+    /// names the exact re-run; anything much larger points at narrowing instead. Bounded to the
+    /// completion reserve, so it always fits.
+    /// </summary>
+    internal static string IncompleteMarker(BudgetWriter w, string? remedy = null, int shown = 0, int total = 0)
+    {
+        remedy ??= $"raise --budget to {w.SuggestedBudget}";
+
+        var over = w.OverBudgetBy;
+        var text = over == 0
+            ? $"INCOMPLETE: nearly complete -- wanted ~{w.WouldBeTokens}; the completion marker needed the room. {remedy}"
+            : over <= 60
+                ? $"INCOMPLETE: nearly complete -- {over} token(s) over ({w.Tokens} of ~{w.WouldBeTokens}). {remedy}"
+                : $"INCOMPLETE: much larger than {w.Budget}"
+                  + (shown > 0 ? $" ({shown} of {total} shown)" : "")
+                  + $". {remedy}";
+
+        return text.Length <= 150 ? text : text[..147] + "...";
+    }
+
     private static int Overflow(BudgetWriter w, int total)
     {
-        w.Force("");
-        w.Force($"OVER BUDGET: {total} reachable members. Narrow it: --depth 1, or raise --budget.");
+        w.AddMarker(IncompleteMarker(w, null, 0, total));
         return Exit.OverBudget;
     }
 
@@ -555,14 +562,17 @@ public static partial class Queries
         }
 
         w.Force($"{eps.Count} entrypoint(s)");
+        var shown = 0;
         foreach (var ep in eps)
         {
             if (!w.Add($"  {ep.Short}{TagSuffix(ep)}{Loc(ep)}{StaleTag(ep, dirty)}",
                        Row(ep, 0, "entrypoint", null, dirty)))
             {
-                w.Force($"OVER BUDGET: {eps.Count} total. Filter with a substring argument.");
+                w.AddMarker(IncompleteMarker(w, "filter with a substring argument", shown, eps.Count));
                 return Exit.OverBudget;
             }
+
+            shown++;
         }
 
         return Exit.Ok;

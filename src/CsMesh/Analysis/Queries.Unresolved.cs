@@ -102,8 +102,7 @@ public static partial class Queries
 
     private static int TooMany(BudgetWriter w, int total)
     {
-        w.Force("");
-        w.Force($"OVER BUDGET: {total} unresolved site(s). Narrow it with --kind di, or raise --budget.");
+        w.AddMarker(IncompleteMarker(w, "narrow with --kind di, or raise --budget", 0, total));
         return Exit.OverBudget;
     }
 

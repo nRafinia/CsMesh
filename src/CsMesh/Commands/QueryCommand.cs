@@ -239,7 +239,7 @@ public static class QueryCommand
     {
         var budget = opt.Int("budget", DefaultBudget(kind));
         CsMesh.Telemetry.Telemetry.Current.Budget = budget;
-        return new BudgetWriter(budget);
+        return new BudgetWriter(budget, BudgetWriter.CompletionMarkerReserve);
     }
 
     private static int DefaultBudget(string kind) => kind switch

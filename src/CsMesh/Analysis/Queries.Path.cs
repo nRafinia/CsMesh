@@ -99,8 +99,7 @@ public static partial class Queries
             if (site != null) row.Site = site.Value.Site;
             if (!w.Add(line, row))
             {
-                w.Force("");
-                w.Force($"OVER BUDGET: path is {chain.Count - 1} hop(s). Raise --budget.");
+                w.AddMarker(IncompleteMarker(w, null, i, chain.Count - 1));
                 return Exit.OverBudget;
             }
 

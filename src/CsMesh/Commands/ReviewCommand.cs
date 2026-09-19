@@ -27,7 +27,7 @@ public static class ReviewCommand
         var includeCalls = opt.Flag("calls");
         var accept = opt.Flag("accept");
 
-        var writer = new BudgetWriter(budget);
+        var writer = new BudgetWriter(budget, BudgetWriter.CompletionMarkerReserve);
         var result = new QueryResult { Command = "review" };
 
         if (!GitTool.TryRun(root, "rev-parse --is-inside-work-tree", out _, out var repoError, out _))
@@ -343,8 +343,7 @@ public static class ReviewCommand
     /// failure -- everything gathered so far is still worth keeping.</summary>
     private static int Truncated(QueryResult result, BudgetWriter w, bool json)
     {
-        w.Force("");
-        w.Force("OVER BUDGET: raise --budget, or narrow with --under.");
+        w.AddMarker(Queries.IncompleteMarker(w, "raise --budget, or narrow with --under"));
 
         if (json) return EmitJson(result, w, Exit.OverBudget);
 

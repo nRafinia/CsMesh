@@ -132,9 +132,7 @@ public static partial class Queries
 
             if (!w.Add(line, row))
             {
-                w.Force("");
-                w.Force($"OVER BUDGET after {shown} of {ranked.Count} match(es).");
-                w.Force("Narrow with --under before raising --budget.");
+                w.AddMarker(IncompleteMarker(w, "narrow with --under before raising --budget", shown, ranked.Count));
                 return Exit.OverBudget;
             }
 

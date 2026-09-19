@@ -8,8 +8,16 @@ namespace CsMesh.Common;
 /// Every text line may carry a parallel <see cref="QueryRow"/> so the same answer can be emitted
 /// as JSON without a second traversal.
 /// </summary>
-public sealed class BudgetWriter(int budgetTokens)
+public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
 {
+    /// <summary>
+    /// Tokens held back from content so the completion marker always fits inside the budget it
+    /// reports on. Content is capped at <see cref="Budget"/> minus this. A query that does not
+    /// overflow emits no marker and spends none of the reserve on output; the reserve only reduces
+    /// how much content fits before the answer is truncated.
+    /// </summary>
+    public const int CompletionMarkerReserve = 40;
+
     private readonly List<string> _lines = [];
     private readonly List<QueryRow> _rows = [];
     private int _tokens;
@@ -19,11 +27,16 @@ public sealed class BudgetWriter(int budgetTokens)
     /// <summary>The cap this writer was built with, so a query can suggest one that fits.</summary>
     public int Budget => budgetTokens;
 
+    /// <summary>Tokens reserved for the completeness marker; zero for writers that never emit one.</summary>
+    public int MarkerReserve => markerReserve;
+
+    private int ContentCap => Math.Max(0, budgetTokens - markerReserve);
+
     /// <summary>
-    /// What is left. Lets a caller price a heading and its first row together, so a section title
-    /// is never printed with nothing under it.
+    /// What is left of the content cap. Lets a caller price a heading and its first row together,
+    /// so a section title is never printed with nothing under it.
     /// </summary>
-    public int Remaining => Math.Max(0, budgetTokens - _tokens);
+    public int Remaining => Math.Max(0, ContentCap - _tokens);
     public bool Overflowed { get; private set; }
 
     private int _wouldBeTokens;
@@ -36,8 +49,16 @@ public sealed class BudgetWriter(int budgetTokens)
     /// </summary>
     public int WouldBeTokens => Overflowed ? _wouldBeTokens : _tokens;
 
-    /// <summary>How far the first refused line went past the cap; zero when nothing overflowed.</summary>
+    /// <summary>
+    /// How far the wanted answer went past the budget the caller asked for; zero when nothing
+    /// overflowed, or when the answer fit the requested budget but was cut to make room for the
+    /// completion marker. Measured against <see cref="Budget"/>, not the content cap, because that
+    /// is the number the caller chose and the one the marker reports.
+    /// </summary>
     public int OverBudgetBy => Overflowed ? Math.Max(0, _wouldBeTokens - budgetTokens) : 0;
+
+    /// <summary>The budget that would have fit this answer, completion marker included.</summary>
+    public int SuggestedBudget => Overflowed ? _wouldBeTokens + markerReserve + 10 : budgetTokens;
 
     /// <summary>Rows emitted so far, excluding headers and warnings.</summary>
     public IReadOnlyList<QueryRow> Rows => _rows;
@@ -47,12 +68,12 @@ public sealed class BudgetWriter(int budgetTokens)
     public static int Estimate(IEnumerable<string> lines) => lines.Sum(Estimate);
 
     /// <summary>
-    /// Appends a line if within budget; returns false if the budget would be exceeded.
+    /// Appends a line if within the content cap; returns false if it would be exceeded.
     /// </summary>
     public bool Add(string line, QueryRow? row = null)
     {
         var cost = Estimate(line);
-        if (_tokens + cost > budgetTokens)
+        if (_tokens + cost > ContentCap)
         {
             if (!Overflowed) _wouldBeTokens = _tokens + cost;
             Overflowed = true;
@@ -62,6 +83,22 @@ public sealed class BudgetWriter(int budgetTokens)
         _lines.Add(line);
         _tokens += cost;
         if (row != null) _rows.Add(row);
+        return true;
+    }
+
+    /// <summary>
+    /// Emits the completion marker through the writer, inside the full budget rather than the
+    /// content cap. This is the one line allowed past the content cap, and only on overflow. Returns
+    /// false if even the reserve cannot hold it, so the caller knows the marker was dropped rather
+    /// than assuming it printed.
+    /// </summary>
+    public bool AddMarker(string line)
+    {
+        var cost = Estimate(line);
+        if (_tokens + cost > budgetTokens) return false;
+
+        _lines.Add(line);
+        _tokens += cost;
         return true;
     }
 

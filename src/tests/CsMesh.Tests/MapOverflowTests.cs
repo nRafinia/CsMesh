@@ -46,7 +46,7 @@ public sealed class MapOverflowTests : IDisposable
     [Fact]
     public void A_map_that_drops_a_section_exits_two_and_names_it()
     {
-        var w = new BudgetWriter(30);
+        var w = new BudgetWriter(70, BudgetWriter.CompletionMarkerReserve);
 
         var exit = Queries.Map(Build(), null, w, []);
 

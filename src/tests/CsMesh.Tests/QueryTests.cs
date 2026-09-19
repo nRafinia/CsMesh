@@ -104,11 +104,11 @@ public sealed class QueryTests(GraphFixture fixture) : IClassFixture<GraphFixtur
     [Fact]
     public void Context_exits_over_budget_instead_of_overflowing()
     {
-        var w = Writer(budget: 12);
+        var w = new BudgetWriter(100, BudgetWriter.CompletionMarkerReserve);
         var exit = Queries.Context(fixture.Graph, fixture.Node("CompanyA.Handlers.CreateOrderHandler.Handle"), 3, w, []);
 
         Assert.Equal(Exit.OverBudget, exit);
-        Assert.Contains("OVER BUDGET", Text(w));
+        Assert.Contains("INCOMPLETE", Text(w));
     }
 
     // ------------------------------------------------------------------ impl ranking

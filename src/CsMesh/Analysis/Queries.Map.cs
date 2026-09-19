@@ -48,12 +48,8 @@ public static partial class Queries
 
         if (drops.Count > 0)
         {
-            var detail = string.Join(", ", drops.Select(d => $"{d.Section} ({d.Rows} row(s))"));
-
-            // Through the writer first so the incomplete marker respects the cap; the forced fallback
-            // is the pre-marker behaviour and is unreachable once the writer reserves marker room.
-            var line = $"INCOMPLETE: over budget; dropped {detail}";
-            if (!w.Add(line)) w.Force(line);
+            var detail = string.Join(", ", drops.Select(d => $"{d.Section} ({d.Rows})"));
+            w.AddMarker(IncompleteMarker(w, $"dropped {detail}; narrow with --under or raise --budget"));
             return Exit.OverBudget;
         }
 

@@ -105,8 +105,7 @@ public static partial class Queries
 
         if (!overflowed) return Exit.Ok;
 
-        w.Force("");
-        w.Force("OVER BUDGET: context truncated. Raise --budget, or use trace/blast-radius for one section.");
+        w.AddMarker(IncompleteMarker(w, "raise --budget, or use trace/blast-radius for one section"));
         return Exit.OverBudget;
 
         void Section(string title, IEnumerable<string> lines, List<Node>? rows = null)

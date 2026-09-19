@@ -153,12 +153,12 @@ public sealed class ConventionAndProvenanceTests : IClassFixture<GraphFixture>
     [Fact]
     public void Trace_names_a_depth_that_fits_instead_of_telling_the_caller_to_guess()
     {
-        var w = Writer(budget: 60);
+        var w = new BudgetWriter(80, BudgetWriter.CompletionMarkerReserve);
         var exit = Queries.Trace(_f.Graph, _f.Node("Api.OrderController.Post"), 6, w, [],
-                                 "csmesh trace OrderController.Post --budget 60");
+                                 "csmesh trace OrderController.Post --budget 80");
 
         Assert.Equal(Exit.OverBudget, exit);
-        Assert.Contains("OVER BUDGET", Text(w));
-        Assert.Matches(@"(depth \d+ fits|Even depth 1 does not fit)", Text(w));
+        Assert.Contains("INCOMPLETE", Text(w));
+        Assert.Matches(@"(--depth \d+|raise --budget)", Text(w));
     }
 }
