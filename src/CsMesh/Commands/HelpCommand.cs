@@ -73,7 +73,7 @@ public static class HelpCommand
         GLOBAL OPTIONS:
             --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
-            --budget <N>       Maximum output tokens (trace 600, impl 300, blast-radius 800)
+            --budget <N>       Maximum output tokens (trace/impl 600, blast-radius 800)
             --depth <N>        Traversal depth limit (trace 6, blast-radius 3, context 3, path 12)
             --json             Output results as a structured JSON envelope
             --debug            Enable verbose diagnostics on stderr
@@ -83,7 +83,7 @@ public static class HelpCommand
 
         EXIT CODES:
             0 ok   1 not-found   2 over-budget   3 ambiguous   4 no-index   5 changed (review only)
-            64 usage-error   70 internal-error
+            64 usage-error   70 internal-error   75 contended (the index write did not happen)
 
         CONFIDENCE:
             A row marked [... ?0.70 short-name-match] came from a name match, not a compiler
@@ -498,9 +498,11 @@ public static class HelpCommand
 
         EXIT CODES:
             0   nothing unaccepted changed (or --accept just ran)
-            4   the base revision could not be indexed, or no current index exists: csmesh index
+            4   the base revision could not be indexed; no current index exists; or the current
+                index predates HEAD, so the comparison cannot be trusted: csmesh index
             5   unaccepted structural change exists -- fail the build
-            64  not a git repository, or BASE does not resolve
+            64  not a git repository; BASE does not resolve; or --accept was given while the
+                current index predates HEAD
         """;
 
     public const string WhereHelp =
