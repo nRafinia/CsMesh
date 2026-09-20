@@ -321,7 +321,7 @@ csmesh where discount
 csmesh trace OrderService.SubmitOrder --budget 600
 
 # Which concrete implementation runs for this interface in DI?
-csmesh impl IPaymentGateway --budget 300
+csmesh impl IPaymentGateway --budget 600
 
 # What breaks if I change this method or property?
 csmesh blast-radius Order.Status --budget 800
@@ -413,7 +413,7 @@ csmesh trace OrderService.Submit --depth 3
 #### `csmesh impl <IInterface>`
 Finds all implementations of an interface, ranking DI-bound registrations first.
 ```bash
-csmesh impl IPaymentGateway --budget 300
+csmesh impl IPaymentGateway --budget 600
 csmesh impl IOrderRepository
 ```
 
@@ -435,7 +435,7 @@ csmesh entrypoints "POST /orders"
 #### `csmesh context <Type.Member>`
 Everything structural about one symbol in a single call: signature, members, callers, callees, implementations and the entrypoints above it. Replaces a `trace` plus an `impl` plus a `blast-radius`.
 ```bash
-csmesh context OrderService --budget 800
+csmesh context OrderService --budget 900
 csmesh context IPaymentGateway.Authorize --depth 2
 ```
 
@@ -443,7 +443,7 @@ csmesh context IPaymentGateway.Authorize --depth 2
 The shortest route between two symbols, across DI bindings and MediatR dispatch. Answers "how does this controller ever reach that repository".
 ```bash
 csmesh path PaymentController.Post SqlOrderStore.Save
-csmesh why OrderController.Post CreateOrderHandler.Handle --budget 400
+csmesh why OrderController.Post CreateOrderHandler.Handle --budget 500
 ```
 
 #### `csmesh cycles`
@@ -470,7 +470,7 @@ csmesh changes --calls --budget 1200
 ```
 
 #### `csmesh review [base]`
-The same structural comparison as `changes`, but against a named git revision instead of whatever the last index happened to see — the question a pull request or a CI gate actually asks. Defaults to the merge base with the remote's default branch, cached per commit so a second run is fast. `--accept` writes the current findings to `.csmesh/accepted.txt`; accepted findings stop being reported, and dead entries are pruned automatically once the base moves past them. Exits `5` when something unaccepted remains, so a pipeline can gate on it without parsing prose.
+The same structural comparison as `changes`, but against a named git revision instead of whatever the last index happened to see — the question a pull request or a CI gate actually asks. Defaults to the merge base with the remote's default branch, cached per commit so a second run is fast. `--accept` writes the current findings to `.csmesh/accepted.txt`; accepted findings stop being reported, and dead entries are pruned automatically once the base moves past them. Exits `5` when something unaccepted remains, so a pipeline can gate on it without parsing prose. When the index predates `HEAD` the comparison is refused rather than guessed at — exit `4`, or `64` for `--accept`, since findings from the wrong current side must not be written to the baseline.
 ```bash
 csmesh review                        # vs. the merge base with the default branch
 csmesh review origin/main --calls
@@ -586,9 +586,9 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 | `1` | **Not Found** | Symbol does not exist in repository. | Check spelling or verify namespace. |
 | `2` | **Over Budget** | Answer exists but exceeds `--budget`. | Re-run with narrower `--depth` or query a specific callee. |
 | `3` | **Ambiguous** | Multiple symbols match query. | Re-run with qualified `Type.Member` instead of bare member name. |
-| `4` | **No Index** | Symbol graph has not been generated. | Execute `csmesh index` and retry. |
+| `4` | **No Index** | No usable graph: not generated, or (for `review`) the index predates HEAD. | Execute `csmesh index` and retry. |
 | `5` | **Changed** (`review` only) | Unaccepted structural change vs. the base revision. | Review the finding, then `csmesh review --accept` if it's fine to keep. |
-| `64`| **Usage Error** | Invalid flags, syntax, or arguments. | Run `csmesh <cmd> --help`. |
+| `64`| **Usage Error** | Invalid flags, syntax, or arguments, including `review --accept` while the index predates HEAD. | Run `csmesh <cmd> --help`. |
 | `70`| **Internal Error** | Unhandled failure inside csmesh. | Re-run with `--debug` and open an issue. |
 | `75`| **Contended** | The graph file is held by another process; the write did not happen. | Nothing is broken — wait briefly and re-run the command. |
 
