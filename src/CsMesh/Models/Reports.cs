@@ -71,6 +71,14 @@ public sealed class DoctorReport
     /// <summary>Edge totals by kind, so a caller can see at a glance that dispatch resolved to nothing.</summary>
     public Dictionary<string, int> EdgesByKind { get; set; } = new();
 
+    /// <summary>
+    /// Installed rules blocks whose bytes differ from what this build would write, one path per
+    /// file. A warning rather than an error: the block carries no version, so an older block and a
+    /// hand-edited one are indistinguishable and neither changes the exit code. A path is absent
+    /// when its file has no block, which is "not installed", not stale.
+    /// </summary>
+    public List<string> StaleInstructions { get; set; } = [];
+
     /// <summary>The report as a terminal would have shown it.</summary>
     public List<string> Text { get; set; } = [];
 }

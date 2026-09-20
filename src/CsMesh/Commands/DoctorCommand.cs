@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CsMesh.Common;
 using CsMesh.Models;
+using CsMesh.Skill;
 using CsMesh.Storage;
 using CsMesh.Telemetry;
 
@@ -8,7 +9,9 @@ namespace CsMesh.Commands;
 
 public static class DoctorCommand
 {
-    public static int Execute(string root, Options opt)
+    public static int Execute(string root, Options opt) => Execute(root, opt, SkillCommand.GetHomeDir());
+
+    internal static int Execute(string root, Options opt, string home)
     {
         var e = new Emit(opt.Flag("json"));
         var report = new DoctorReport
@@ -158,11 +161,19 @@ public static class DoctorCommand
             e.Line("skill (local)   NOT INSTALLED -> run: csmesh install");
         }
 
-        var home = SkillCommand.GetHomeDir();
         var installedGlobal = SkillCommand.GlobalSkillTargets(home).Where(File.Exists).Distinct().ToList();
         e.Line(installedGlobal.Count > 0
             ? $"skill (global)  installed ({installedGlobal.Count} target(s) across user assistants)"
             : "skill (global)  NOT INSTALLED -> run: csmesh install --global");
+
+        // A block that exists but was written by another build. A warning, not a fault: without a
+        // version stamp the direction is unknown (an older block and a hand-edited one look the
+        // same), so it says "differ" and names the remedy rather than claiming anything is old.
+        foreach (var path in StaleInstalledBlocks(root, home))
+        {
+            report.StaleInstructions.Add(path);
+            e.Line($"{path}: installed csmesh instructions differ from this build \u2192 csmesh install");
+        }
 
         var (caller, via) = CallerDetector.Detect();
         e.Line($"caller now      {caller} (via {via}); tty={!Console.IsOutputRedirected}");
@@ -186,6 +197,66 @@ public static class DoctorCommand
         }
 
         return Exit.Ok;
+    }
+
+    /// <summary>
+    /// Installed blocks, one path per file, whose bytes differ from what this build would write.
+    ///
+    /// Repo-local paths are shown relative to the root and user-global ones in full, because a
+    /// global block's home directory is not under the repository the line is printed beside. A file
+    /// with no block is left out entirely -- "not installed" is a different state from stale, and
+    /// naming it here would turn an absent rule file into a false drift warning.
+    /// </summary>
+    private static List<string> StaleInstalledBlocks(string root, string home)
+    {
+        var stale = new List<string>();
+
+        foreach (var path in SkillCommand.BlockTargets(root, isGlobal: false))
+        {
+            if (InstalledBlockDiffers(path)) stale.Add(Path.GetRelativePath(root, path));
+        }
+
+        foreach (var path in SkillCommand.BlockTargets(home, isGlobal: true))
+        {
+            if (InstalledBlockDiffers(path)) stale.Add(path);
+        }
+
+        return stale;
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/> exists, carries a complete csmesh block, and that block is
+    /// not the text this build renders. Reads with <see cref="FileShare.ReadWrite"/> so an editor or
+    /// an assistant holding the file open does not turn a readable file into a false negative;
+    /// anything unreadable is treated as no block, since doctor must not fail over a skill file.
+    /// </summary>
+    private static bool InstalledBlockDiffers(string path)
+    {
+        if (!File.Exists(path)) return false;
+
+        string text;
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            text = reader.ReadToEnd();
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        var installed = SkillBlock.Extract(text);
+        if (installed is null) return false;
+
+        return !string.Equals(
+            SkillBlock.Normalize(installed),
+            SkillBlock.Normalize(SkillBlock.Render(SkillText.Rules)),
+            StringComparison.Ordinal);
     }
 
     /// <summary>

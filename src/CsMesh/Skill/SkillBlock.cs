@@ -24,4 +24,37 @@ public static class SkillBlock
     /// </summary>
     public static string Render(string blockContent) =>
         $"{StartTag}\n{blockContent.Trim()}\n{EndTag}";
+
+    /// <summary>
+    /// The block installed in <paramref name="fileText"/>, from the start marker through the end
+    /// marker, or null when the file carries no complete block. A half-block is not a block:
+    /// reporting one would invent drift install never wrote, and a file with no block at all is
+    /// "not installed", not stale.
+    /// </summary>
+    public static string? Extract(string fileText)
+    {
+        var start = fileText.IndexOf(StartTag, StringComparison.Ordinal);
+        if (start < 0) return null;
+
+        var end = fileText.IndexOf(EndTag, start, StringComparison.Ordinal);
+        return end < 0 ? null : fileText[start..(end + EndTag.Length)];
+    }
+
+    /// <summary>
+    /// Makes two blocks comparable across the ways the same text reaches disk: a UTF-8 BOM an
+    /// editor left, CRLF line endings from git autocrlf on Windows, doubled CRs an editor produced
+    /// by re-encoding an already-CRLF file, and trailing whitespace. Without this, every
+    /// checked-out block would read as drift and the warning would be noise on exactly the machines
+    /// it is meant to help.
+    /// </summary>
+    public static string Normalize(string text)
+    {
+        if (text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
+
+        // Per line, not a single Replace on the whole text: a file that already carried CRLF and
+        // was converted to CRLF again contains "\r\r\n", and trimming the trailing CR off each
+        // line maps that to one newline instead of two.
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        return string.Join("\n", lines.Select(line => line.TrimEnd())).TrimEnd();
+    }
 }
