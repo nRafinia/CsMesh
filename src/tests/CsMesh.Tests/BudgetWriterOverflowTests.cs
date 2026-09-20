@@ -75,4 +75,47 @@ public sealed class BudgetWriterOverflowTests
         Assert.Equal(w.Tokens, w.WouldBeTokens);
         Assert.Equal(0, w.OverBudgetBy);
     }
+
+    /// <summary>
+    /// The opening-note reserve has to hold when content, note and marker all want a budget that
+    /// cannot seat them. Written as a droppable note the version-gap line yielded to the rows;
+    /// forced, it would eat the marker's room. It draws from its own pool, so the content is what
+    /// gives way and both the note and the marker survive.
+    /// </summary>
+    [Fact]
+    public void An_opening_note_and_the_marker_both_survive_a_starved_budget()
+    {
+        // At 80 with a 40-token marker reserve the content cap is 40, so a droppable 51-token note
+        // would be refused and vanish. Through the reserve it is written, the content yields, and
+        // the marker still fits in what is left.
+        var w = new BudgetWriter(80, BudgetWriter.CompletionMarkerReserve);
+        var note = new string('n', 200);   // ~51 tokens, inside the 60-token opening pool
+
+        Assert.True(w.AddOpeningNote(note));
+        Assert.False(w.Add(Line(100)));    // content is what gives way, not the note
+        Assert.True(w.AddMarker("INCOMPLETE: " + new string('x', 400)));
+
+        Assert.Contains(w.Lines, l => l.StartsWith("nnn", StringComparison.Ordinal));
+        Assert.Contains(w.Lines, l => l.StartsWith("INCOMPLETE", StringComparison.Ordinal));
+        Assert.True(w.Tokens <= w.Budget, $"the closing line pushed {w.Tokens} past the {w.Budget} budget");
+    }
+
+    /// <summary>
+    /// The common path pays nothing for a note it never writes, and a note that is written shrinks
+    /// the content cap by exactly its cost -- the shrink is visible rather than a mystery.
+    /// </summary>
+    [Fact]
+    public void No_note_reserves_nothing_and_a_note_shrinks_the_content_cap_by_its_cost()
+    {
+        var plain = new BudgetWriter(100, BudgetWriter.CompletionMarkerReserve);
+        Assert.Equal(0, plain.OpeningReserve);
+        Assert.Equal(60, plain.Remaining);
+
+        var noted = new BudgetWriter(100, BudgetWriter.CompletionMarkerReserve);
+        var note = new string('n', 40);
+        Assert.True(noted.AddOpeningNote(note));
+
+        Assert.Equal(BudgetWriter.Estimate(note), noted.OpeningReserve);
+        Assert.Equal(plain.Remaining - noted.OpeningReserve, noted.Remaining);
+    }
 }

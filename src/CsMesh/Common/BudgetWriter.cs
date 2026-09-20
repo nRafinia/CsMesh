@@ -18,9 +18,17 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     /// </summary>
     public const int CompletionMarkerReserve = 40;
 
+    /// <summary>
+    /// The most a single opening note may cost. Notes are truncated to it, so the pool a note draws
+    /// from is bounded and the content cap it reduces is knowable before the query runs.
+    /// </summary>
+    public const int OpeningNoteMaxTokens = 60;
+
     private readonly List<string> _lines = [];
     private readonly List<QueryRow> _rows = [];
     private int _tokens;
+    private int _contentTokens;
+    private int _openingReserve;
 
     public int Tokens => _tokens;
 
@@ -30,13 +38,19 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     /// <summary>Tokens reserved for the completeness marker; zero for writers that never emit one.</summary>
     public int MarkerReserve => markerReserve;
 
-    private int ContentCap => Math.Max(0, budgetTokens - markerReserve);
+    /// <summary>
+    /// Tokens actually spent on opening notes, held out of the content cap. Zero when the writer
+    /// carried no note, so the common path reserves nothing for a note it will never write.
+    /// </summary>
+    public int OpeningReserve => _openingReserve;
+
+    private int ContentCap => Math.Max(0, budgetTokens - markerReserve - _openingReserve);
 
     /// <summary>
     /// What is left of the content cap. Lets a caller price a heading and its first row together,
     /// so a section title is never printed with nothing under it.
     /// </summary>
-    public int Remaining => Math.Max(0, ContentCap - _tokens);
+    public int Remaining => Math.Max(0, ContentCap - _contentTokens);
     public bool Overflowed { get; private set; }
 
     private int _wouldBeTokens;
@@ -73,7 +87,7 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     public bool Add(string line, QueryRow? row = null)
     {
         var cost = Estimate(line);
-        if (_tokens + cost > ContentCap)
+        if (_contentTokens + cost > ContentCap)
         {
             if (!Overflowed) _wouldBeTokens = _tokens + cost;
             Overflowed = true;
@@ -82,22 +96,51 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
 
         _lines.Add(line);
         _tokens += cost;
+        _contentTokens += cost;
         if (row != null) _rows.Add(row);
         return true;
     }
 
     /// <summary>
-    /// A pre-query note: content, not a result. It respects the content cap and is dropped rather
-    /// than run into the room the completion marker needs -- an incomplete answer must always be
-    /// marked, and a stale-index note is the less important of the two.
+    /// A pre-query note that yields: content, not a result. It respects the content cap and is
+    /// dropped rather than run into the room the completion marker needs. A note that must not be
+    /// dropped -- a version gap, where every row would otherwise read as confident as any other --
+    /// goes through <see cref="AddOpeningNote"/> instead.
     /// </summary>
     public bool AddNote(string line)
     {
         var cost = Estimate(line);
-        if (_tokens + cost > ContentCap) return false;
+        if (_contentTokens + cost > ContentCap) return false;
 
         _lines.Add(line);
         _tokens += cost;
+        _contentTokens += cost;
+        return true;
+    }
+
+    /// <summary>
+    /// Writes a note that must survive. It draws from its own pool rather than competing with the
+    /// rows: the line is shortened to <paramref name="maxTokens"/> and always emitted, and its cost
+    /// is held out of the content cap and the completion-marker reserve. The query then pays for the
+    /// note in reduced content room, which is the point -- a version gap makes the rows themselves
+    /// untrustworthy, so silently dropping either the note or the rows it warns about is the wrong
+    /// trade. Call before any content is written, so the content cap is settled when rows begin.
+    /// </summary>
+    public bool AddOpeningNote(string line, int maxTokens = OpeningNoteMaxTokens)
+    {
+        if (maxTokens < 2) return false;
+
+        var cost = Estimate(line);
+        if (cost > maxTokens)
+        {
+            var maxChars = maxTokens * 4 - 1;
+            line = line[..Math.Min(line.Length, maxChars)];
+            cost = Estimate(line);
+        }
+
+        _lines.Add(line);
+        _tokens += cost;
+        _openingReserve += cost;
         return true;
     }
 
@@ -112,10 +155,11 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     public void Separator()
     {
         var cost = Estimate("");
-        if (_tokens + cost > ContentCap) return;
+        if (_contentTokens + cost > ContentCap) return;
 
         _lines.Add("");
         _tokens += cost;
+        _contentTokens += cost;
     }
 
     /// <summary>
@@ -153,8 +197,10 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     /// </summary>
     public void Force(string line, QueryRow? row = null)
     {
+        var cost = Estimate(line);
         _lines.Add(line);
-        _tokens += Estimate(line);
+        _tokens += cost;
+        _contentTokens += cost;
         if (row != null) _rows.Add(row);
     }
 

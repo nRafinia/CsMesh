@@ -72,17 +72,20 @@ public static class QueryCommand
         // A version gap is invisible in the rows themselves -- every line looks as confident as
         // any other -- so it has to be said out loud. The graph is still answered from, because
         // the old binary's answers are usually right and a hard refusal after every upgrade would
-        // be worse than a warned one.
+        // be worse than a warned one. It goes through the opening-note reserve rather than the
+        // droppable note path: missing detections make the rows themselves untrustworthy, so this
+        // note must not lose a budget contest with them.
         if (GraphStore.BuiltByOtherVersion(graph))
         {
             var note = $"# {GraphStore.VersionGap(graph)}; detections added since then are missing. run: csmesh index --full";
             result.Notes.Add(note);
-            if (!json) writer.AddNote(note);
+            if (!json) writer.AddOpeningNote(note);
         }
 
-        // The forced notes above are spent before the query starts, so the query's real allowance is
-        // the cap minus this. Recorded so two otherwise identical queries can be told apart by whether
-        // the index happened to be stale, which the log previously could not do.
+        // The notes above are spent before the query starts -- the version-gap note out of its own
+        // pool, the staleness note out of content -- so the query's real allowance is the cap minus
+        // this. Recorded so two otherwise identical queries can be told apart by whether the index
+        // happened to be stale, which the log previously could not do.
         CsMesh.Telemetry.Telemetry.Current.ReservedTokens = writer.Tokens;
 
         int exitCode;
