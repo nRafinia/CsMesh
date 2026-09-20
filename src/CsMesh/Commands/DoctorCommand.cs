@@ -109,6 +109,11 @@ public static class DoctorCommand
                 e.Line($"ivt             {graph.UnevaluableInternalsVisibleTo} InternalsVisibleTo item(s) name an MSBuild property not evaluated");
             }
 
+            if (graph.UnevaluableUsings > 0)
+            {
+                e.Line($"usings          {graph.UnevaluableUsings} Using item(s) name an MSBuild property not evaluated");
+            }
+
             e.Line($"global usings   {graph.GlobalUsingSources} set(s) compiled in"
                               + (graph.GlobalUsingSources == 0
                                   ? "  -- none; the System namespace is missing and nothing will bind"

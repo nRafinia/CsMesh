@@ -155,8 +155,10 @@ public static partial class Indexer
     /// namespaces only for a Web project. A repository with no csproj at all keeps the historic
     /// one-size-fits-all set, since there is no project to read a framework or an opt-in from.
     /// </summary>
-    private static List<OwnedTree> GlobalUsingTrees(ProjectScope scope, CSharpParseOptions parseOptions)
+    private static List<OwnedTree> GlobalUsingTrees(
+        ProjectScope scope, CSharpParseOptions parseOptions, out int unevaluableUsings)
     {
+        unevaluableUsings = 0;
         var result = new List<OwnedTree>();
 
         if (!scope.HasProjects)
@@ -170,7 +172,10 @@ public static partial class Indexer
         var index = 0;
         foreach (var projectDirectory in scope.LiveDirectories)
         {
-            foreach (var text in ProjectGlobalUsingTexts(projectDirectory))
+            var texts = ProjectGlobalUsingTexts(projectDirectory, out var unevaluable);
+            unevaluableUsings += unevaluable;
+
+            foreach (var text in texts)
             {
                 result.Add(new OwnedTree(
                     CSharpSyntaxTree.ParseText(text, parseOptions, path: $"<global-usings-{index++}>"),
@@ -183,11 +188,15 @@ public static partial class Indexer
 
     /// <summary>
     /// The SDK global-using sets for one project: what the build generated for its chosen target
-    /// framework, or the set its ImplicitUsings and Sdk imply when no build wrote one. A source
-    /// global-using file is not here; it is an ordinary owned .cs and arrives with the source.
+    /// framework, or the set its ImplicitUsings, Sdk and &lt;Using&gt; items imply when no build
+    /// wrote one. A source global-using file is not here; it is an ordinary owned .cs and arrives
+    /// with the source. When a generated set exists it already contains the &lt;Using&gt; items, so
+    /// nothing is synthesized and nothing is added twice.
     /// </summary>
-    private static List<string> ProjectGlobalUsingTexts(string projectDirectory)
+    private static List<string> ProjectGlobalUsingTexts(string projectDirectory, out int unevaluable)
     {
+        unevaluable = 0;
+
         var csproj = ProjectTfm.Single(projectDirectory);
         if (csproj is null) return [];
 
@@ -197,8 +206,11 @@ public static partial class Indexer
             try { texts.Add(File.ReadAllText(file)); } catch { /* unreadable contributes nothing */ }
         }
 
-        if (texts.Count == 0 && ProjectTfm.ImplicitUsingsEnabled(csproj))
-            texts.Add(ProjectTfm.Synthesize(csproj));
+        if (texts.Count == 0)
+        {
+            var synthesized = ProjectTfm.Synthesize(csproj, out unevaluable);
+            if (synthesized.Length > 0) texts.Add(synthesized);
+        }
 
         return texts.Distinct(StringComparer.Ordinal).ToList();
     }
@@ -537,7 +549,7 @@ public static partial class Indexer
         // Each project gets its own SDK set, and a repository with no projects keeps the historic
         // one-size-fits-all set. A source global-using file is an ordinary owned .cs and arrives
         // through the source set above, so only the generated and synthesized sets are here.
-        var globalUsings = GlobalUsingTrees(scope, parseOptions);
+        var globalUsings = GlobalUsingTrees(scope, parseOptions, out var unevaluableUsings);
         owned.AddRange(globalUsings);
 
         var references = ReferenceSet(root, scope, out var referenceReport);
@@ -565,6 +577,7 @@ public static partial class Indexer
             ExcludedLooseFiles = CountExcludedLooseFiles(root, scope),
             UnevaluableCompileItems = scope.UnevaluableCompileItems,
             UnevaluableInternalsVisibleTo = compilations.UnevaluableInternalsVisibleTo,
+            UnevaluableUsings = unevaluableUsings,
             ProjectReferences = scope.References,
             ProjectCycles = compilations.Cycles,
             Dirs = dirs.Select(kv => new DirStamp { Path = kv.Key, Ticks = kv.Value }).ToList(),

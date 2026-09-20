@@ -102,12 +102,105 @@ public sealed class ImplicitUsingsSynthesisTests : IDisposable
     public void The_synthesized_text_adds_aspnet_only_for_the_web_sdk()
     {
         var plain = Write("Plain.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" +
+            "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>");
         var web = Write("Web.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" +
+            "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>");
 
         Assert.DoesNotContain("Microsoft.AspNetCore.Builder", ProjectTfm.Synthesize(plain), StringComparison.Ordinal);
         Assert.Contains("Microsoft.AspNetCore.Builder", ProjectTfm.Synthesize(web), StringComparison.Ordinal);
         Assert.Contains("global using global::System;", ProjectTfm.Synthesize(plain), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A &lt;Using&gt; item is part of the SDK's generated global-usings file, so a project with no
+    /// obj/ that lists one still gets it from the build. Without reconstructing it, a test project's
+    /// [Fact] and Assert calls are CS0246 -- which is exactly what the private solution's test
+    /// project reported.
+    /// </summary>
+    [Fact]
+    public void A_Using_item_binds_in_a_project_with_no_obj()
+    {
+        Write("Suite.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" +
+            "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup>" +
+            "<ItemGroup><Using Include=\"Xunit\" /></ItemGroup></Project>");
+        Write("Use.cs", """
+            namespace Xunit { public class FactAttribute : System.Attribute { } }
+            namespace Suite
+            {
+                public class Tests
+                {
+                    [Fact] public void Runs() { }
+                    public FactAttribute F { get; set; }
+                }
+            }
+            """);
+
+        var graph = Indexer.Build(_root);
+        graph.Freeze();
+
+        Assert.DoesNotContain(graph.Unresolved, u => u.Expression == "FactAttribute");
+        Assert.DoesNotContain(graph.Diagnostics, d => d.Id == "CS0246");
+    }
+
+    [Fact]
+    public void Synthesize_reads_alias_static_and_remove()
+    {
+        var csproj = Write("P.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" +
+            "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup><ItemGroup>" +
+            "<Using Include=\"System.Text\" Alias=\"Text\" />" +
+            "<Using Include=\"System.Math\" Static=\"true\" />" +
+            "<Using Remove=\"System.Net.Http\" />" +
+            "</ItemGroup></Project>");
+
+        var text = ProjectTfm.Synthesize(csproj);
+
+        Assert.Contains("global using Text = global::System.Text;", text, StringComparison.Ordinal);
+        Assert.Contains("global using static global::System.Math;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Net.Http", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Synthesize_counts_an_unevaluable_using()
+    {
+        var csproj = Write("P.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" +
+            "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup><ItemGroup>" +
+            "<Using Include=\"$(XunitNs)\" /></ItemGroup></Project>");
+
+        var text = ProjectTfm.Synthesize(csproj, out var unevaluable);
+
+        Assert.Equal(1, unevaluable);
+        Assert.DoesNotContain("$(", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// When obj/ has the generated set, the &lt;Using&gt; items are already inside it. Synthesizing
+    /// them again would only be a duplicate, and a conflicting one would change what binds; the
+    /// generated set is the sole source of truth.
+    /// </summary>
+    [Fact]
+    public void A_Using_item_is_not_synthesized_when_obj_already_has_the_generated_set()
+    {
+        Write("P.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" +
+            "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup>" +
+            "<ItemGroup><Using Include=\"StaleNs\" /></ItemGroup></Project>");
+        Write("Types.cs", """
+            namespace FreshNs { public class Marker { } }
+            namespace StaleNs { public class Marker { } }
+            namespace App { public class Use { public void Go() { var m = new Marker(); } } }
+            """);
+        Write("obj/Debug/net10.0/P.GlobalUsings.g.cs", "global using global::FreshNs;\n");
+
+        var graph = Indexer.Build(_root);
+        graph.Freeze();
+
+        Assert.Contains(graph.Edges, e =>
+            graph.ById(e.From)?.Short == "Use.Go" && graph.ById(e.To)?.Name == "FreshNs.Marker");
+        Assert.DoesNotContain(graph.Edges, e => graph.ById(e.To)?.Name == "StaleNs.Marker");
     }
 }

@@ -202,7 +202,7 @@ public static partial class Indexer
             ownedTrees.Add(new OwnedTree(trees[i]!, OwnershipOf(scope, files[i])));
         }
 
-        ownedTrees.AddRange(GlobalUsingTrees(scope, parseOptions));
+        ownedTrees.AddRange(GlobalUsingTrees(scope, parseOptions, out _));
 
         var (razorSources, _) = CollectGeneratedRazorSources(scope);
         foreach (var (projectDir, razorPath, text) in razorSources)

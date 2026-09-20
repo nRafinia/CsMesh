@@ -162,6 +162,13 @@ public sealed class Graph
     public int UnevaluableInternalsVisibleTo { get; set; }
 
     /// <summary>
+    /// &lt;Using&gt; items naming an MSBuild property the parser does not evaluate. Each is a global
+    /// using that could not be reconstructed for a project with no generated set, so it is counted
+    /// rather than guessed at.
+    /// </summary>
+    public int UnevaluableUsings { get; set; }
+
+    /// <summary>
     /// Declared ProjectReference edges, by project name. The authority on what depends on what;
     /// symbol edges answer a different question and point the other way for dispatch.
     /// </summary>

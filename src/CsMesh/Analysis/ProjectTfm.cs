@@ -101,11 +101,76 @@ internal static class ProjectTfm
     }
 
     /// <summary>
-    /// The implicit global usings the SDK would generate for one project. The base set is what
-    /// every SDK adds; the ASP.NET Core namespaces are added only for the Web SDK, so a plain
-    /// project is not handed types its real build cannot see.
+    /// The global usings the SDK would generate for one project, when no build wrote the generated
+    /// file. The base set is what every SDK adds when ImplicitUsings is on; the ASP.NET Core
+    /// namespaces are added only for the Web SDK, so a plain project is not handed types its real
+    /// build cannot see.
+    ///
+    /// The csproj's own &lt;Using&gt; items are part of the same generated file, so they are
+    /// reconstructed here too: an Include becomes a plain global using, an Alias a name for it, and
+    /// Static a static import; a Remove drops an implicit or explicit using again. This matters even
+    /// when ImplicitUsings is off -- a test project that only lists &lt;Using Include="Xunit" /&gt;
+    /// still gets that using from the SDK. An item naming another property is counted unevaluable
+    /// and left out rather than guessed at.
     /// </summary>
-    public static string Synthesize(string csprojPath)
+    public static string Synthesize(string csprojPath) => Synthesize(csprojPath, out _);
+
+    public static string Synthesize(string csprojPath, out int unevaluable)
+    {
+        unevaluable = 0;
+
+        XDocument document;
+        try { document = XDocument.Parse(File.ReadAllText(csprojPath)); }
+        catch { return string.Empty; }
+
+        // (target, directive); target is what a <Using Remove> matches against.
+        var entries = new List<(string Target, string Directive)>();
+
+        if (ImplicitUsingsEnabled(csprojPath))
+        {
+            foreach (var ns in BaseNamespaces(csprojPath))
+                entries.Add((ns, $"global using global::{ns};"));
+        }
+
+        var removals = new List<string>();
+        foreach (var element in document.Descendants())
+        {
+            if (element.Name.LocalName != "Using") continue;
+
+            var remove = element.Attribute("Remove")?.Value;
+            if (!string.IsNullOrWhiteSpace(remove))
+            {
+                if (HasProperty(remove)) { unevaluable++; continue; }
+                removals.Add(remove.Trim());
+                continue;
+            }
+
+            var include = element.Attribute("Include")?.Value;
+            if (string.IsNullOrWhiteSpace(include)) continue;
+
+            var alias = element.Attribute("Alias")?.Value;
+            if (HasProperty(include) || (alias is not null && HasProperty(alias)))
+            {
+                unevaluable++;
+                continue;
+            }
+
+            var target = include.Trim();
+            if (!string.IsNullOrWhiteSpace(alias))
+                entries.Add((alias.Trim(), $"global using {alias.Trim()} = global::{target};"));
+            else if (IsTrue(element.Attribute("Static")?.Value))
+                entries.Add((target, $"global using static global::{target};"));
+            else
+                entries.Add((target, $"global using global::{target};"));
+        }
+
+        entries.RemoveAll(entry => removals.Contains(entry.Target, StringComparer.Ordinal));
+
+        return string.Join("\n", entries.Select(entry => entry.Directive));
+    }
+
+    /// <summary>The namespaces every SDK adds when ImplicitUsings is on, plus the Web SDK's.</summary>
+    private static List<string> BaseNamespaces(string csprojPath)
     {
         var namespaces = new List<string>
         {
@@ -134,8 +199,14 @@ internal static class ProjectTfm
             ]);
         }
 
-        return string.Join("\n", namespaces.Select(ns => $"global using global::{ns};"));
+        return namespaces;
     }
+
+    private static bool HasProperty(string value) => value.Contains("$(", StringComparison.Ordinal);
+
+    private static bool IsTrue(string? value) => value is not null &&
+        (value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+         value.Equals("enable", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Framework-named directories directly under <c>{project}/{kind}/{config}</c>. Only the shape
