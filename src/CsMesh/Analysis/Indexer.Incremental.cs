@@ -217,11 +217,7 @@ public static partial class Indexer
 
         var references = ReferenceSet(root, scope, out _);
 
-        var compilation = CSharpCompilation.Create(
-            "csmesh.index",
-            syntax,
-            references,
-            new CSharpCompilationOptions(OutputKind.ConsoleApplication, allowUnsafe: true));
+        var compilation = CreateCompilations("csmesh.index", syntax, references);
 
         var dirtySet = dirty
             .Select(d => d.Replace('\\', '/'))

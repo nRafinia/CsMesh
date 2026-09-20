@@ -553,13 +553,7 @@ public static partial class Indexer
         var references = ReferenceSet(root, scope, out var referenceReport);
         progress?.Invoke($"compiling against {references.Count} references");
 
-        // ConsoleApplication so that top-level statements bind to a real entry point instead of
-        // being rejected outright. Diagnostics are advisory here; we never require a clean build.
-        var compilation = CSharpCompilation.Create(
-            "csmesh.index",
-            trees,
-            references,
-            new CSharpCompilationOptions(OutputKind.ConsoleApplication, allowUnsafe: true));
+        var compilation = CreateCompilations("csmesh.index", trees, references);
 
         var graph = new Graph
         {
@@ -605,6 +599,28 @@ public static partial class Indexer
         graph.AmbiguousMessageDispatches = builder.AmbiguousMessageDispatches;
         graph.UnmatchedMessageDispatches = builder.UnmatchedMessageDispatches;
         return graph;
+    }
+
+    /// <summary>
+    /// Builds the compilation(s) both the full index and the incremental refresh bind against.
+    ///
+    /// The two paths used to construct their compilation separately, so a change to how one was
+    /// made could leave the other behind and two graphs with different rules. One entry point is
+    /// what lets the per-project split switch both at once. For now it returns the single
+    /// whole-solution compilation the indexer has always used.
+    /// </summary>
+    private static CSharpCompilation CreateCompilations(
+        string name,
+        IEnumerable<SyntaxTree> trees,
+        IEnumerable<MetadataReference> references)
+    {
+        // ConsoleApplication so that top-level statements bind to a real entry point instead of
+        // being rejected outright. Diagnostics are advisory here; we never require a clean build.
+        return CSharpCompilation.Create(
+            name,
+            trees,
+            references,
+            new CSharpCompilationOptions(OutputKind.ConsoleApplication, allowUnsafe: true));
     }
 
     /// <summary>
