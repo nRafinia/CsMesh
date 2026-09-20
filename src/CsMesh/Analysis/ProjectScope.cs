@@ -200,7 +200,7 @@ public sealed class ProjectScope
     /// exactly the state the filtered path had just been fixed out of. --all widens what is
     /// indexed; it does not mean nothing is known about what is being indexed.
     /// </summary>
-    public static ProjectScope Everything(string root, string decision = "no project files; indexing every source file")
+    public static ProjectScope Everything(string root, string? decision = null)
     {
         List<string> projects;
         try
@@ -215,7 +215,14 @@ public sealed class ProjectScope
             projects = [];
         }
 
-        return new ProjectScope(root, projects, [], "", decision);
+        // The reason is read by doctor. A repository with projects and no filter is --all, and
+        // saying "no project files" there is false in the one place a reader looks to find out what
+        // was indexed. Only a repository that really has no csproj gets the no-project reason.
+        var resolved = decision ?? (projects.Count > 0
+            ? $"csmesh index --all: every one of {projects.Count} project(s) is in scope"
+            : "no project files; indexing every source file");
+
+        return new ProjectScope(root, projects, [], "", resolved);
     }
 
     public static ProjectScope Discover(string root)
