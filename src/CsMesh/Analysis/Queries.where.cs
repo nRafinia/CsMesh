@@ -78,7 +78,7 @@ public static partial class Queries
             if (near.Count > 0)
             {
                 w.Force("did you mean: " + string.Join(", ", near.Select(h => $"{h.Node.Short} [{h.Why}]")));
-                w.Force($"next: csmesh context {near[0].Node.Short} --budget 800");
+                w.Force($"next: csmesh context {near[0].Node.Short} --budget 900");
                 return Exit.NotFound;
             }
 
@@ -112,6 +112,12 @@ public static partial class Queries
         w.Force($"{query} -- {candidates.Count} match(es), ranked by what reaches them",
                 Row(ranked[0].Node, 0, "query", query, dirty));
 
+        // The boundary, stated because it is not what a reader assumes. Rank is a composite of
+        // lexical strength and reach, not exact-name-first: an exact match with nothing calling it
+        // scores 100 + bonuses, while a substring match under an entrypoint can collect up to 72
+        // for entrypoints alone. The exact name can sit below it, and is not special-cased.
+        w.Force("  rank is reach-weighted, not exact-name-first: an exact name nothing calls can sit below a substring the entrypoints reach.");
+
         var shown = 0;
         foreach (var c in ranked.Take(WhereRowCap))
         {
@@ -126,9 +132,7 @@ public static partial class Queries
 
             if (!w.Add(line, row))
             {
-                w.Force("");
-                w.Force($"OVER BUDGET after {shown} of {ranked.Count} match(es).");
-                w.Force("Narrow with --under before raising --budget.");
+                w.AddMarker(IncompleteMarker(w, "narrow with --under before raising --budget", shown, ranked.Count));
                 return Exit.OverBudget;
             }
 
@@ -146,7 +150,7 @@ public static partial class Queries
         w.Force("");
         w.Force(top.Entrypoints > 0 || IsEntrypoint(top.Node)
             ? $"next: csmesh trace {top.Node.Short} --budget 600"
-            : $"next: csmesh context {top.Node.Short} --budget 800");
+            : $"next: csmesh context {top.Node.Short} --budget 900");
 
         return Exit.Ok;
     }

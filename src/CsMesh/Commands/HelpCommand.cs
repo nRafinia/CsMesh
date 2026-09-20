@@ -73,7 +73,7 @@ public static class HelpCommand
         GLOBAL OPTIONS:
             --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
-            --budget <N>       Maximum output tokens (trace 600, impl 300, blast-radius 800)
+            --budget <N>       Maximum output tokens (trace/impl 600, blast-radius 800)
             --depth <N>        Traversal depth limit (trace 6, blast-radius 3, context 3, path 12)
             --json             Output results as a structured JSON envelope
             --debug            Enable verbose diagnostics on stderr
@@ -83,7 +83,7 @@ public static class HelpCommand
 
         EXIT CODES:
             0 ok   1 not-found   2 over-budget   3 ambiguous   4 no-index   5 changed (review only)
-            64 usage-error   70 internal-error
+            64 usage-error   70 internal-error   75 contended (the index write did not happen)
 
         CONFIDENCE:
             A row marked [... ?0.70 short-name-match] came from a name match, not a compiler
@@ -196,7 +196,8 @@ public static class HelpCommand
             Build the solution first. Without bin/ assemblies many call sites cannot be bound
             and the resulting graph will be missing edges; 'index' reports the count.
 
-            For Blazor/Razor projects, emit generated sources so components are discovered:
+            For source generators (Blazor/Razor, System.Text.Json, and others), emit generated
+            sources too so their types are discovered:
             dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true
 
         EXAMPLES:
@@ -238,13 +239,13 @@ public static class HelpCommand
             <IInterface>       Interface or abstract base type (e.g. IPaymentGateway)
 
         OPTIONS:
-            --budget <N>       Maximum output tokens (default: 300, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
 
         EXAMPLES:
-            csmesh impl IPaymentGateway --budget 300
+            csmesh impl IPaymentGateway --budget 600
             csmesh impl PaymentHandlerBase
         """;
 
@@ -281,7 +282,7 @@ public static class HelpCommand
             [FILTER]           Optional query filter (matches route, symbol name, or tag)
 
         OPTIONS:
-            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -304,7 +305,7 @@ public static class HelpCommand
             <Type.Member>      Target symbol (e.g. PaymentService.Process)
 
         OPTIONS:
-            --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 900, exits code 2 on overflow)
             --depth <N>        Reverse traversal depth for impact and entrypoints (default: 3)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -316,7 +317,7 @@ public static class HelpCommand
             exhausted budget drops the tail rather than the answer.
 
         EXAMPLES:
-            csmesh context PaymentService.Process --budget 800
+            csmesh context PaymentService.Process --budget 900
             csmesh context IPaymentGateway --depth 2
         """;
 
@@ -333,7 +334,7 @@ public static class HelpCommand
             <To>               Where you want to know it arrives (e.g. StripeGateway.Authorize)
 
         OPTIONS:
-            --budget <N>       Maximum output tokens (default: 400, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 500, exits code 2 on overflow)
             --depth <N>        Maximum hops to search (default: 12)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -383,7 +384,7 @@ public static class HelpCommand
 
         OPTIONS:
             --kind <K>         Filter to one kind: call, type, di, mediatr
-            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 700, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -391,7 +392,12 @@ public static class HelpCommand
         NOTES:
             'doctor' reports that a graph is, say, 91% resolved. This says which 9%. A missing
             edge and an absent one look identical in every other command; this is the only place
-            they can be told apart. The sample is capped at 400 sites per index.
+            they can be told apart.
+
+            The list is a sample, not a log: the index keeps only a few hundred sites per kind, and
+            this prints the most actionable groups and the top rows within each. A footer names how
+            many groups and rows were withheld and the --kind filter that narrows to them. Exit 2
+            means the budget ran out before those caps, not that the sample was exhaustive.
 
         EXAMPLES:
             csmesh unresolved
@@ -492,9 +498,11 @@ public static class HelpCommand
 
         EXIT CODES:
             0   nothing unaccepted changed (or --accept just ran)
-            4   the base revision could not be indexed, or no current index exists: csmesh index
+            4   the base revision could not be indexed; no current index exists; or the current
+                index predates HEAD, so the comparison cannot be trusted: csmesh index
             5   unaccepted structural change exists -- fail the build
-            64  not a git repository, or BASE does not resolve
+            64  not a git repository; BASE does not resolve; or --accept was given while the
+                current index predates HEAD
         """;
 
     public const string WhereHelp =
@@ -507,7 +515,7 @@ public static class HelpCommand
 
         OPTIONS:
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
-            --budget <N>       Maximum output tokens (default: 400, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -545,7 +553,7 @@ public static class HelpCommand
 
         OPTIONS:
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
-            --budget <N>       Maximum output tokens (default: 700, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 850, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -556,7 +564,9 @@ public static class HelpCommand
             anything in it is load bearing. This answers which projects lean on which, where the
             entrypoints cluster, and which handful of members everything runs through.
 
-            Deliberately one screen. A map that needs two is a directory listing.
+            One screen by design: each section shows its top N and the footer names what was
+            withheld. On a very large solution the budget itself can run out before those caps,
+            and the map says so (INCOMPLETE, exit 2) instead of reading as a complete answer.
 
         EXAMPLES:
             csmesh map
@@ -577,7 +587,7 @@ public static class HelpCommand
 
         OPTIONS:
             --depth <N>        How far to walk before giving up (default: 12)
-            --budget <N>       Maximum output tokens (default: 700, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 300, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information

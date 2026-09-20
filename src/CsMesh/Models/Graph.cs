@@ -114,6 +114,17 @@ public sealed class Graph
     public int RazorStaleSources { get; set; }
 
     /// <summary>
+    /// Generated .g.cs files from non-Razor source generators (System.Text.Json, Regex,
+    /// LibraryImport, LoggerMessage, ...) found under obj/**/generated and compiled into the graph.
+    ///
+    /// These have no source file to map back to the way a Razor generated file names its .razor
+    /// origin, so they are indexed under their obj/ path and accepted as whatever the last build
+    /// wrote. Zero on a fresh checkout, or on an incremental build that emitted nothing: the call
+    /// sites that depend on their members are then reported unresolved rather than silently dropped.
+    /// </summary>
+    public int GeneratedSourcesIndexed { get; set; }
+
+    /// <summary>
     /// Project files left out of the index because nothing builds them. Named rather than
     /// silently dropped: quietly ignoring source is worse than indexing dead source, since the
     /// reader has no way to find out it happened.

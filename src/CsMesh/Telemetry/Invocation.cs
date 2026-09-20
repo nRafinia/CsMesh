@@ -16,6 +16,31 @@ public sealed class Invocation
     public long Ms { get; set; }
     public int OutTokens { get; set; }
 
+    /// <summary>
+    /// The size the answer wanted, when the emitted output was cut by the budget. <see cref="OutTokens"/>
+    /// is what was emitted; this is the emitted total plus the first line the budget refused, which is
+    /// a lower bound on the untruncated answer: a query stops at the first refusal, so everything after
+    /// it is never measured, and this stays a lower bound until truncate-and-mark measures past the
+    /// first refusal. Equal to <see cref="OutTokens"/> when nothing overflowed.
+    ///
+    /// Without this, an exit=2 row read as "under budget" whenever the refused line was what pushed
+    /// it over, and the amount over was unrecoverable from the log.
+    ///
+    /// The other half of the same warning: it is recorded only when an overflow happens, so it
+    /// cannot reveal the ceiling of answers that currently fit the default -- establishing that
+    /// needs a deliberate high-budget run. And as a lower bound it can understate badly: map's own
+    /// marker reported ~828 while the unclipped answer was 1463.
+    /// </summary>
+    public int WouldBeTokens { get; set; }
+
+    /// <summary>
+    /// Tokens the forced pre-query notes spent before the query ran -- a stale-index line, a
+    /// version-gap line. <see cref="Budget"/> is the cap the writer was given; the query's real
+    /// allowance was <c>Budget - ReservedTokens</c>. Recorded because two identical queries otherwise
+    /// differ only by whether the index happened to be stale, and nothing in the log said so.
+    /// </summary>
+    public int ReservedTokens { get; set; }
+
     /// <summary>Distinct source files the answer pointed the caller at.</summary>
     public int FilesReferenced { get; set; }
 

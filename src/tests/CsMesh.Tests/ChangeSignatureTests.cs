@@ -130,4 +130,28 @@ public sealed class ChangeSignatureTests(GraphFixture fixture) : IClassFixture<G
         Assert.Equal(Exit.Ok, exit);
         Assert.Contains("no structural change", Text(w));
     }
+
+    /// <summary>
+    /// 'changes' was the only query command whose rows never carried [STALE], so a dirty file's
+    /// role in the comparison was unreadable. It now tags like every other command, on both the
+    /// row and the text line.
+    /// </summary>
+    [Fact]
+    public void A_row_whose_file_is_dirty_is_tagged_stale()
+    {
+        var before = Fork(fixture.Graph);
+        var after = Fork(fixture.Graph);
+
+        var binding = after.Edges.First(e => e.Kind == EdgeKind.DiBinding);
+        var owner = fixture.Graph.ById(binding.From)!;
+        after.Edges.Remove(binding);
+
+        var dirty = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { owner.File };
+        var w = Writer();
+        var exit = Queries.Changes(after, before, includeCalls: false, w, dirty);
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.Contains("[STALE]", Text(w));
+        Assert.Contains(w.Rows, r => r.Stale);
+    }
 }

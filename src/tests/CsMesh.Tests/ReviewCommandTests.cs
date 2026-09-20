@@ -90,6 +90,26 @@ public sealed class ReviewCommandTests : IDisposable
         return exit;
     }
 
+    private string ReviewOut(out int exit, params string[] args) =>
+        Capture(() => ReviewCommand.Execute(_root, new Options(args)), out exit);
+
+    private string ReviewErr(out int exit, params string[] args)
+    {
+        var original = Console.Error;
+        var buffer = new StringWriter();
+        try
+        {
+            Console.SetError(buffer);
+            exit = ReviewCommand.Execute(_root, new Options(args));
+        }
+        finally
+        {
+            Console.SetError(original);
+        }
+
+        return buffer.ToString();
+    }
+
     private const string ThingSource =
         """
         namespace Shared { public interface IServiceCollection { } public interface IThing { void Do(); } }
@@ -218,9 +238,11 @@ public sealed class ReviewCommandTests : IDisposable
         Assert.NotEmpty(before);
 
         // Comparing against the current HEAD itself: no findings survive, so every previously
-        // accepted entry is dead and --accept should drop it rather than let the file grow.
+        // accepted entry is dead and --accept should drop it rather than let the file grow. The
+        // index is rebuilt after the commit because a commit gap now refuses --accept outright.
         CommitAll("second");
         var currentSha = Sha();
+        ReindexCurrent();
         Assert.Equal(Exit.Ok, Review(currentSha, "--accept"));
 
         Assert.Empty(BaselineFile.Load(_root));
@@ -347,5 +369,98 @@ public sealed class ReviewCommandTests : IDisposable
         var exit = Review(baseSha);
 
         Assert.Equal(Exit.NoIndex, exit);
+    }
+
+    // ------------------------------------------------------------------ commit gap
+
+    /// <summary>
+    /// The index that stands in for "current" can predate HEAD, and then the comparison is wrong,
+    /// not merely thin: changes the revision under review made may be absent, and changes already
+    /// gone may be reported. A gate that cannot see the change must not pass, so the command
+    /// refuses instead of warning and exiting 0.
+    /// </summary>
+    [Fact]
+    public void A_commit_gap_refuses_and_names_the_remedy()
+    {
+        var baseSha = SeedBase();
+        ReindexCurrent();
+
+        Write("Things.cs", ImplSource + "\n// HEAD moves past the index\n");
+        CommitAll("second");
+
+        var err = ReviewErr(out var exit, baseSha);
+
+        Assert.Equal(Exit.NoIndex, exit);
+        Assert.Contains("index built at", err, StringComparison.Ordinal);
+        Assert.Contains("HEAD is", err, StringComparison.Ordinal);
+        Assert.Contains("run: csmesh index", err, StringComparison.Ordinal);
+    }
+
+    /// <summary>An index that records no commit cannot be shown current, and must refuse rather
+    /// than pass as fresh just because nothing contradicts it.</summary>
+    [Fact]
+    public void An_index_with_no_commit_refuses()
+    {
+        var baseSha = SeedBase();
+        var graph = Indexer.Build(_root);
+        graph.BuiltFromCommit = string.Empty;
+        GraphStore.Save(graph);
+
+        var err = ReviewErr(out var exit, baseSha);
+
+        Assert.Equal(Exit.NoIndex, exit);
+        Assert.Contains("records no commit", err, StringComparison.Ordinal);
+        Assert.Contains("run: csmesh index", err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_current_index_proceeds_without_a_gap_message()
+    {
+        var baseSha = SeedBase();
+        ReindexCurrent();
+
+        var text = ReviewOut(out var exit, baseSha);
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.DoesNotContain("index built at", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("records no commit", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// --accept under a gap is the worst case: findings from the wrong current side would be
+    /// written into the baseline and inherited silently by every later review. It is a usage error,
+    /// and nothing may be written.
+    /// </summary>
+    [Fact]
+    public void Accept_under_a_gap_refuses_and_writes_nothing()
+    {
+        var baseSha = SeedBase();
+        ReindexCurrent();                                   // built at base
+        Write("Registration.cs", Registration("ThingB"));
+        ReindexCurrent();                                   // still built at base
+
+        Write("Things.cs", ImplSource + "\n// HEAD moves past the index\n");
+        CommitAll("second");                                // HEAD moves past the index
+
+        var baselinePath = BaselineFile.PathFor(_root);
+        var err = ReviewErr(out var exit, baseSha, "--accept");
+
+        Assert.Equal(Exit.Usage, exit);
+        Assert.Contains("run: csmesh index", err, StringComparison.Ordinal);
+        Assert.Contains("--accept is refused", err, StringComparison.Ordinal);
+        Assert.False(File.Exists(baselinePath));
+    }
+
+    [Fact]
+    public void Accept_on_a_current_index_still_accepts()
+    {
+        var baseSha = SeedBase();
+        Write("Registration.cs", Registration("ThingB"));
+        ReindexCurrent();                                   // built at HEAD, no gap
+
+        var exit = Review(baseSha, "--accept");
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.NotEmpty(BaselineFile.Load(_root));
     }
 }

@@ -3,6 +3,7 @@ using CsMesh.Analysis;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Storage;
+using CsMesh.Telemetry;
 
 namespace CsMesh.Commands;
 
@@ -18,14 +19,22 @@ namespace CsMesh.Commands;
 /// </summary>
 public static class ReviewCommand
 {
+    /// <summary>
+    /// The budget <c>review</c> runs at when the caller does not pass <c>--budget</c>. Named rather
+    /// than inline so the documented default can be pinned to it, which <see cref="QueryCommand"/>
+    /// commands get for free through <c>WriterFor</c> and review does not.
+    /// </summary>
+    internal const int DefaultBudget = 800;
+
     public static int Execute(string root, Options opt)
     {
         var json = opt.Flag("json");
-        var budget = opt.Int("budget", 800);
+        var budget = opt.Int("budget", DefaultBudget);
+        CsMesh.Telemetry.Telemetry.Current.Budget = budget;
         var includeCalls = opt.Flag("calls");
         var accept = opt.Flag("accept");
 
-        var writer = new BudgetWriter(budget);
+        var writer = new BudgetWriter(budget, BudgetWriter.CompletionMarkerReserve);
         var result = new QueryResult { Command = "review" };
 
         if (!GitTool.TryRun(root, "rev-parse --is-inside-work-tree", out _, out var repoError, out _))
@@ -51,6 +60,11 @@ public static class ReviewCommand
         if (current == null)
         {
             return Fail(result, writer, json, Exit.NoIndex, $"no usable index ({problem}). run: csmesh index");
+        }
+
+        if (RefuseOnCommitGap(root, current, accept, result, writer, json) is { } gapExit)
+        {
+            return gapExit;
         }
 
         var findings = Queries.DiffFindings(current, baseGraph, includeCalls);
@@ -126,6 +140,66 @@ public static class ReviewCommand
         }
 
         return "HEAD";
+    }
+
+    /// <summary>
+    /// Refuses the run when the current index cannot be shown to be at HEAD, returning the exit code
+    /// to stop with, or null when the review may proceed.
+    /// </summary>
+    /// <remarks>
+    /// Both sides of a review are graphs; the working tree is never read, so working-tree staleness
+    /// is the wrong question here. The one that matters is whether the index standing in for
+    /// "current" was built at HEAD. When it was not, the comparison is wrong rather than thin: the
+    /// index may never have seen the change under review, or may still hold one that was reverted.
+    /// A warning would let a gate pass the very change it exists to catch, so the command refuses
+    /// instead.
+    ///
+    /// The exit is <see cref="Exit.NoIndex"/>: the index exists but cannot answer this question,
+    /// which is what 4 already tells a caller to fix with 'csmesh index'. <see cref="Exit.Changed"/>
+    /// is not reused -- 5 gates a merge, so a gap would block for the right outcome but the wrong
+    /// reason, and a caller treating 5 as a findings list would act on a list that does not exist.
+    /// --accept under a gap is worse still: it writes findings from the wrong current side into the
+    /// baseline, and every later review inherits the error silently, so it is a usage error (64).
+    ///
+    /// Auto-healing is deliberately not offered. Review already builds a base graph in a disposable
+    /// worktree; silently re-indexing the current side would turn a read command into one that
+    /// rewrites the user's own index as a side effect, at exactly the moment the user's assumptions
+    /// are already wrong. The remedy is one command and the message names it.
+    ///
+    /// An empty <see cref="Graph.BuiltFromCommit"/> takes the same path: an index that records no
+    /// commit cannot be shown current, and silence there is the same failure in a different costume.
+    /// </remarks>
+    private static int? RefuseOnCommitGap(
+        string root, Graph current, bool accept, QueryResult result, BudgetWriter writer, bool json)
+    {
+        var gap = CommitGapNotice(root, current);
+        if (gap == null) return null;
+
+        return accept
+            ? Fail(result, writer, json, Exit.Usage,
+                gap + ". --accept is refused: it would record findings from the wrong current side")
+            : Fail(result, writer, json, Exit.NoIndex, gap);
+    }
+
+    /// <summary>Describes why the current index is not at HEAD, naming the remedy, or null.</summary>
+    private static string? CommitGapNotice(string root, Graph current)
+    {
+        const string remedy = " run: csmesh index, then re-run review";
+
+        var built = current.BuiltFromCommit;
+        if (built.Length == 0)
+        {
+            return $"# this index records no commit, so it cannot be shown current;{remedy}";
+        }
+
+        if (!GitTool.TryRun(root, "rev-parse HEAD", out var headOut, out _, out _)) return null;
+        var head = headOut.Trim();
+        if (head.Length == 0) return null;
+
+        if (head.StartsWith(built, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var shortHead = head.Length > built.Length ? head[..built.Length] : head;
+        return $"# index built at {built}, HEAD is {shortHead};{remedy}";
     }
 
     // ------------------------------------------------------------------ base graph, cached per commit
@@ -341,8 +415,7 @@ public static class ReviewCommand
     /// failure -- everything gathered so far is still worth keeping.</summary>
     private static int Truncated(QueryResult result, BudgetWriter w, bool json)
     {
-        w.Force("");
-        w.Force("OVER BUDGET: raise --budget, or narrow with --under.");
+        w.AddMarker(Queries.IncompleteMarker(w, "raise --budget, or narrow with --under"));
 
         if (json) return EmitJson(result, w, Exit.OverBudget);
 
@@ -358,6 +431,8 @@ public static class ReviewCommand
         result.Truncated = writer.Overflowed;
 
         Console.WriteLine(JsonSerializer.Serialize(result, AppJsonContext.Default.QueryResult));
+        CsMesh.Telemetry.Telemetry.Current.OutTokens = writer.Tokens;
+        CsMesh.Telemetry.Telemetry.Current.WouldBeTokens = writer.WouldBeTokens;
         return exitCode;
     }
 

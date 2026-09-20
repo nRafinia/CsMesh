@@ -81,24 +81,27 @@ public static partial class Queries
 
         if (explained.Any(x => x.Reasons.Count > 0))
         {
-            if (!w.Add("")) return Exit.NotFound;
-            if (!w.Add("WHERE IT BROKE")) return Exit.NotFound;
-
-            // The same remedy repeated under five dead ends is one fact, not five. Say it once.
-            var said = new HashSet<string>(StringComparer.Ordinal);
-
-            foreach (var (node, reasons) in explained.Where(x => x.Reasons.Count > 0))
+            // Separator and heading are best-effort: they must not end the answer before the
+            // closing lines below are reached, which is what a guarded Add did.
+            w.Separator();
+            if (w.Add("WHERE IT BROKE"))
             {
-                if (!w.Add($"  {node.Short}{Loc(node)}{StaleTag(node, dirty)}",
-                           Row(node, 1, "dead-end", null, dirty)))
-                {
-                    break;
-                }
+                // The same remedy repeated under five dead ends is one fact, not five. Say it once.
+                var said = new HashSet<string>(StringComparer.Ordinal);
 
-                foreach (var reason in reasons.Take(4))
+                foreach (var (node, reasons) in explained.Where(x => x.Reasons.Count > 0))
                 {
-                    if (reason.StartsWith("  ", StringComparison.Ordinal) && !said.Add(reason)) continue;
-                    if (!w.Add($"    {reason}")) break;
+                    if (!w.Add($"  {node.Short}{Loc(node)}{StaleTag(node, dirty)}",
+                               Row(node, 1, "dead-end", null, dirty)))
+                    {
+                        break;
+                    }
+
+                    foreach (var reason in reasons.Take(4))
+                    {
+                        if (reason.StartsWith("  ", StringComparison.Ordinal) && !said.Add(reason)) continue;
+                        if (!w.Add($"    {reason}")) break;
+                    }
                 }
             }
         }
@@ -168,55 +171,57 @@ public static partial class Queries
 
         if (outgoing.Count == 0)
         {
-            if (!w.Add("")) return Exit.Ok;
-            if (!w.Add("NOTHING LEAVES THIS SYMBOL")) return Exit.Ok;
-
-            if (reasons.Count == 0)
+            w.Separator();
+            if (w.Add("NOTHING LEAVES THIS SYMBOL"))
             {
-                w.Add(node.Kind is "interface" or "type"
-                    ? "  it declares members but the graph has no calls out of them"
-                    : "  it calls nothing that is declared in this repository");
-            }
+                if (reasons.Count == 0)
+                {
+                    w.Add(node.Kind is "interface" or "type"
+                        ? "  it declares members but the graph has no calls out of them"
+                        : "  it calls nothing that is declared in this repository");
+                }
 
-            foreach (var reason in reasons.Take(6))
-            {
-                if (!w.Add("  " + reason)) break;
+                foreach (var reason in reasons.Take(6))
+                {
+                    if (!w.Add("  " + reason)) break;
+                }
             }
         }
 
         if (incoming.Count == 0)
         {
-            if (!w.Add("")) return Exit.Ok;
-            if (!w.Add("NOTHING REACHES THIS SYMBOL")) return Exit.Ok;
-
-            w.Add("  no call, construction, dispatch or binding in source names it");
-
-            // The name may appear in code that never bound -- a source-generated member, a type
-            // from an unresolved assembly. That is an index gap, not an unused symbol, and the
-            // two call for opposite conclusions.
-            var mentions = Mentions(g, node);
-            if (mentions.Count > 0)
+            w.Separator();
+            if (w.Add("NOTHING REACHES THIS SYMBOL"))
             {
-                w.Add($"  but {mentions.Count} unresolved site(s) mention this name:");
-                foreach (var mention in mentions.Take(4))
+                w.Add("  no call, construction, dispatch or binding in source names it");
+
+                // The name may appear in code that never bound -- a source-generated member, a type
+                // from an unresolved assembly. That is an index gap, not an unused symbol, and the
+                // two call for opposite conclusions.
+                var mentions = Mentions(g, node);
+                if (mentions.Count > 0)
                 {
-                    if (!w.Add($"    {mention.File}:{mention.Line}  {mention.Expression}")) break;
+                    w.Add($"  but {mentions.Count} unresolved site(s) mention this name:");
+                    foreach (var mention in mentions.Take(4))
+                    {
+                        if (!w.Add($"    {mention.File}:{mention.Line}  {mention.Expression}")) break;
+                    }
+
+                    w.Add("  the reference exists; it did not bind. Run 'dotnet build', then 'csmesh index'.");
                 }
 
-                w.Add("  the reference exists; it did not bind. Run 'dotnet build', then 'csmesh index'.");
-            }
+                // Reflection, serialization and container scanning all call code that nothing in the
+                // source refers to. Saying "unused" here would be the wrong conclusion.
+                if (g.ScanRegistrations.Count > 0)
+                {
+                    w.Add($"  {g.ScanRegistrations.Count} assembly-scan registration(s) exist; a scan can");
+                    w.Add("  resolve a type nothing names in source");
+                }
 
-            // Reflection, serialization and container scanning all call code that nothing in the
-            // source refers to. Saying "unused" here would be the wrong conclusion.
-            if (g.ScanRegistrations.Count > 0)
-            {
-                w.Add($"  {g.ScanRegistrations.Count} assembly-scan registration(s) exist; a scan can");
-                w.Add("  resolve a type nothing names in source");
-            }
-
-            if (IsEntrypoint(node))
-            {
-                w.Add("  it is an entrypoint: the framework calls it, not your code");
+                if (IsEntrypoint(node))
+                {
+                    w.Add("  it is an entrypoint: the framework calls it, not your code");
+                }
             }
         }
 

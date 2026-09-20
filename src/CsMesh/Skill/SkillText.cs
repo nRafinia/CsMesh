@@ -63,6 +63,12 @@ public static class SkillText
         Run it before you open a **second** file to follow a call chain. It crosses container bindings and
         mediator dispatch, which reading files in sequence does not.
 
+        **"Who calls this? Where is it invoked from?"**
+        -> `csmesh blast-radius Type.Member --depth 1`
+
+        Reverse edges. `trace` walks forward from a symbol, `blast-radius` walks backward. If you are
+        enumerating call sites, this is the command -- not `trace`, and not grep.
+
         **"Which class runs behind this interface?"**
         -> `csmesh impl IThing`
 
@@ -124,6 +130,11 @@ public static class SkillText
 
         ## When something comes back empty
 
+        **A command exits 2.** The answer was too large, not absent. Apply the remedy in order: the depth
+        the message names, then `--under <path>`, then `--depth 1` for direct edges only. `silence` belongs
+        to a *narrowed* query that then comes back exit 1 -- never to exit 2 itself, where nothing was
+        missing and narrowing is what removes the overflow.
+
         **A command exits 1.** Do not fall back to grep. Run `csmesh silence <symbol>`, or
         `csmesh silence <from> <to>` for a missing path. Exit 1 means the graph had nothing, which is not
         the same as the codebase having nothing. It tells you which: a typo, a type from a referenced
@@ -150,9 +161,9 @@ public static class SkillText
         ```bash
         csmesh map                                          # orient first in an unfamiliar repo
         csmesh where discount                               # find symbol or route when you have words
-        csmesh context PaymentService.Process --budget 800  # everything about one symbol, one call
-        csmesh trace PaymentController.Post --budget 600
-        csmesh impl IPaymentGateway --budget 300
+        csmesh context PaymentService.Process --budget 900  # everything about one symbol, one call
+        csmesh trace PaymentController.Post --budget 700
+        csmesh impl IPaymentGateway --budget 600
         csmesh blast-radius Order.Status --budget 800 --depth 2
         csmesh path PaymentController.Post StripeGateway.Authorize
         csmesh entrypoints payments
@@ -191,12 +202,13 @@ public static class SkillText
         |---|---|---|
         | 0 | complete answer | use it |
         | 1 | nothing found | `csmesh silence <symbol>` before anything else |
-        | 2 | answer exists but exceeds the budget | narrow with `--under`, or use the depth the message names. Do **not** just raise `--budget` to a huge number |
+        | 2 | answer exists but exceeds the budget | in order: the depth the message names, then `--under <path>`, then `--depth 1` for direct edges only. Do **not** just raise `--budget` to a huge number, and do **not** run `silence` here -- a *narrowed* query that then exits 1 is when `silence` applies |
         | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
-        | 4 | no index, or one written by an older csmesh | run `csmesh index` |
+        | 4 | no index; one written by an older csmesh; or (review) an index that predates HEAD | run `csmesh index` |
         | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
-        | 64 | bad command line | run `csmesh <cmd> --help` |
+        | 64 | bad command line, including `review --accept` when the index predates HEAD | run `csmesh <cmd> --help` |
         | 70 | csmesh itself failed | re-run with `--debug`; that is a bug, not your query |
+        | 75 | index file contended by another process | nothing was written and nothing is broken — wait briefly and retry the command; do not report it |
 
         ## Rules
 
@@ -205,8 +217,8 @@ public static class SkillText
           `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
           a member, **always use `where <member-name>` first** to discover the correct qualified name
           rather than guessing from the file or outer class name.
-        - Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for `blast-radius`,
-          `context` and `diff`, 400 for `path`.
+        - Always pass `--budget`. Default it to 700 for `trace`, 600 for `impl`, 800 for `blast-radius`
+          and `diff`, 900 for `context`, 500 for `path`.
         - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
           question is cheaper than paying for the whole tree.
         - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3.
@@ -229,10 +241,10 @@ public static class SkillText
 
         Your VERY FIRST action when exploring or investigating C# code MUST be running `csmesh` (via your available shell/bash/command tool, or via `csmesh_*` MCP tools if configured):
         - To find a symbol or route: `csmesh where <term>`
-        - To trace call paths: `csmesh trace <Type.Member> --budget 600`
-        - To find implementations: `csmesh impl <IThing> --budget 300`
+        - To trace call paths: `csmesh trace <Type.Member> --budget 700`
+        - To find implementations: `csmesh impl <IThing> --budget 600`
         - To check blast radius: `csmesh blast-radius <Type.Member> --budget 800`
-        - To inspect a type: `csmesh context <TypeName> --budget 800`
+        - To inspect a type: `csmesh context <TypeName> --budget 900`
         - To orient in a repo: `csmesh map`
 
         Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
@@ -246,10 +258,11 @@ public static class SkillText
 
         | you are about to | run instead |
         |---|---|
-        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 800` |
+        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 900` |
         | list directories to orient in an unfamiliar repo | `csmesh map` |
-        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 600` |
-        | guess which class implements an interface | `csmesh impl IThing --budget 300` |
+        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 700` |
+        | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
+        | guess which class implements an interface | `csmesh impl IThing --budget 600` |
         | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
         | grep for a mediator handler | `csmesh trace` on the calling method |
         | search for an HTTP route or a background job | `csmesh entrypoints <filter>` |
@@ -275,6 +288,9 @@ public static class SkillText
 
         ## When something comes back empty
 
+        - **Exit 2**: the answer was too large, not absent. In order: the depth the message names, then
+          `--under <path>`, then `--depth 1` for direct edges only. `silence` is for a *narrowed* query that
+          then exits 1 -- never for exit 2 itself, where nothing was missing.
         - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
           whether the symbol was mistyped, lives in a package, was never bound because the solution was not
           built, or is reached only through a container scan. Only one of those is fixed by searching here.
@@ -293,16 +309,17 @@ public static class SkillText
 
         ## Exit codes
 
-        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index, `5` `review` only:
-        unaccepted structural change, `64` bad command line, `70` internal error. Branch on these; do
-        not parse the text.
+        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index (or, for `review`, an
+        index behind HEAD), `5` `review` only: unaccepted structural change, `64` bad command line
+        (including `review --accept` behind HEAD), `70` internal error, `75` index write contended.
+        Branch on these; do not parse the text.
 
         ## Practice
 
         - **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
           nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
           Use `csmesh where <member-name>` first to discover the correct qualified name.
-        - Always pass `--budget`: 600 `trace`, 300 `impl`, 800 `blast-radius`/`context`/`diff`, 400 `path`.
+        - Always pass `--budget`: 700 `trace`, 600 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 500 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
         - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
@@ -327,10 +344,10 @@ public static class SkillText
 
         Your VERY FIRST action when exploring or investigating C# code MUST be running `csmesh` (via your available shell/bash/command tool, or via `csmesh_*` MCP tools if configured):
         - To find a symbol or route: `csmesh where <term>`
-        - To trace call paths: `csmesh trace <Type.Member> --budget 600`
-        - To find implementations: `csmesh impl <IThing> --budget 300`
+        - To trace call paths: `csmesh trace <Type.Member> --budget 700`
+        - To find implementations: `csmesh impl <IThing> --budget 600`
         - To check blast radius: `csmesh blast-radius <Type.Member> --budget 800`
-        - To inspect a type: `csmesh context <TypeName> --budget 800`
+        - To inspect a type: `csmesh context <TypeName> --budget 900`
         - To orient in a repo: `csmesh map`
 
         Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
@@ -344,10 +361,11 @@ public static class SkillText
 
         | you are about to | run instead |
         |---|---|
-        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 800` |
+        | spawn a subagent to "find everything about X" or explore how X works | `csmesh context X --budget 900` |
         | list directories to orient in an unfamiliar repo | `csmesh map` |
-        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 600` |
-        | guess which class implements an interface | `csmesh impl IThing --budget 300` |
+        | open a second file to follow a call chain | `csmesh trace Type.Member --budget 700` |
+        | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
+        | guess which class implements an interface | `csmesh impl IThing --budget 600` |
         | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
         | grep for a mediator handler | `csmesh trace` on the calling method |
         | search for an HTTP route or a background job | `csmesh entrypoints <filter>` |
@@ -373,6 +391,9 @@ public static class SkillText
 
         ## When something comes back empty
 
+        - **Exit 2**: the answer was too large, not absent. In order: the depth the message names, then
+          `--under <path>`, then `--depth 1` for direct edges only. `silence` is for a *narrowed* query that
+          then exits 1 -- never for exit 2 itself, where nothing was missing.
         - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
           whether the symbol was mistyped, lives in a package, was never bound because the solution was not
           built, or is reached only through a container scan. Only one of those is fixed by searching here.
@@ -391,16 +412,17 @@ public static class SkillText
 
         ## Exit codes
 
-        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index, `5` `review` only:
-        unaccepted structural change, `64` bad command line, `70` internal error. Branch on these; do
-        not parse the text.
+        `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index (or, for `review`, an
+        index behind HEAD), `5` `review` only: unaccepted structural change, `64` bad command line
+        (including `review --accept` behind HEAD), `70` internal error, `75` index write contended.
+        Branch on these; do not parse the text.
 
         ## Practice
 
         - **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
           nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
           Use `csmesh where <member-name>` first to discover the correct qualified name.
-        - Always pass `--budget`: 600 `trace`, 300 `impl`, 800 `blast-radius`/`context`/`diff`, 400 `path`.
+        - Always pass `--budget`: 700 `trace`, 600 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 500 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
         - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.

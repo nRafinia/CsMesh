@@ -28,8 +28,8 @@ public static partial class Queries
     /// </summary>
     public static int Changes(Graph current, Graph previous, bool includeCalls, BudgetWriter w, HashSet<string> dirty)
     {
-        var now = Signatures(current, includeCalls);
-        var before = Signatures(previous, includeCalls);
+        var now = Signatures(current, includeCalls, dirty);
+        var before = Signatures(previous, includeCalls, dirty);
 
         var added = now.Keys.Except(before.Keys, StringComparer.Ordinal).ToList();
         var removed = before.Keys.Except(now.Keys, StringComparer.Ordinal).ToList();
@@ -69,8 +69,9 @@ public static partial class Queries
             {
                 var fact = now[key];
                 var source = fact.Source != null ? $" {fact.Source}" : "";
+                var stale = fact.Stale ? "  [STALE]" : "";
                 var line = $"    {fact.From} -> {fact.To}  [{fact.Kind}]  "
-                           + $"{before[key].Score:0.00} -> {fact.Score:0.00}{source}";
+                           + $"{before[key].Score:0.00} -> {fact.Score:0.00}{source}{stale}";
 
                 var row = new QueryRow
                 {
@@ -81,7 +82,8 @@ public static partial class Queries
                     Note = $"{before[key].Score:0.00} -> {fact.Score:0.00}",
                     Confidence = fact.Score,
                     Source = fact.Source,
-                    Site = fact.Site
+                    Site = fact.Site,
+                    Stale = fact.Stale
                 };
 
                 if (!w.Add(line, row)) return Truncated(w);
@@ -141,6 +143,7 @@ public static partial class Queries
                 {
                     var note = fact.Note != null ? $"  [{fact.Note}]" : "";
                     var site = fact.Site != null ? $"  @ {fact.Site}" : "";
+                    var stale = fact.Stale ? "  [STALE]" : "";
 
                     var row = new QueryRow
                     {
@@ -149,10 +152,11 @@ public static partial class Queries
                         Kind = fact.Kind.ToString(),
                         Relation = relation,
                         Note = fact.Note,
-                        Site = fact.Site
+                        Site = fact.Site,
+                        Stale = fact.Stale
                     };
 
-                    if (!w.Add($"    {fact.From} -> {fact.To}{note}{site}", row)) return false;
+                    if (!w.Add($"    {fact.From} -> {fact.To}{note}{site}{stale}", row)) return false;
                 }
 
                 if (kindGroup.Count() > 20 && !w.Add($"    ... {kindGroup.Count() - 20} more")) return false;
@@ -174,7 +178,7 @@ public static partial class Queries
     };
 
     private readonly record struct EdgeFact(
-        string From, string To, EdgeKind Kind, string? Note, string? Site, double Score, string? Source);
+        string From, string To, EdgeKind Kind, string? Note, string? Site, double Score, string? Source, bool Stale);
 
     /// <summary>
     /// One structural difference between two graphs, identified independently of where it lives
@@ -254,7 +258,7 @@ public static partial class Queries
     /// Call edges are excluded by default. They churn on every refactor and would bury the handful
     /// of structural changes that actually alter behaviour.
     /// </summary>
-    private static Dictionary<string, EdgeFact> Signatures(Graph g, bool includeCalls)
+    private static Dictionary<string, EdgeFact> Signatures(Graph g, bool includeCalls, HashSet<string>? dirty = null)
     {
         var map = new Dictionary<string, EdgeFact>(StringComparer.Ordinal);
 
@@ -279,7 +283,8 @@ public static partial class Queries
             var signature = $"{e.Kind}\u0001{fromKey}\u0001{toKey}\u0001{e.Note}";
 
             map[signature] = new EdgeFact(
-                from.Short, to.Short, e.Kind, e.Note, e.Site, e.Score, e.Source);
+                from.Short, to.Short, e.Kind, e.Note, e.Site, e.Score, e.Source,
+                dirty != null && (IsStale(from, dirty) || IsStale(to, dirty)));
         }
 
         return map;

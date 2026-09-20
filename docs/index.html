@@ -386,7 +386,7 @@ footer .right{margin-left:auto}
 
     <div class="term" style="margin-top:34px">
       <div class="term-bar">
-        <span class="prompt">$ <em>csmesh impl IStore --budget 300</em></span>
+        <span class="prompt">$ <em>csmesh impl IStore --budget 600</em></span>
         <span class="meta"><span class="ok">exit 0</span></span>
       </div>
       <div class="term-body"><pre>IStore  -- 2 implementation(s)
@@ -458,9 +458,11 @@ footer .right{margin-left:auto}
       <div><kbd>1</kbd><strong>not-found</strong><p>No such symbol here. Check the spelling or run <code>csmesh where</code> to discover symbols.</p></div>
       <div class="c2"><kbd>2</kbd><strong>over-budget</strong><p>The answer exists but is bigger than the cap. Narrow <code>--depth</code> rather than raising the budget.</p></div>
       <div><kbd>3</kbd><strong>ambiguous</strong><p>Several symbols match. Re-run with <code>Type.Member</code>.</p></div>
-      <div class="c4"><kbd>4</kbd><strong>no-index</strong><p>No graph on disk yet. Run <code>csmesh index</code>.</p></div>
+      <div class="c4"><kbd>4</kbd><strong>no-index</strong><p>No usable graph: none on disk, or (for <code>review</code>) one that predates <code>HEAD</code>. Run <code>csmesh index</code>.</p></div>
       <div><kbd>5</kbd><strong>changed</strong><p><code>review</code> only: unaccepted structural change vs. the base revision. Fix it, or <code>csmesh review --accept</code>.</p></div>
-      <div><kbd>64</kbd><strong>usage-error</strong><p>Bad flags or arguments. Run the command with <code>--help</code>.</p></div>
+      <div><kbd>64</kbd><strong>usage-error</strong><p>Bad flags or arguments, including <code>review --accept</code> while the index predates <code>HEAD</code>. Run the command with <code>--help</code>.</p></div>
+      <div><kbd>70</kbd><strong>internal-error</strong><p><code>csmesh</code> itself failed. Re-run with <code>--debug</code>; that is a bug, not your query.</p></div>
+      <div><kbd>75</kbd><strong>contended</strong><p>The index file is held by another process and nothing was written. Wait briefly and re-run.</p></div>
     </div>
   </div>
 </section>
@@ -520,7 +522,7 @@ footer .right{margin-left:auto}
         <h3>.NET global tool</h3>
         <div class="cmdbox" style="margin-bottom:10px"><code>dotnet tool install --global CsMesh</code><button data-copy="dotnet tool install --global CsMesh">Copy</button></div>
         <div class="cmdbox"><code>dotnet tool update --global CsMesh</code><button data-copy="dotnet tool update --global CsMesh">Copy</button></div>
-        <p class="note">Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: run <code>csmesh index</code> once. Use <code>--heal</code> on any query or rerun <code>csmesh index</code> when files change.</p>
+        <p class="note">Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: build first (<code>dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true</code>) so package references and source-generated files are on disk, then run <code>csmesh index</code>. A cold checkout resolves less completely than a built one. Use <code>--heal</code> on any query or rerun <code>csmesh index</code> when files change.</p>
       </div>
     </div>
   </div>
@@ -585,7 +587,7 @@ const commands = [
   "  StripeGateway  [class, di:scoped]  Infra/StripeGateway.cs:12",
   "  SandboxGateway  [class]  Infra/SandboxGateway.cs:9",
   "  FakePaymentGateway  [class]  Tests/Fakes/FakePaymentGateway.cs:7"]},
- {label:"impl", line:"csmesh impl IPaymentGateway --budget 300", exit:"exit 0",
+ {label:"impl", line:"csmesh impl IPaymentGateway --budget 600", exit:"exit 0",
   desc:"Lists every implementation of an interface, with the container-registered one ranked first and tagged by lifetime.",
   out:[
   "IPaymentGateway  Domain/IPaymentGateway.cs:5  -- 3 implementation(s)",
@@ -623,7 +625,7 @@ const commands = [
   "  -> OrderService.ProcessOrderAsync  App/OrderService.cs:44",
   "    -> IOrderStore.Save  Domain/IOrderStore.cs:8",
   "      -> SqlOrderStore.Save  [impl, di-bound]  Infra/SqlOrderStore.cs:28"]},
- {label:"context", line:"csmesh context OrderService --budget 800", exit:"exit 0",
+ {label:"context", line:"csmesh context OrderService --budget 900", exit:"exit 0",
   desc:"Everything structural about one symbol in a single call: signatures, callers, callees, implementations and entrypoints.",
   out:[
   "OrderService  [class, di:scoped]  App/OrderService.cs:18",
@@ -651,7 +653,7 @@ const commands = [
   "caller now      human (via tty:interactive); tty=True",
   "telemetry       417 invocation(s) logged, 392 agent-attributed"]},
  {label:"review", line:"csmesh review --accept", exit:"exit 0",
-  desc:"The same structural comparison, but against a named git revision -- the merge base with the default branch by default -- instead of whatever the last index happened to see. The question a pull request or a CI gate actually asks. Unaccepted findings exit 5; --accept bakes the reviewed ones into a baseline so only new ones surface next time.",
+  desc:"The same structural comparison, but against a named git revision -- the merge base with the default branch by default -- instead of whatever the last index happened to see. The question a pull request or a CI gate actually asks. Unaccepted findings exit 5; --accept bakes the reviewed ones into a baseline so only new ones surface next time. When the index predates HEAD the comparison is refused (exit 4, or 64 for --accept) rather than guessed at.",
   out:[
   "2 unaccepted finding(s) against origin/main (9f2c1ab3d4e5)",
   "removed:",

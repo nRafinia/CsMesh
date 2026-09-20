@@ -48,6 +48,12 @@ anything inside it is load bearing.
 Run it before you open a **second** file to follow a call chain. It crosses container bindings and
 mediator dispatch, which reading files in sequence does not.
 
+**"Who calls this? Where is it invoked from?"**
+-> `csmesh blast-radius Type.Member --depth 1`
+
+Reverse edges. `trace` walks forward from a symbol, `blast-radius` walks backward. If you are
+enumerating call sites, this is the command -- not `trace`, and not grep.
+
 **"Which class runs behind this interface?"**
 -> `csmesh impl IThing`
 
@@ -109,6 +115,11 @@ Enums, enum members, delegates and fields are all in the graph. Do not grep for 
 
 ## When something comes back empty
 
+**A command exits 2.** The answer was too large, not absent. Apply the remedy in order: the depth
+the message names, then `--under <path>`, then `--depth 1` for direct edges only. `silence` belongs
+to a *narrowed* query that then comes back exit 1 -- never to exit 2 itself, where nothing was
+missing and narrowing is what removes the overflow.
+
 **A command exits 1.** Do not fall back to grep. Run `csmesh silence <symbol>`, or
 `csmesh silence <from> <to>` for a missing path. Exit 1 means the graph had nothing, which is not
 the same as the codebase having nothing. It tells you which: a typo, a type from a referenced
@@ -135,9 +146,9 @@ String literals, config values, TODOs, error messages, log text, anything in a `
 ```bash
 csmesh map                                          # orient first in an unfamiliar repo
 csmesh where discount                               # find symbol or route when you have words
-csmesh context PaymentService.Process --budget 800  # everything about one symbol, one call
-csmesh trace PaymentController.Post --budget 600
-csmesh impl IPaymentGateway --budget 300
+csmesh context PaymentService.Process --budget 900  # everything about one symbol, one call
+csmesh trace PaymentController.Post --budget 700
+csmesh impl IPaymentGateway --budget 600
 csmesh blast-radius Order.Status --budget 800 --depth 2
 csmesh path PaymentController.Post StripeGateway.Authorize
 csmesh entrypoints payments
@@ -176,12 +187,13 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 |---|---|---|
 | 0 | complete answer | use it |
 | 1 | nothing found | `csmesh silence <symbol>` before anything else |
-| 2 | answer exists but exceeds the budget | narrow with `--under`, or use the depth the message names. Do **not** just raise `--budget` to a huge number |
+| 2 | answer exists but exceeds the budget | in order: the depth the message names, then `--under <path>`, then `--depth 1` for direct edges only. Do **not** just raise `--budget` to a huge number, and do **not** run `silence` here -- a *narrowed* query that then exits 1 is when `silence` applies |
 | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
-| 4 | no index, or one written by an older csmesh | run `csmesh index` |
+| 4 | no index; one written by an older csmesh; or (review) an index that predates HEAD | run `csmesh index` |
 | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
-| 64 | bad command line | run `csmesh <cmd> --help` |
+| 64 | bad command line, including `review --accept` when the index predates HEAD | run `csmesh <cmd> --help` |
 | 70 | csmesh itself failed | re-run with `--debug`; that is a bug, not your query |
+| 75 | index file contended by another process | nothing was written and nothing is broken — wait briefly and retry the command; do not report it |
 
 ## Rules
 
@@ -190,8 +202,8 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
   `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
   a member, **always use `where <member-name>` first** to discover the correct qualified name
   rather than guessing from the file or outer class name.
-- Always pass `--budget`. Default it to 600 for `trace`, 300 for `impl`, 800 for `blast-radius`,
-  `context` and `diff`, 400 for `path`.
+- Always pass `--budget`. Default it to 700 for `trace`, 600 for `impl`, 800 for `blast-radius`
+  and `diff`, 900 for `context`, 500 for `path`.
 - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
   question is cheaper than paying for the whole tree.
 - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3.

@@ -47,6 +47,7 @@ public static class DoctorCommand
             report.RazorFileCount = graph.RazorFileCount;
             report.RazorComponentsIndexed = graph.RazorComponentsIndexed;
             report.RazorStaleSources = graph.RazorStaleSources;
+            report.GeneratedSourcesIndexed = graph.GeneratedSourcesIndexed;
             report.SkippedProjects = graph.SkippedProjects;
             report.ScopeDecision = graph.ScopeDecision;
             report.EdgesByKind = graph.Edges
@@ -201,12 +202,15 @@ public static class DoctorCommand
         if (graph.TotalCallSites > 0)
         {
             var bound = graph.TotalCallSites - graph.UnresolvedCallSites;
-            var rate = 100.0 * bound / graph.TotalCallSites;
-            e.Line($"  calls resolved  {rate:F1}%  ({bound}/{graph.TotalCallSites})");
+            // Floored, not rounded. {rate:F1} turned 99.97% into 100.0%, so a graph with two
+            // unresolved call sites read as a clean hundred and the one number a reader trusts
+            // said "nothing to see". 99.9% is ugly and true; 100.0% is reserved for exactly full.
+            var permille = (int)(1000L * bound / graph.TotalCallSites);
+            e.Line($"  calls resolved  {permille / 10.0:0.0}%  ({bound}/{graph.TotalCallSites})");
             // Only name the build when the reference set actually looks unbuilt. Telling someone
             // to run dotnet build on a solution whose bin/ already holds 223 assemblies is a
             // wrong diagnosis stated confidently, which is worse than no diagnosis.
-            if (rate < 90)
+            if (permille < 900)
             {
                 e.Line(graph.OutputReferences == 0
                     ? "                  low, and nothing was loaded from bin/ -> run 'dotnet build', then re-index"
@@ -262,6 +266,17 @@ public static class DoctorCommand
                 e.Line("                  index' has nothing to notice. Force it:");
                 e.Line("                  dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true && csmesh index --full");
             }
+        }
+
+        // Non-Razor generators (System.Text.Json, Regex, LibraryImport, LoggerMessage, ...). Their
+        // output is read the same way now, but nothing here infers from source that a generator is
+        // in use -- that walk is deliberately absent. So this reports what was found and stays
+        // quiet when nothing was; the "built but the output is missing" warning for these needs a
+        // cheap source-side signal, which is the GeneratorClaims walk, not a guess made here.
+        if (graph.GeneratedSourcesIndexed > 0)
+        {
+            e.Line($"  generated       {graph.GeneratedSourcesIndexed} non-Razor generated .g.cs file(s) indexed" +
+                   " from obj/**/generated");
         }
 
         if (graph.UnresolvedByReason.Count > 0)

@@ -493,10 +493,13 @@ FodyWeavers.xsd
 .mimocode/
 .opencode/
 .gemini/
+.cline/
 .clinerules
 .windsurfrules
 AGENTS.md
 GEMINI.md
 .mcp.json
+copilot-instructions.md
+opencode.json
 !npm/bin/
 !npm/bin/**

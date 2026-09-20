@@ -1,0 +1,33 @@
+# csmesh graph snapshot: notification-handler
+# format 2
+# regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests
+
+## nodes
+# key | kind | name | file
+Demo::global::Demo.AuditOnShipped|NamedType | type | Demo.AuditOnShipped | Bus.cs
+Demo::global::Demo.EmailOnShipped|NamedType | type | Demo.EmailOnShipped | Bus.cs
+Demo::global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
+Demo::global::Demo.INotificationHandler<T>|NamedType | interface | Demo.INotificationHandler<T> | Bus.cs
+Demo::global::Demo.OrderShipped|NamedType | type | Demo.OrderShipped | Bus.cs
+Demo::global::Demo.Publisher|NamedType | type | Demo.Publisher | Bus.cs
+global::Demo.AuditOnShipped::Handle`0(global::Demo.OrderShipped)|Method | method | Demo.AuditOnShipped.Handle | Bus.cs
+global::Demo.EmailOnShipped::Handle`0(global::Demo.OrderShipped)|Method | method | Demo.EmailOnShipped.Handle | Bus.cs
+global::Demo.IMediator::Publish`1(T)|Method | method | Demo.IMediator.Publish | Bus.cs
+global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | method | Demo.Publisher.Go | Bus.cs
+global::Demo.Publisher::_mediator|Field | field | Demo.Publisher._mediator | Bus.cs
+
+## edges
+# from | kind | to | confidence | source | site | note
+Demo.AuditOnShipped | TypeUse | Demo.AuditOnShipped.Handle | 1.00 | - | - | member
+Demo.EmailOnShipped | TypeUse | Demo.EmailOnShipped.Handle | 1.00 | - | - | member
+Demo.IMediator | TypeUse | Demo.IMediator.Publish | 1.00 | - | - | member
+Demo.INotificationHandler<T> | Interface | Demo.AuditOnShipped | 1.00 | - | - | -
+Demo.INotificationHandler<T> | Interface | Demo.EmailOnShipped | 1.00 | - | - | -
+Demo.Publisher | TypeUse | Demo.Publisher.Go | 1.00 | - | - | member
+Demo.Publisher | TypeUse | Demo.Publisher._mediator | 1.00 | - | - | member
+Demo.Publisher.Go | Call | Demo.IMediator.Publish | 1.00 | - | - | -
+Demo.Publisher.Go | Mediatr | Demo.AuditOnShipped.Handle | 1.00 | semantic-request | Bus.cs:28 | via Publish(OrderShipped)
+Demo.Publisher.Go | Mediatr | Demo.EmailOnShipped.Handle | 1.00 | semantic-request | Bus.cs:28 | via Publish(OrderShipped)
+
+## unresolved
+# kind/reason | site | expression

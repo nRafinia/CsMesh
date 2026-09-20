@@ -26,4 +26,11 @@ public static class Exit
     /// never mistaken for a bad command line.
     /// </summary>
     public const int Internal = 70;
+    
+    /// <summary>
+    /// The graph file could not be replaced after retries exhausted on the rename path
+    /// (sharing violation / access denied). The write did not happen; the index on disk is the
+    /// previous one. RETRYABLE: wait and re-run. Any other fault stays <see cref="Internal"/>.
+    /// </summary>
+    public const int Contended = 75;
 }

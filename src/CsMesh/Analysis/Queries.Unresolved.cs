@@ -6,11 +6,28 @@ namespace CsMesh.Analysis;
 public static partial class Queries
 {
     /// <summary>
+    /// How many groups and rows the sample prints before it stops and names what it withheld.
+    /// The list is already a sample by construction -- the indexer caps it -- so this is the
+    /// display bound, not a second cap on the data. Sized so the whole answer fits the 700-token
+    /// default: a bound that does not fit the budget is not a bound, it is a slower overflow.
+    /// </summary>
+    private const int UnresolvedGroups = 4;
+    private const int UnresolvedRowsPerGroup = 6;
+    private const int UnresolvedReasonRows = 5;
+
+    /// <summary>
     /// Lists where the indexer failed, grouped by reason.
     ///
     /// `doctor` says a graph is 91% resolved. That number is only actionable if you can see which
     /// 9%, because the failure mode of a structural tool is silence: a missing edge reads exactly
     /// like an absent one. Every row here is a place where an answer was thinner than it looked.
+    ///
+    /// The groups and rows are bounded, so a solution with thousands of unbound sites still answers
+    /// in one screen. A capped answer is that sample by design and exits 0, with a footer naming how
+    /// many groups and rows were withheld and the filter that narrows to them -- the same shape map
+    /// uses for its per-section caps. The incomplete marker and exit 2 are reserved for the budget
+    /// actually running out before the caps are reached, which is the different case of an answer
+    /// that is genuinely truncated.
     /// </summary>
     public static int Unresolved(Graph g, string? kind, string? under, BudgetWriter w, HashSet<string> dirty)
     {
@@ -41,16 +58,22 @@ public static partial class Queries
             return Exit.NotFound;
         }
 
-        var total = g.UnresolvedByReason.Values.Sum();
+        // The index keeps only a bounded sample of locations per kind while the reason counts are
+        // complete. Saying "N shown" for the bigger of the two read as "these are all of them" when
+        // the displayed rows are a subset of the sample on top of that -- so the header names the
+        // locations as a sample and lets the footer account for the rows actually printed.
+        var total = kind == null
+            ? g.UnresolvedByReason.Values.Sum()
+            : g.UnresolvedByReason.Where(x => x.Key.StartsWith(kind + "/", StringComparison.Ordinal)).Sum(x => x.Value);
         w.Force(total > sites.Count
-            ? $"{total} unresolved site(s) in total; {sites.Count} shown"
+            ? $"{total} unresolved site(s) in total; {sites.Count} with locations in the sample"
             : $"{sites.Count} unresolved site(s)");
 
         // The sample is capped in traversal order, so its proportions are about the first files
         // walked. The full counts are the ones to reason from.
         if (g.UnresolvedByReason.Count > 0 && kind == null)
         {
-            foreach (var (reason, count) in g.UnresolvedByReason.OrderByDescending(x => x.Value).Take(6))
+            foreach (var (reason, count) in g.UnresolvedByReason.OrderByDescending(x => x.Value).Take(UnresolvedReasonRows))
             {
                 if (!w.Add($"  {reason,-28} {count}")) return TooMany(w, total);
             }
@@ -59,15 +82,31 @@ public static partial class Queries
         // Ordered by what is worth fixing, not by how many there are. A hundred unbound BCL calls
         // mean "build the solution"; two ambiguous DI registrations mean two services the graph
         // silently does not know about.
-        foreach (var group in sites
-                     .GroupBy(u => $"{u.Kind}/{u.Reason}")
-                     .OrderBy(x => KindRank(x.First().Kind))
-                     .ThenByDescending(x => x.Count()))
+        var groups = sites
+            .GroupBy(u => $"{u.Kind}/{u.Reason}")
+            .OrderBy(x => KindRank(x.First().Kind))
+            .ThenByDescending(x => x.Count())
+            .ToList();
+
+        // Groups the caps withheld. A group with rows in it but not all of them counts here too, so
+        // the footer's row total is the number of sites a reader did not see, not just the ones in
+        // groups skipped whole.
+        var capped = new List<(string Group, int Shown, int Total)>();
+        var groupsShown = 0;
+
+        foreach (var group in groups)
         {
-            if (!w.Add("")) return TooMany(w, sites.Count);
+            if (groupsShown >= UnresolvedGroups)
+            {
+                capped.Add((group.Key, 0, group.Count()));
+                continue;
+            }
+
+            w.Separator();
             if (!w.Add($"{group.Key}  ({group.Count()})")) return TooMany(w, sites.Count);
 
-            foreach (var site in group.Take(12))
+            var shown = 0;
+            foreach (var site in group.Take(UnresolvedRowsPerGroup))
             {
                 var stale = site.File.Length > 0 && dirty.Contains(site.File) ? "  [STALE]" : "";
                 var row = new QueryRow
@@ -86,24 +125,47 @@ public static partial class Queries
                 {
                     return TooMany(w, sites.Count);
                 }
+
+                shown++;
             }
 
-            if (group.Count() > 12 && !w.Add($"  ... {group.Count() - 12} more"))
-            {
-                return TooMany(w, sites.Count);
-            }
+            if (group.Count() > shown) capped.Add((group.Key, shown, group.Count()));
+            groupsShown++;
         }
 
-        if (!w.Add("")) return Exit.Ok;
+        // A separator, so it yields rather than ends the query: the withheld footer below has the
+        // reserve to use and must still be attempted.
+        w.Separator();
         w.Add(Advice(sites));
+
+        if (capped.Count > 0)
+        {
+            // The group header already prints the group's full count, so the footer only has to say
+            // the list is a sample and name the filter -- the reader can see which group was cut.
+            var groupsWithheld = capped.Count(x => x.Shown == 0);
+            var rowsWithheld = capped.Sum(x => x.Total - x.Shown);
+            var withheld = groupsWithheld > 0
+                ? $"{groupsWithheld} group(s) and {rowsWithheld} row(s)"
+                : $"{rowsWithheld} row(s)";
+
+            var filters = kind == null
+                ? capped.Select(x => x.Group.Split('/')[0])
+                    .Distinct(StringComparer.Ordinal)
+                    .Order(StringComparer.Ordinal)
+                    .Select(k => $"--kind {k}")
+                    .ToList()
+                : ["--under <path>"];
+
+            var footer = $"# unresolved is a sample; withheld {withheld} (see: {string.Join(", ", filters)})";
+            w.AddMarker(footer.Length <= 170 ? footer : footer[..167] + "...");
+        }
 
         return Exit.Ok;
     }
 
     private static int TooMany(BudgetWriter w, int total)
     {
-        w.Force("");
-        w.Force($"OVER BUDGET: {total} unresolved site(s). Narrow it with --kind di, or raise --budget.");
+        w.AddMarker(IncompleteMarker(w, "narrow with --kind di, or raise --budget", 0, total));
         return Exit.OverBudget;
     }
 

@@ -110,15 +110,19 @@ public static class GraphStore
         }
     }
 
-    private const int RenameAttempts = 20;
-    private const int RenameWaitMs = 25;
+    private const int RenameMaxAttempts = 10;
+    private const int RenameInitialWaitMs = 25;
+    private const int RenameMaxWaitMs = 2000;
 
     /// <summary>
     /// Moves the finished graph into place, waiting out a transient hold on the destination.
     ///
-    /// Bounded on purpose. If something keeps the file open for half a second this gives up and
-    /// lets the exception surface, because a write that silently did not happen is worse than one
-    /// that failed loudly -- the next query would answer from the old graph and say it was current.
+    /// Bounded on purpose. If something keeps the file open this backs off exponentially (25ms
+    /// doubling, capped at 2s) and, once the retries are gone, raises
+    /// <see cref="LockContentedException"/> rather than letting the raw IO error surface: the
+    /// runner turns that into exit 75 so an agent knows to wait and retry instead of reporting a
+    /// crash. A write that silently did not happen is worse than one that failed loudly -- the
+    /// next query would answer from the old graph and say it was current.
     /// </summary>
     private static void Rename(string temp, string destination)
     {
@@ -143,18 +147,18 @@ public static class GraphStore
 
                 return;
             }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException
-                                       && attempt < RenameAttempts)
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
             {
-                if (attempt == RenameAttempts - 1)
+                if (attempt >= RenameMaxAttempts)
                 {
-                    // Named, because the next thing that happens is an exception whose message
-                    // says only "access to the path is denied" and does not say which path.
                     Dbg.Log($"could not move '{temp}' onto '{destination}' after " +
-                            $"{RenameAttempts * RenameWaitMs}ms: {ex.Message}");
+                            $"{RenameMaxAttempts} attempts: {ex.Message}");
+                    throw new LockContentedException(
+                        $"could not replace the graph file '{destination}' after " +
+                        $"{RenameMaxAttempts} retries (held by another process): {ex.Message}", ex);
                 }
 
-                Thread.Sleep(RenameWaitMs);
+                Thread.Sleep(Math.Min(RenameInitialWaitMs << (attempt - 1), RenameMaxWaitMs));
             }
         }
     }

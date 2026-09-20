@@ -64,4 +64,42 @@ public sealed class SkillTextTests
         Assert.Contains("0.80", SkillText.Rules, StringComparison.Ordinal);
         Assert.Contains("lead, not a fact", SkillText.Rules, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// The reverse-edge question is the one an agent answers with trace or grep; the skill has to
+    /// name blast-radius --depth 1 as the command, in both the full skill and the compact rules.
+    /// </summary>
+    /// <summary>
+    /// The documented budgets are what agents pass; six of the exit=2 rows came from the skill's own
+    /// "600 for trace" sitting just under the tail of real trace output.
+    /// </summary>
+    [Fact]
+    public void The_skill_recommends_raised_budgets_for_trace_and_context()
+    {
+        Assert.Contains("700 for `trace`", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("900 for `context`", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("700 `trace`", SkillText.Rules, StringComparison.Ordinal);
+        Assert.Contains("900 `context`", SkillText.Rules, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_skill_names_the_reverse_edge_for_who_calls_this()
+    {
+        Assert.Contains("Who calls this? Where is it invoked from?", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("csmesh blast-radius Type.Member --depth 1", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("csmesh blast-radius Type.Member --depth 1", SkillText.Rules, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Exit 2 is a size problem, not an absence: the remedy is the depth the message names, then
+    /// --under, then --depth 1, and silence belongs to a narrowed query that then exits 1.
+    /// </summary>
+    [Fact]
+    public void The_exit_2_remedy_is_a_sequence_and_never_silence()
+    {
+        Assert.Contains("the depth the message names", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("never to exit 2 itself", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("the depth the message names", SkillText.Rules, StringComparison.Ordinal);
+        Assert.Contains("never for exit 2 itself", SkillText.Rules, StringComparison.Ordinal);
+    }
 }

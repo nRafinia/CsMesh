@@ -11,8 +11,8 @@ public static class QueryCommand
     public static int Execute(string root, Options opt, string kind)
     {
         var json = opt.Flag("json");
-        var budget = opt.Int("budget", DefaultBudget(kind));
-        var writer = new BudgetWriter(budget);
+        var writer = WriterFor(kind, opt);
+        var budget = writer.Budget;
         var result = new QueryResult { Command = kind, Query = opt.Positional.FirstOrDefault() };
 
         var graph = GraphStore.Load(root, out var problem);
@@ -64,21 +64,31 @@ public static class QueryCommand
 
         if (dirty.Count > 0)
         {
+            // Reserved, not droppable: a stale graph can hide a whole change, and no per-row [STALE]
+            // tag can mark a row that was never built. See the commit that moved this off AddNote.
             var note = $"# index is {dirty.Count} file(s) behind working tree; rows from those files are marked [STALE]. run: csmesh index";
             result.Notes.Add(note);
-            if (!json) writer.Force(note);
+            if (!json) writer.AddOpeningNote(note);
         }
 
         // A version gap is invisible in the rows themselves -- every line looks as confident as
         // any other -- so it has to be said out loud. The graph is still answered from, because
         // the old binary's answers are usually right and a hard refusal after every upgrade would
-        // be worse than a warned one.
+        // be worse than a warned one. It goes through the opening-note reserve rather than the
+        // droppable note path: missing detections make the rows themselves untrustworthy, so this
+        // note must not lose a budget contest with them.
         if (GraphStore.BuiltByOtherVersion(graph))
         {
             var note = $"# {GraphStore.VersionGap(graph)}; detections added since then are missing. run: csmesh index --full";
             result.Notes.Add(note);
-            if (!json) writer.Force(note);
+            if (!json) writer.AddOpeningNote(note);
         }
+
+        // The notes above are spent before the query starts -- the version-gap note out of its own
+        // pool, the staleness note out of content -- so the query's real allowance is the cap minus
+        // this. Recorded so two otherwise identical queries can be told apart by whether the index
+        // happened to be stale, which the log previously could not do.
+        CsMesh.Telemetry.Telemetry.Current.ReservedTokens = writer.Tokens;
 
         int exitCode;
 
@@ -224,19 +234,33 @@ public static class QueryCommand
         return exitCode;
     }
 
+    /// <summary>
+    /// The budget a query runs under, resolved once and given to both the writer that enforces it
+    /// and telemetry that records it. These used to be resolved separately -- the writer from the
+    /// per-kind default, the log from a flat 600 in CliRunner -- so every command whose default is
+    /// not 600 (impl 600, path 500, map 850, silence 300) logged a cap it was never held to.
+    /// </summary>
+    internal static BudgetWriter WriterFor(string kind, Options opt)
+    {
+        var budget = opt.Int("budget", DefaultBudget(kind));
+        CsMesh.Telemetry.Telemetry.Current.Budget = budget;
+        return new BudgetWriter(budget, BudgetWriter.CompletionMarkerReserve);
+    }
+
     private static int DefaultBudget(string kind) => kind switch
     {
-        "impl" => 300,
+        "impl" => 600,
         "blast" => 800,
-        "context" => 800,
+        "context" => 900,
         "cycles" => 800,
-        "unresolved" => 600,
+        "unresolved" => 700,
+        "entrypoints" => 800,
         "changes" => 800,
         "diff" => 800,
-        "silence" => 700,
-        "map" => 700,
-        "path" => 400,
-        "where" => 400,
+        "silence" => 300,
+        "map" => 850,
+        "path" => 500,
+        "where" => 600,
         _ => 600
     };
 
@@ -442,6 +466,7 @@ public static class QueryCommand
 
         Console.WriteLine(JsonSerializer.Serialize(result, AppJsonContext.Default.QueryResult));
         Telemetry.Telemetry.Current.OutTokens = writer.Tokens;
+        Telemetry.Telemetry.Current.WouldBeTokens = writer.WouldBeTokens;
         return exitCode;
     }
 }

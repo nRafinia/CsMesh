@@ -96,7 +96,6 @@ public static partial class Queries
         // otherwise whole branches of the tree silently disappear. onPath guards against cycles.
         var expandedAt = new Dictionary<int, int>();
         var onPath = new HashSet<int>();
-        var truncatedAt = new List<string>();
         var emitted = 0;
 
         // Cost per level, so an overflow can name a depth that fits instead of telling the caller
@@ -131,12 +130,12 @@ public static partial class Queries
                     if (to == null) continue;
                     if (to.Kind == "type" && e.Kind == EdgeKind.Construct && level > 1) continue;
 
-                    var line = $"{prefix}-> {to.Short}{Marker(e)}{TagSuffix(to)}{Loc(to)}{StaleTag(to, dirty)}";
-                    if (!w.Add(line, Row(to, level + 1, e, dirty)))
-                    {
-                        truncatedAt.Add(node.Short);
-                        return false;
-                    }
+                    var site = ResolveHopSite(g, node, to, e);
+                    var siteSuffix = FormatSite(site, to);
+                    var line = $"{prefix}-> {to.Short}{Marker(e)}{TagSuffix(to)}{Loc(to)}{siteSuffix}{StaleTag(to, dirty)}";
+                    var row = Row(to, level + 1, e, dirty);
+                    if (site != null) row.Site = site.Value.Site;
+                    if (!w.Add(line, row)) return false;
 
                     costByLevel[level + 1] = costByLevel.GetValueOrDefault(level + 1) + BudgetWriter.Estimate(line);
                     emitted++;
@@ -155,23 +154,12 @@ public static partial class Queries
 
         if (!complete)
         {
-            w.Force("");
-            w.Force($"OVER BUDGET at {string.Join(", ", truncatedAt.Distinct().Take(3))}.");
-
             var fits = DepthThatFits(costByLevel, w.Budget);
-            if (fits > 0 && rerun != null)
-            {
-                w.Force($"depth {fits} fits. Re-run: {rerun} --depth {fits}");
-            }
-            else if (fits > 0)
-            {
-                w.Force($"depth {fits} fits within this budget.");
-            }
-            else
-            {
-                w.Force("Even depth 1 does not fit. Raise --budget, or trace a narrower symbol.");
-            }
+            var remedy = fits > 0
+                ? (rerun != null ? $"re-run: {rerun} --depth {fits}" : $"re-run with --depth {fits}")
+                : null;
 
+            w.AddMarker(IncompleteMarker(w, remedy));
             return Exit.OverBudget;
         }
 
@@ -228,6 +216,7 @@ public static partial class Queries
         w.Force($"{target.Short}{Loc(target)}  -- {impls.Count} implementation(s)",
                 Row(target, 0, "root", null, dirty));
 
+        var shown = 0;
         foreach (var e in impls
                      .OrderByDescending(x => x.Kind == EdgeKind.DiBinding || x.Note == "di-bound")
                      .ThenBy(x => g.ById(x.To) is { } n && IsTest(n) ? 1 : 0)
@@ -258,17 +247,15 @@ public static partial class Queries
 
             // Registering a type in the file that declares it is common; printing the path twice
             // on one line is noise, so only the line number survives.
-            var site = wiring == null ? ""
-                : wiring.StartsWith(to.File + ":", StringComparison.OrdinalIgnoreCase)
-                    ? $"  @ line {wiring[(to.File.Length + 1)..]}"
-                    : $"  @ {wiring}";
+            var site = FormatSite(wiring, to);
 
             if (!w.Add($"  {to.Short}{mark}{Loc(to)}{site}{StaleTag(to, dirty)}", row))
             {
-                w.Force("");
-                w.Force($"OVER BUDGET: {impls.Count} implementations. Raise --budget or query a narrower type.");
+                w.AddMarker(IncompleteMarker(w, "raise --budget, or query a narrower type", shown, impls.Count));
                 return Exit.OverBudget;
             }
+
+            shown++;
         }
 
         return Exit.Ok;
@@ -423,10 +410,137 @@ public static partial class Queries
             .FirstOrDefault(e => e.Kind == EdgeKind.DiBinding && e.To == implementationId && e.Site != null)?
             .Site;
 
+    /// <summary>
+    /// Formats a wiring or dispatch site for output, shortening to line-only when it lives
+    /// in the target's own file.
+    /// </summary>
+    internal static string FormatSite(string? site, Node target) =>
+        site == null ? ""
+            : !string.IsNullOrEmpty(target.File) && site.StartsWith(target.File + ":", StringComparison.OrdinalIgnoreCase)
+                ? $"  @ line {site[(target.File.Length + 1)..]}"
+                : $"  @ {site}";
+
+    /// <summary>
+    /// Identifies the declaring type node id for a symbol (or the symbol itself if already a type).
+    ///
+    /// An explicit owner edge is the common case. The name fallback exists for a member kind the
+    /// declaration pass never links -- a node created by a reference rather than a declaration --
+    /// and it qualifies on the member's fully-qualified <see cref="Node.Name"/>, not its
+    /// <see cref="Node.Short"/>. Short is enclosing-type-relative, so `A.Widget.Changed` and
+    /// `B.Widget.Changed` are both "Widget.Changed" and a Short match cannot tell them apart.
+    ///
+    /// When the qualified prefix still matches more than one type it returns null rather than the
+    /// first: a miss is recoverable, a confidently wrong owner is not.
+    ///
+    /// Public only to the test assembly, which constructs the collision cases directly -- the
+    /// declaration pass gives every declared member an owner edge, so the fallback cannot be
+    /// reached through an ordinary index.
+    /// </summary>
+    internal static int? DeclaringTypeId(Graph g, Node n)
+    {
+        if (n.Kind is "interface" or "type" or "enum" or "struct") return n.Id;
+
+        var ownerEdge = g.In(n.Id).FirstOrDefault(x => x.Kind == EdgeKind.TypeUse && x.Note is "member" or "ctor");
+        if (ownerEdge != null) return ownerEdge.From;
+
+        var dot = n.Name.LastIndexOf('.');
+        if (dot <= 0) return null;
+
+        var ownerName = n.Name[..dot];
+        var matches = g.Nodes
+            .Where(x => (x.Kind is "interface" or "type" or "enum" or "struct") && x.Name == ownerName)
+            .ToList();
+
+        return matches.Count == 1 ? matches[0].Id : null;
+    }
+
+    /// <summary>
+    /// Site information resolved for a hop.
+    /// </summary>
+    internal readonly record struct HopSite(string Site, int MatchingBindings, int TotalBindings, double Score, string? Source);
+
+    internal static string FormatSite(HopSite? hop, Node target)
+    {
+        if (hop == null) return "";
+        var baseSite = FormatSite(hop.Value.Site, target);
+        if (string.IsNullOrEmpty(baseSite)) return "";
+
+        var parts = new List<string>();
+        if (hop.Value.Score < Edge.TrustThreshold)
+        {
+            parts.Add($"?{hop.Value.Score:0.00}{(hop.Value.Source != null ? " " + hop.Value.Source : "")}");
+        }
+        if (hop.Value.TotalBindings > 1)
+        {
+            parts.Add($"({hop.Value.MatchingBindings} of {hop.Value.TotalBindings} bindings)");
+        }
+
+        return parts.Count > 0 ? $"{baseSite} {string.Join(" ", parts)}" : baseSite;
+    }
+
+    /// <summary>
+    /// Resolves the wiring or invocation site for a hop. Hops carrying a site directly report it.
+    /// Interface and override hops resolve it via sibling DiBinding lookup on the enclosing types.
+    /// </summary>
+    internal static HopSite? ResolveHopSite(Graph g, Node from, Node to, Edge edge)
+    {
+        if (edge.Site != null)
+        {
+            return new HopSite(edge.Site, 1, 1, 1.0, null);
+        }
+
+        if (edge.Kind is EdgeKind.Interface or EdgeKind.Override)
+        {
+            var serviceId = DeclaringTypeId(g, from);
+            var implId = DeclaringTypeId(g, to);
+            if (serviceId == null || implId == null) return null;
+
+            var allBindings = g.Out(serviceId.Value)
+                .Where(e => e.Kind == EdgeKind.DiBinding && e.Site != null)
+                .ToList();
+
+            var targetBindings = allBindings
+                .Where(e => e.To == implId.Value)
+                .ToList();
+
+            if (targetBindings.Count == 0) return null;
+
+            // Highest score wins because every candidate here points at the same implementation:
+            // these are one wiring path detected more than once at different confidence, not two
+            // competing destinations. The best-evidenced registration is the one to print; the
+            // count that goes out beside it is what tells the reader the pair was seen N times.
+            var chosen = targetBindings.OrderByDescending(b => b.Score).First();
+            return new HopSite(chosen.Site!, targetBindings.Count, allBindings.Count, chosen.Score, chosen.Source);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The line a truncated answer ends with, emitted through <see cref="BudgetWriter.AddMarker"/>
+    /// so it lands inside the budget it reports on. A near-complete answer says how near it is and
+    /// names the exact re-run; anything much larger points at narrowing instead. Bounded to the
+    /// completion reserve, so it always fits.
+    /// </summary>
+    internal static string IncompleteMarker(BudgetWriter w, string? remedy = null, int shown = 0, int total = 0)
+    {
+        remedy ??= $"raise --budget to {w.SuggestedBudget}";
+
+        var over = w.OverBudgetBy;
+        var text = over == 0
+            ? $"INCOMPLETE: nearly complete -- wanted ~{w.WouldBeTokens}; the completion marker needed the room. {remedy}"
+            : over <= 60
+                ? $"INCOMPLETE: nearly complete -- {over} token(s) over ({w.Tokens} of ~{w.WouldBeTokens}). {remedy}"
+                : $"INCOMPLETE: much larger than {w.Budget}"
+                  + (shown > 0 ? $" ({shown} of {total} shown)" : "")
+                  + $". {remedy}";
+
+        return text.Length <= 150 ? text : text[..147] + "...";
+    }
+
     private static int Overflow(BudgetWriter w, int total)
     {
-        w.Force("");
-        w.Force($"OVER BUDGET: {total} reachable members. Narrow it: --depth 1, or raise --budget.");
+        w.AddMarker(IncompleteMarker(w, null, 0, total));
         return Exit.OverBudget;
     }
 
@@ -448,14 +562,17 @@ public static partial class Queries
         }
 
         w.Force($"{eps.Count} entrypoint(s)");
+        var shown = 0;
         foreach (var ep in eps)
         {
             if (!w.Add($"  {ep.Short}{TagSuffix(ep)}{Loc(ep)}{StaleTag(ep, dirty)}",
                        Row(ep, 0, "entrypoint", null, dirty)))
             {
-                w.Force($"OVER BUDGET: {eps.Count} total. Filter with a substring argument.");
+                w.AddMarker(IncompleteMarker(w, "filter with a substring argument", shown, eps.Count));
                 return Exit.OverBudget;
             }
+
+            shown++;
         }
 
         return Exit.Ok;

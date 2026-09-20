@@ -118,6 +118,9 @@ public sealed class MapTests : IClassFixture<GraphFixture>
         line.Length > 0
         && char.IsLetter(line[0])
         && !line.StartsWith(" ", StringComparison.Ordinal)
+        // The completion marker also starts at column 0 in caps, and at a tiny budget it can be
+        // truncated; any prefix of "INCOMPLETE" is the marker, not a section heading.
+        && !line.StartsWith("INCOMPL", StringComparison.Ordinal)
         && !line.Contains("file(s),", StringComparison.Ordinal)
         && line.ToUpperInvariant().StartsWith(line.Split(' ')[0], StringComparison.Ordinal)
         && line.Split(' ')[0].ToUpperInvariant() == line.Split(' ')[0];

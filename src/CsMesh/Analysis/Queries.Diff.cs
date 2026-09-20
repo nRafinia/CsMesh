@@ -112,8 +112,7 @@ public static partial class Queries
 
     private static int Truncated(BudgetWriter w)
     {
-        w.Force("");
-        w.Force("OVER BUDGET: raise --budget, or narrow the range with --depth 1.");
+        w.AddMarker(IncompleteMarker(w, "narrow the range with --depth 1"));
         return Exit.OverBudget;
     }
 

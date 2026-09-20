@@ -13,10 +13,20 @@ namespace CsMesh.Analysis;
 /// bearing. The graph knows: what depends on what, where the entrypoints cluster, and which
 /// handful of members everything else runs through.
 ///
-/// Deliberately one screen. A map that does not fit on one is a directory listing.
+/// One screen by design: it selects rather than emit-until-full, so each section shows its top N
+/// and the closing footer names what the caps withheld and the query that returns the full list
+/// where one exists. That cap is the summary's design, so a capped map still exits 0. On a very
+/// large solution the budget itself can still run out before the caps are reached, and then the map
+/// says so (INCOMPLETE, exit 2) rather than passing a partial map off as the whole answer.
 /// </summary>
 public static partial class Queries
 {
+    private const int ProjectRows = 8;
+    private const int TestProjectRows = 5;
+    private const int EntrypointRows = 5;
+    private const int BusiestRows = 5;
+    private const int MostReadRows = 3;
+
     public static int Map(Graph g, string? under, BudgetWriter w, HashSet<string> dirty)
     {
         var nodes = g.Nodes.Where(n => Under(n, under)).ToList();
@@ -37,12 +47,38 @@ public static partial class Queries
         w.Force($"{files} file(s), {nodes.Count} symbol(s), {edges} edge(s)"
                 + (under != null ? $"  under {under}" : ""));
 
-        Projects(g, nodes, w);
-        Entrypoints(nodes, w, dirty);
-        Busiest(g, nodes, w, dirty);
+        // Capped: the section has more rows than its cap selects -- the summary's design.
+        // Truncated: the budget ran out before even the cap was reached -- an incomplete answer.
+        var capped = new List<(string Section, int Shown, int Total, string? Command)>();
+        var truncated = new List<(string Section, int Shown, int Total, string? Command)>();
+
+        Projects(g, nodes, w, capped, truncated);
+        Entrypoints(nodes, w, dirty, capped, truncated);
+        Busiest(g, nodes, w, dirty, capped, truncated);
+
+        if (truncated.Count > 0)
+        {
+            var detail = Detail(truncated);
+            var marker = $"INCOMPLETE: map ran out of budget; {detail}";
+            w.AddMarker(marker.Length <= 150 ? marker : marker[..147] + "...");
+            return Exit.OverBudget;
+        }
+
+        if (capped.Count > 0)
+        {
+            // The closing line of a capped answer, so it goes through the reserve rather than the
+            // content note path. Written as a note it was the first thing dropped when the sections
+            // filled the content cap, which is exactly when a map most needs to say it is a summary.
+            var footer = $"# map is a summary; withheld {Detail(capped)}";
+            w.AddMarker(footer.Length <= 170 ? footer : footer[..167] + "...");
+        }
 
         return Exit.Ok;
     }
+
+    private static string Detail(List<(string Section, int Shown, int Total, string? Command)> rows) =>
+        string.Join(", ", rows.Select(x =>
+            x.Command != null ? $"{x.Section} {x.Shown}/{x.Total} (see: {x.Command})" : $"{x.Section} {x.Shown}/{x.Total}"));
 
     /// <summary>
     /// Room for a blank separator, a heading, and at least one row beneath it. The separator is a
@@ -64,7 +100,8 @@ public static partial class Queries
     /// backwards for "what needs what" -- and reading the map off those edges produced
     /// "Fleetdeck.Core depends on Fleetdeck.Hub", which is the reverse of the architecture.
     /// </summary>
-    private static void Projects(Graph g, List<Node> nodes, BudgetWriter w)
+    private static void Projects(Graph g, List<Node> nodes, BudgetWriter w,
+        List<(string, int, int, string?)> capped, List<(string, int, int, string?)> truncated)
     {
         var byProject = nodes
             .Where(n => n.Project.Length > 0)
@@ -86,12 +123,12 @@ public static partial class Queries
 
         var width = Math.Min(byProject.Keys.Max(k => Short(k, prefix).Length), 34);
 
-        if (!Section("PROJECTS  deepest first; -> is a declared ProjectReference", production)) return;
-        Section("TEST PROJECTS", tests);
+        Section("PROJECTS", "PROJECTS  deepest first; -> is a declared ProjectReference", production, ProjectRows);
+        Section("TEST PROJECTS", "TEST PROJECTS", tests, TestProjectRows);
 
-        bool Section(string title, List<string> projects)
+        void Section(string label, string title, List<string> projects, int cap)
         {
-            if (projects.Count == 0) return true;
+            if (projects.Count == 0) return;
 
             // Cost the heading and its first row together. A title printed alone reads as
             // "nothing found" when the truth is that the budget ran out underneath it.
@@ -100,17 +137,21 @@ public static partial class Queries
                 .ThenBy(k => k, StringComparer.Ordinal)
                 .ToList();
 
-            if (!Fits(w, title, Row(ordered[0]))) return false;
+            if (!Fits(w, title, Row(ordered[0])))
+            {
+                truncated.Add((label, 0, ordered.Count, null));
+                return;
+            }
 
             w.Add("");
             w.Add(title);
 
-            foreach (var project in ordered)
-            {
-                if (!w.Add(Row(project))) return false;
-            }
+            var shown = 0;
+            var limit = Math.Min(ordered.Count, cap);
+            while (shown < limit && w.Add(Row(ordered[shown]))) shown++;
 
-            return true;
+            if (shown < limit) truncated.Add((label, shown, ordered.Count, null));
+            else if (ordered.Count > cap) capped.Add((label, shown, ordered.Count, null));
         }
 
         string Row(string project)
@@ -189,8 +230,10 @@ public static partial class Queries
     /// <summary>
     /// Entrypoints by file rather than one by one. The file holding nine routes is where the
     /// surface area of the application is, and that is a better first read than nine separate rows.
+    /// The full per-file list is a separate query, so anything the cap withholds names it.
     /// </summary>
-    private static void Entrypoints(List<Node> nodes, BudgetWriter w, HashSet<string> dirty)
+    private static void Entrypoints(List<Node> nodes, BudgetWriter w, HashSet<string> dirty,
+        List<(string, int, int, string?)> capped, List<(string, int, int, string?)> truncated)
     {
         var entrypoints = nodes.Where(IsEntrypoint).Where(n => n.File.Length > 0).ToList();
         if (entrypoints.Count == 0) return;
@@ -198,22 +241,27 @@ public static partial class Queries
         var files = entrypoints
             .GroupBy(n => n.File, StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(x => x.Count())
-            .Take(8)
             .ToList();
 
         var title = $"ENTRYPOINTS  {entrypoints.Count} in {entrypoints.Select(n => n.File).Distinct().Count()} file(s)";
 
         // Price the heading together with its first row. Printing a title and then running out
         // reads as "nothing found" when the truth is "the budget ended here".
-        if (!Fits(w, title, FileRow(files[0], dirty))) return;
+        if (!Fits(w, title, FileRow(files[0], dirty)))
+        {
+            truncated.Add(("ENTRYPOINTS", 0, files.Count, "csmesh entrypoints"));
+            return;
+        }
 
         w.Add("");
         w.Add(title);
 
-        foreach (var file in files)
-        {
-            if (!w.Add(FileRow(file, dirty))) return;
-        }
+        var shown = 0;
+        var limit = Math.Min(files.Count, EntrypointRows);
+        while (shown < limit && w.Add(FileRow(files[shown], dirty))) shown++;
+
+        if (shown < limit) truncated.Add(("ENTRYPOINTS", shown, files.Count, "csmesh entrypoints"));
+        else if (files.Count > EntrypointRows) capped.Add(("ENTRYPOINTS", shown, files.Count, "csmesh entrypoints"));
     }
 
     private static string FileRow(IGrouping<string, Node> file, HashSet<string> dirty)
@@ -238,33 +286,44 @@ public static partial class Queries
     /// shape and the second for a change of behaviour, and mixing them buries the methods under a
     /// list of getters nobody is worried about.
     /// </summary>
-    private static void Busiest(Graph g, List<Node> nodes, BudgetWriter w, HashSet<string> dirty)
+    private static void Busiest(Graph g, List<Node> nodes, BudgetWriter w, HashSet<string> dirty,
+        List<(string, int, int, string?)> capped, List<(string, int, int, string?)> truncated)
     {
         var live = nodes.Where(n => !IsTest(n))
             .Select(n => (Node: n, Callers: g.In(n.Id).Count(e => e.Kind != EdgeKind.TypeUse)))
             .Where(x => x.Callers > 1)
             .ToList();
 
-        Rank("BUSIEST  most direct callers; changing behaviour here costs the most",
-             live.Where(x => x.Node.Kind == "method"), 8);
+        Rank("BUSIEST", "BUSIEST  most direct callers; changing behaviour here costs the most",
+             live.Where(x => x.Node.Kind == "method"), BusiestRows);
 
-        Rank("MOST READ  data everything touches; changing shape here costs the most",
-             live.Where(x => x.Node.Kind is "property" or "field" or "enum-member"), 5);
+        Rank("MOST READ", "MOST READ  data everything touches; changing shape here costs the most",
+             live.Where(x => x.Node.Kind is "property" or "field" or "enum-member"), MostReadRows);
 
-        void Rank(string title, IEnumerable<(Node Node, int Callers)> source, int take)
+        void Rank(string label, string title, IEnumerable<(Node Node, int Callers)> source, int cap)
         {
-            var ranked = source.OrderByDescending(x => x.Callers).Take(take).ToList();
+            var ranked = source.OrderByDescending(x => x.Callers).ToList();
             if (ranked.Count == 0) return;
 
-            if (!Fits(w, title, Line(ranked[0]))) return;
+            if (!Fits(w, title, Line(ranked[0])))
+            {
+                truncated.Add((label, 0, ranked.Count, null));
+                return;
+            }
 
             w.Add("");
             w.Add(title);
 
-            foreach (var entry in ranked)
+            var shown = 0;
+            var limit = Math.Min(ranked.Count, cap);
+            while (shown < limit &&
+                   w.Add(Line(ranked[shown]), Row(ranked[shown].Node, 1, "busiest", ranked[shown].Callers.ToString(), dirty)))
             {
-                if (!w.Add(Line(entry), Row(entry.Node, 1, "busiest", entry.Callers.ToString(), dirty))) return;
+                shown++;
             }
+
+            if (shown < limit) truncated.Add((label, shown, ranked.Count, null));
+            else if (ranked.Count > cap) capped.Add((label, shown, ranked.Count, null));
 
             string Line((Node Node, int Callers) entry)
             {

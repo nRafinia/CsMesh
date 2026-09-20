@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CsMesh.Analysis;
 using CsMesh.Common;
 using CsMesh.Models;
@@ -131,6 +132,75 @@ public sealed class GraphWriteAtomicityTests
 
         var leftovers = Directory.EnumerateFiles(GraphStore.DirFor(sandbox.Root), "*.tmp-*").ToList();
         Assert.Empty(leftovers);
+    }
+
+    /// <summary>
+    /// A write that exhausts all rename retries must leave the graph file byte-for-byte unchanged
+    /// and must not leave a .tmp- orphan on disk.
+    ///
+    /// The failure mode this guards against: a write loses the rename race, the exception is
+    /// swallowed, and the graph on disk is now a partial file claiming to be current -- meaning
+    /// the next query answers from a torn graph and reports it as up to date. The correct outcome
+    /// is that the old file survives intact, the temp is cleaned up, and LockContentedException
+    /// propagates so RunGuarded can return exit 75 and tell the caller to retry.
+    ///
+    /// Simulated by pinning the destination open with a non-deletable handle for longer than the
+    /// retry budget (RenameMaxAttempts * RenameMaxWaitMs). On Linux rename() does not consult
+    /// open handles, so this test is Windows-only -- but that is exactly the platform where the
+    /// failure mode bites, since MoveFileEx respects file handles and File.Replace does not recover
+    /// when the destination is locked by a handle without FILE_SHARE_DELETE.
+    /// </summary>
+    [Fact]
+    public void AWriteThatLosesTheRaceLeavesPreviousGraphIntactAndNoOrphan()
+    {
+        if (!OperatingSystem.IsWindows()) return; // rename() is handle-agnostic on Unix
+
+        using var sandbox = new Sandbox();
+        var graph = sandbox.Index();
+        GraphStore.Save(graph);
+
+        var path = GraphStore.PathFor(sandbox.Root);
+        var originalBytes = File.ReadAllBytes(path);
+
+        // Hold the file open with a handle that blocks File.Replace / File.Move on Windows.
+        // FileShare.None means no sharing at all: neither read nor delete, so any attempt to
+        // replace the destination will fail with UnauthorizedAccessException or IOException
+        // for longer than the 10-attempt retry budget (10 attempts * up to 2 s each = ~7-10 s).
+        int exit;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            // LockContentedException propagates from the storage layer ...
+            Assert.Throws<LockContentedException>(() => GraphStore.SaveInPlace(graph));
+
+            // ... and RunGuarded turns it into exit 75: the contract an agent branches on.
+            var origErr = Console.Error;
+            try
+            {
+                Console.SetError(new StringWriter());
+                exit = CliRunner.RunGuarded(["index"], _ => throw new LockContentedException(
+                    "test-contention", new IOException("test")));
+            }
+            finally { Console.SetError(origErr); }
+        }
+
+        Assert.Equal(Exit.Contended, exit);
+
+        // Exponential backoff: 25 ms doubling per attempt, capped at 2 s.
+        // 10 attempts = 25+50+100+200+400+800+1600+2000+2000+... sum exceeds 5 s.
+        // We assert the retry budget was at least partially consumed (> 3 s), not an
+        // exact timing, because CI environments can be slow.
+        Assert.True(sw.Elapsed.TotalSeconds > 3,
+            $"Expected retries to consume > 3s but elapsed {sw.Elapsed.TotalSeconds:F1}s");
+
+        // The graph file must be unchanged.
+        var afterBytes = File.ReadAllBytes(path);
+        Assert.Equal(originalBytes, afterBytes);
+
+        // No temp file should have been left behind.
+        var orphans = Directory.EnumerateFiles(GraphStore.DirFor(sandbox.Root), "*.tmp-*").ToList();
+        Assert.Empty(orphans);
     }
 
     /// <summary>

@@ -87,8 +87,7 @@ public static partial class Queries
 
     private static int Truncate(BudgetWriter w, int total)
     {
-        w.Force("");
-        w.Force($"OVER BUDGET: {total} cycle group(s). Raise --budget, or use --namespace for a coarser view.");
+        w.AddMarker(IncompleteMarker(w, "use --namespace for a coarser view", 0, total));
         return Exit.OverBudget;
     }
 
