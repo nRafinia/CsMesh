@@ -150,9 +150,10 @@ public static partial class Indexer
     /// build never reads the older one. Compiling both imports namespaces the current build cannot
     /// see, which is a class of false binding rather than a missing one.
     ///
-    /// A repository with no project files and a repository whose projects have no generated set
-    /// both keep the historic one-size-fits-all set: there is no framework or opt-in to read, and
-    /// dropping the System namespace would unbound most of the compilation.
+    /// When no generated file exists but the csproj asks for implicit usings, the set the SDK would
+    /// have written is synthesized from the csproj and its Sdk attribute -- the Web SDK's ASP.NET
+    /// namespaces only for a Web project. A repository with no csproj at all keeps the historic
+    /// one-size-fits-all set, since there is no project to read a framework or an opt-in from.
     /// </summary>
     private static List<string> GlobalUsingSets(string root, ProjectScope scope)
     {
@@ -166,21 +167,34 @@ public static partial class Indexer
             return result;
         }
 
+        var live = new HashSet<string>(scope.LiveDirectories, StringComparer.OrdinalIgnoreCase);
+
         foreach (var projectDirectory in projects)
         {
             var csproj = ProjectTfm.Single(projectDirectory);
             if (csproj is null) continue;
 
-            foreach (var file in GlobalUsingFilesIn(projectDirectory, ProjectTfm.Choose(projectDirectory, "obj")))
+            var files = GlobalUsingFilesIn(projectDirectory, ProjectTfm.Choose(projectDirectory, "obj"));
+            var found = false;
+            foreach (var file in files)
             {
                 string text;
                 try { text = File.ReadAllText(file); } catch { continue; }
 
+                found = true;
                 if (seen.Add(text)) result.Add(text);
             }
+
+            // Only a project in scope may contribute a generated set it does not have. Synthesizing
+            // for an out-of-scope project would put its usings into the compilation the same way its
+            // sources were once pulled in, which the scope filter exists to prevent.
+            if (found || !live.Contains(projectDirectory)) continue;
+            if (!ProjectTfm.ImplicitUsingsEnabled(csproj)) continue;
+
+            var synthesized = ProjectTfm.Synthesize(csproj);
+            if (seen.Add(synthesized)) result.Add(synthesized);
         }
 
-        if (result.Count == 0) result.Add(ImplicitUsings);
         return result;
     }
 

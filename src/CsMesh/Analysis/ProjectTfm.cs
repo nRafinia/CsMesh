@@ -56,6 +56,22 @@ internal static class ProjectTfm
         return NewestFramework(projectDirectory, kind);
     }
 
+    /// <summary>
+    /// Whether the SDK would emit a global-usings file for this project at all. False means the
+    /// project either does not opt in or has no csproj to say so, and no implicit set is synthesized.
+    /// </summary>
+    public static bool ImplicitUsingsEnabled(string csprojPath)
+    {
+        XDocument document;
+        try { document = XDocument.Parse(File.ReadAllText(csprojPath)); }
+        catch { return false; }
+
+        var value = Value(document, "ImplicitUsings");
+        return value is not null &&
+               (value.Equals("enable", StringComparison.OrdinalIgnoreCase) ||
+                value.Equals("true", StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>The csproj the project directory directly holds, or null.</summary>
     public static string? Single(string projectDirectory)
     {
@@ -69,6 +85,56 @@ internal static class ProjectTfm
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Whether the project builds with the Web SDK, whose implicit usings include the ASP.NET Core
+    /// namespaces the plain SDK does not add.
+    /// </summary>
+    public static bool IsWebSdk(string csprojPath)
+    {
+        string text;
+        try { text = File.ReadAllText(csprojPath); }
+        catch { return false; }
+
+        return text.Contains("Microsoft.NET.Sdk.Web", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The implicit global usings the SDK would generate for one project. The base set is what
+    /// every SDK adds; the ASP.NET Core namespaces are added only for the Web SDK, so a plain
+    /// project is not handed types its real build cannot see.
+    /// </summary>
+    public static string Synthesize(string csprojPath)
+    {
+        var namespaces = new List<string>
+        {
+            "System",
+            "System.Collections.Generic",
+            "System.IO",
+            "System.Linq",
+            "System.Net.Http",
+            "System.Threading",
+            "System.Threading.Tasks"
+        };
+
+        if (IsWebSdk(csprojPath))
+        {
+            namespaces.AddRange(
+            [
+                "Microsoft.AspNetCore.Builder",
+                "Microsoft.AspNetCore.Hosting",
+                "Microsoft.AspNetCore.Http",
+                "Microsoft.AspNetCore.Routing",
+                "Microsoft.Extensions.Configuration",
+                "Microsoft.Extensions.DependencyInjection",
+                "Microsoft.Extensions.Hosting",
+                "Microsoft.Extensions.Logging",
+                "System.Net.Http.Json"
+            ]);
+        }
+
+        return string.Join("\n", namespaces.Select(ns => $"global using global::{ns};"));
     }
 
     /// <summary>
