@@ -308,6 +308,36 @@ public sealed class ReviewCommandTests : IDisposable
         Assert.False(Directory.Exists(GraphStore.BaseWorktreePath(_root)));
     }
 
+    /// <summary>
+    /// 'review' creates .csmesh/, checks a base revision out into a worktree inside the repository,
+    /// and caches a graph -- all of it local state. None of that may reach the user's own
+    /// <c>git status</c>: a tool meant to reduce noise that leaves an untracked directory is worse
+    /// than the noise. The tracked <c>.gitignore</c> must not be edited by a read-only review, and
+    /// the only on-disk trace is the clone-local <c>info/exclude</c> line. This is the end-to-end
+    /// guard for the storage change; <c>CsMeshDirTests</c> covers the write in isolation.
+    /// </summary>
+    [Fact]
+    public void Review_leaves_git_status_clean_and_touches_only_info_exclude()
+    {
+        var baseSha = SeedBase();
+        Write("Registration.cs", Registration("ThingB"));
+        CommitAll("move the binding");
+        ReindexCurrent();
+
+        Assert.Equal(Exit.Ok, Review(baseSha, "--accept"));
+
+        Assert.True(GitTool.TryRun(_root, "status --porcelain", out var status, out var error, out _), error);
+        Assert.Equal("", status.Trim());
+
+        // The old implementation appended .csmesh/ to a tracked .gitignore. A reviewer would see
+        // that line in the diff of whatever branch happened to run review.
+        Assert.False(File.Exists(Path.Combine(_root, ".gitignore")));
+
+        var exclude = Path.Combine(_root, ".git", "info", "exclude");
+        Assert.True(File.Exists(exclude));
+        Assert.Contains(".csmesh/", File.ReadAllText(exclude), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void No_worktree_survives_a_base_that_fails_to_index()
     {
