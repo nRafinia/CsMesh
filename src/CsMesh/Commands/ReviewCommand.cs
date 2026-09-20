@@ -19,10 +19,17 @@ namespace CsMesh.Commands;
 /// </summary>
 public static class ReviewCommand
 {
+    /// <summary>
+    /// The budget <c>review</c> runs at when the caller does not pass <c>--budget</c>. Named rather
+    /// than inline so the documented default can be pinned to it, which <see cref="QueryCommand"/>
+    /// commands get for free through <c>WriterFor</c> and review does not.
+    /// </summary>
+    internal const int DefaultBudget = 800;
+
     public static int Execute(string root, Options opt)
     {
         var json = opt.Flag("json");
-        var budget = opt.Int("budget", 800);
+        var budget = opt.Int("budget", DefaultBudget);
         CsMesh.Telemetry.Telemetry.Current.Budget = budget;
         var includeCalls = opt.Flag("calls");
         var accept = opt.Flag("accept");
