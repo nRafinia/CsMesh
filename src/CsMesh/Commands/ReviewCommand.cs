@@ -55,6 +55,18 @@ public static class ReviewCommand
             return Fail(result, writer, json, Exit.NoIndex, $"no usable index ({problem}). run: csmesh index");
         }
 
+        // Both sides of a review are graphs; the working tree is never read, so working-tree
+        // staleness is the wrong question here. The one that matters is whether the index standing
+        // in for "current" was built at HEAD. If it was built at an older commit, findings can be
+        // missing changes the index never saw and can report changes already gone -- wrong, not
+        // merely thin. Reserved rather than droppable, for the same reason as QueryCommand's notes.
+        var gap = CommitGapNotice(root, current);
+        if (gap != null)
+        {
+            result.Notes.Add(gap);
+            if (!json) writer.AddOpeningNote(gap);
+        }
+
         var findings = Queries.DiffFindings(current, baseGraph, includeCalls);
         var acceptedBefore = BaselineFile.Load(root);
 
@@ -128,6 +140,32 @@ public static class ReviewCommand
         }
 
         return "HEAD";
+    }
+
+    /// <summary>
+    /// The warning when the current index cannot be shown to be at HEAD, or null when it can. An
+    /// empty <see cref="Graph.BuiltFromCommit"/> is included deliberately: an index that records no
+    /// commit cannot be shown current, and silence there is the same failure in a different costume
+    /// as a known gap. The text names the remedy and says the findings may be wrong, not merely old.
+    /// </summary>
+    private static string? CommitGapNotice(string root, Graph current)
+    {
+        const string tail = " run: csmesh index. Findings below may be missing changes or report changes that are already gone";
+
+        var built = current.BuiltFromCommit;
+        if (built.Length == 0)
+        {
+            return "# this index records no commit, so it cannot be shown current;" + tail;
+        }
+
+        if (!GitTool.TryRun(root, "rev-parse HEAD", out var headOut, out _, out _)) return null;
+        var head = headOut.Trim();
+        if (head.Length == 0) return null;
+
+        if (head.StartsWith(built, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var shortHead = head.Length > built.Length ? head[..built.Length] : head;
+        return $"# index built at {built}, HEAD is {shortHead};" + tail;
     }
 
     // ------------------------------------------------------------------ base graph, cached per commit

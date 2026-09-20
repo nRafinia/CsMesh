@@ -90,6 +90,9 @@ public sealed class ReviewCommandTests : IDisposable
         return exit;
     }
 
+    private string ReviewOut(out int exit, params string[] args) =>
+        Capture(() => ReviewCommand.Execute(_root, new Options(args)), out exit);
+
     private const string ThingSource =
         """
         namespace Shared { public interface IServiceCollection { } public interface IThing { void Do(); } }
@@ -347,5 +350,59 @@ public sealed class ReviewCommandTests : IDisposable
         var exit = Review(baseSha);
 
         Assert.Equal(Exit.NoIndex, exit);
+    }
+
+    // ------------------------------------------------------------------ commit gap
+
+    /// <summary>
+    /// The index that stands in for "current" can predate HEAD, and then the comparison is not
+    /// merely thin: changes the revision under review made may be absent, and changes already gone
+    /// may be reported. The warning has to be there, and it has to name the remedy.
+    /// </summary>
+    [Fact]
+    public void A_commit_gap_warns_and_names_the_remedy()
+    {
+        var baseSha = SeedBase();
+        ReindexCurrent();
+
+        Write("Things.cs", ImplSource + "\n// HEAD moves past the index\n");
+        CommitAll("second");
+
+        var text = ReviewOut(out var exit, baseSha);
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.Contains("index built at", text, StringComparison.Ordinal);
+        Assert.Contains("HEAD is", text, StringComparison.Ordinal);
+        Assert.Contains("run: csmesh index", text, StringComparison.Ordinal);
+        Assert.Contains("missing changes", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>An index that records no commit cannot be shown current, and must say so rather
+    /// than pass as fresh just because nothing contradicts it.</summary>
+    [Fact]
+    public void An_index_with_no_commit_is_warned_not_assumed_current()
+    {
+        var baseSha = SeedBase();
+        var graph = Indexer.Build(_root);
+        graph.BuiltFromCommit = string.Empty;
+        GraphStore.Save(graph);
+
+        var text = ReviewOut(out _, baseSha);
+
+        Assert.Contains("records no commit", text, StringComparison.Ordinal);
+        Assert.Contains("run: csmesh index", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_current_index_emits_no_commit_gap_warning()
+    {
+        var baseSha = SeedBase();
+        ReindexCurrent();
+
+        var text = ReviewOut(out var exit, baseSha);
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.DoesNotContain("index built at", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("records no commit", text, StringComparison.Ordinal);
     }
 }
