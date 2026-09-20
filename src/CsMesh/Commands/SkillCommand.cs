@@ -293,7 +293,14 @@ public static class SkillCommand
         "copilot", "kilocode", "mimo", "mimocode", "codex", "kimi", "gemini", "opencode", "all"
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
-    private static int Install(string basePath, string targetAgent, bool isGlobal)
+    /// <summary>
+    /// Writes the skill and rule files for one scope. Internal rather than private so a test can run
+    /// the real write path and compare the files that carry a block against
+    /// <see cref="BlockTargets"/> -- the list doctor reads. The two are maintained separately, and
+    /// the failure this guards against is a block target added here and missing there, which leaves
+    /// doctor silently blind to exactly the file that needed checking.
+    /// </summary>
+    internal static int Install(string basePath, string targetAgent, bool isGlobal)
     {
         if (!ValidAgents.Contains(targetAgent))
         {
