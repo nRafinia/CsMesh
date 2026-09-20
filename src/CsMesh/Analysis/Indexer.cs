@@ -143,32 +143,92 @@ public static partial class Indexer
         """;
 
     /// <summary>
-    /// Global using files the build already generated, one per project. Read out of obj/ on
-    /// purpose: it is the only place the true set exists, and reconstructing it from the csproj
-    /// would mean evaluating MSBuild.
+    /// Global using sets to compile, one per project rather than every obj/ directory on disk.
+    ///
+    /// Read from the project's chosen target framework on purpose: a project retargeted from net8
+    /// to net10 leaves both <c>obj/Debug/net8.0</c> and <c>obj/Debug/net10.0</c> behind, and the
+    /// build never reads the older one. Compiling both imports namespaces the current build cannot
+    /// see, which is a class of false binding rather than a missing one.
+    ///
+    /// A repository with no project files and a repository whose projects have no generated set
+    /// both keep the historic one-size-fits-all set: there is no framework or opt-in to read, and
+    /// dropping the System namespace would unbound most of the compilation.
     /// </summary>
-    private static IEnumerable<string> GlobalUsingFiles(string root)
+    private static List<string> GlobalUsingSets(string root, ProjectScope scope)
     {
-        List<string> found;
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        var projects = ProjectDirectories(root);
+        if (projects.Count == 0)
+        {
+            result.Add(ImplicitUsings);
+            return result;
+        }
+
+        foreach (var projectDirectory in projects)
+        {
+            var csproj = ProjectTfm.Single(projectDirectory);
+            if (csproj is null) continue;
+
+            foreach (var file in GlobalUsingFilesIn(projectDirectory, ProjectTfm.Choose(projectDirectory, "obj")))
+            {
+                string text;
+                try { text = File.ReadAllText(file); } catch { continue; }
+
+                if (seen.Add(text)) result.Add(text);
+            }
+        }
+
+        if (result.Count == 0) result.Add(ImplicitUsings);
+        return result;
+    }
+
+    /// <summary>Generated global-usings files for one project under its chosen target framework.</summary>
+    private static List<string> GlobalUsingFilesIn(string projectDirectory, string? framework)
+    {
+        var result = new List<string>();
+        if (framework is null) return result;
+
+        var objDirectory = Path.Combine(projectDirectory, "obj");
+        if (!Directory.Exists(objDirectory)) return result;
+
+        foreach (var config in ProjectTfm.ConfigDirectories(objDirectory))
+        {
+            var frameworkDirectory = Path.Combine(config, framework);
+            if (!Directory.Exists(frameworkDirectory)) continue;
+
+            try
+            {
+                result.AddRange(Directory.EnumerateFiles(frameworkDirectory, "*.GlobalUsings.g.cs",
+                    SearchOption.AllDirectories));
+            }
+            catch
+            {
+                // An unreadable framework directory contributes nothing rather than failing the index.
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Directories holding a csproj, excluding anything under bin/ or obj/.</summary>
+    private static List<string> ProjectDirectories(string root)
+    {
         try
         {
-            found = Directory.EnumerateFiles(root, "*.GlobalUsings.g.cs", SearchOption.AllDirectories).ToList();
+            return Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories)
+                .Where(p => !p.Replace('\\', '/').Contains("/bin/", StringComparison.OrdinalIgnoreCase))
+                .Where(p => !p.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase))
+                .Select(Path.GetDirectoryName)
+                .Where(d => d is not null)
+                .Select(d => d!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
         catch
         {
-            yield break;
-        }
-
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var file in found)
-        {
-            if (!file.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase)) continue;
-
-            string text;
-            try { text = File.ReadAllText(file); } catch { continue; }
-
-            // Several target frameworks and configurations emit identical copies.
-            if (seen.Add(text)) yield return text;
+            return [];
         }
     }
 
@@ -469,8 +529,7 @@ public static partial class Indexer
         }
 
         // Without these the compilation has no System namespace and almost nothing binds.
-        var globalUsings = GlobalUsingFiles(root).ToList();
-        if (globalUsings.Count == 0) globalUsings.Add(ImplicitUsings);
+        var globalUsings = GlobalUsingSets(root, scope);
 
         for (var i = 0; i < globalUsings.Count; i++)
         {
@@ -710,14 +769,68 @@ public static partial class Indexer
         foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories).Take(80))
         {
             tally.OutputDirectories++;
-            foreach (var cfg in Directory.EnumerateDirectories(bin, "*", SearchOption.AllDirectories).Take(20))
+
+            // Only the project's own chosen framework is read. A stale net8 tree next to a net10 one
+            // is build history the solution does not compile against, and loading its assemblies can
+            // shadow the current ones with the same simple name.
+            var chosen = ChosenFrameworkFor(root, bin);
+
+            var kept = 0;
+            foreach (var cfg in Directory.EnumerateDirectories(bin, "*", SearchOption.AllDirectories))
             {
+                if (chosen is not null && IsStaleFrameworkDirectory(cfg, bin, chosen)) continue;
+
                 AddDir(cfg, 200, runtime: false);
+                if (++kept >= 20) break;
             }
         }
 
         report = tally;
         return list;
+    }
+
+    /// <summary>
+    /// The target framework to read a bin/ tree through: the one the nearest csproj declares, or
+    /// the newest on disk when that framework was never built. Null when no project owns the tree,
+    /// in which case every framework directory is read as before.
+    /// </summary>
+    private static string? ChosenFrameworkFor(string root, string binDirectory)
+    {
+        var stop = Path.GetFullPath(root);
+        var directory = new DirectoryInfo(Path.GetFullPath(binDirectory));
+
+        while (directory is not null && directory.FullName.StartsWith(stop, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (directory.EnumerateFiles("*.csproj").Any())
+                    return ProjectTfm.Choose(directory.FullName, "bin");
+            }
+            catch
+            {
+                // An unreadable directory is unknown rather than empty; keep walking upward.
+            }
+
+            directory = directory.Parent;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// True for a directory under one of the chosen framework's siblings. The segment immediately
+    /// below the configuration names the framework, so "bin/Debug/net8.0" and "bin/Debug/net8.0/ref"
+    /// are stale when net10.0 is chosen and exists; "bin/Debug" itself and "bin/Debug/net10.0" are not.
+    /// </summary>
+    private static bool IsStaleFrameworkDirectory(string candidate, string binDirectory, string chosen)
+    {
+        var relative = Path.GetRelativePath(binDirectory, candidate);
+        var parts = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (parts.Length < 2) return false;
+
+        var framework = parts[1];
+        return ProjectTfm.IsFrameworkName(framework) &&
+               !framework.Equals(chosen, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -192,8 +192,7 @@ public static partial class Indexer
         var syntax = trees.Where(t => t != null).Select(t => t!).ToList();
         var freshStamps = stamps.Where(s => s != null).Select(s => s!).ToList();
 
-        var globalUsings = GlobalUsingFiles(root).ToList();
-        if (globalUsings.Count == 0) globalUsings.Add(ImplicitUsings);
+        var globalUsings = GlobalUsingSets(root, scope);
 
         for (var i = 0; i < globalUsings.Count; i++)
         {
