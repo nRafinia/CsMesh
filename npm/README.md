@@ -341,7 +341,7 @@ csmesh entrypoints orders
 | `--no-telemetry` | Skip recording the invocation in local usage metrics |
 | `-h, --help` | Display command help and usage examples |
 
-Default budgets: `impl` 600, `path` 500, `where`/`trace` 600, `unresolved`/`silence` 700, `entrypoints` 800, `map` 850, `context` 900, everything else 800.
+Default budgets: `impl` 600, `path` 500, `where`/`trace` 600, `unresolved` 700, `silence` 300, `entrypoints` 800, `map` 850, `context` 900, everything else 800.
 
 ---
 

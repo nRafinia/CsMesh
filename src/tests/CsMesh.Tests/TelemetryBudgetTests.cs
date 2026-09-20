@@ -60,6 +60,7 @@ public sealed class TelemetryBudgetTests
     [Theory]
     [InlineData("impl", 600)]
     [InlineData("path", 500)]
+    [InlineData("silence", 300)]
     public void Defaults_are_sized_against_the_worst_replayed_answer(string kind, int budget)
     {
         Assert.Equal(budget, QueryCommand.WriterFor(kind, new Options([])).Budget);

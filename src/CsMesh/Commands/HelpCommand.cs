@@ -585,7 +585,7 @@ public static class HelpCommand
 
         OPTIONS:
             --depth <N>        How far to walk before giving up (default: 12)
-            --budget <N>       Maximum output tokens (default: 700, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 300, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
