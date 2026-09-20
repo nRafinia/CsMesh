@@ -618,10 +618,10 @@ public static class SkillCommand
 
     private static void WriteOrUpdateBlock(string filePath, string blockContent)
     {
-        const string startTag = "<!-- csmesh-instructions -->";
-        const string endTag = "<!-- /csmesh-instructions -->";
+        const string startTag = SkillBlock.StartTag;
+        const string endTag = SkillBlock.EndTag;
 
-        var wrappedBlock = $"{startTag}\n{blockContent.Trim()}\n{endTag}";
+        var wrappedBlock = SkillBlock.Render(blockContent);
 
         if (!File.Exists(filePath))
         {
@@ -862,8 +862,8 @@ public static class SkillCommand
 
     private static void RemoveBlock(string filePath)
     {
-        const string startTag = "<!-- csmesh-instructions -->";
-        const string endTag = "<!-- /csmesh-instructions -->";
+        const string startTag = SkillBlock.StartTag;
+        const string endTag = SkillBlock.EndTag;
 
         if (!File.Exists(filePath)) return;
 

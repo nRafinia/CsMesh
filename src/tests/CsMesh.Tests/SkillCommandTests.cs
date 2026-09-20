@@ -1,5 +1,6 @@
 using CsMesh.Commands;
 using CsMesh.Common;
+using CsMesh.Skill;
 using Xunit;
 
 namespace CsMesh.Tests;
@@ -201,5 +202,25 @@ public sealed class SkillCommandTests : IDisposable
 
         Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "rider"]), SkillMode.Uninstall));
         Assert.False(File.Exists(agentsMd));
+    }
+
+    /// <summary>
+    /// Pins the bytes install writes, so extracting the wrapper into <see cref="SkillBlock.Render"/>
+    /// cannot move a marker, a newline or the trailing line ending unnoticed. A refactor that is
+    /// meant to change no output is the kind that changes output.
+    /// </summary>
+    [Fact]
+    public void InstalledBlockIsByteIdenticalToTheRenderedRules()
+    {
+        var agentsMd = Path.Combine(_root, "AGENTS.md");
+
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
+
+        var expected = System.Text.Encoding.UTF8.GetBytes(
+            "<!-- csmesh-instructions -->\n"
+            + SkillText.Rules.Trim()
+            + "\n<!-- /csmesh-instructions -->\n");
+
+        Assert.Equal(expected, File.ReadAllBytes(agentsMd));
     }
 }
