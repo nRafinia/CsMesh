@@ -13,7 +13,7 @@ namespace CsMesh.Tests;
 /// been caught. This runs the real install path for both scopes and asserts that the files actually
 /// carrying a block are exactly the files BlockTargets names.
 /// </summary>
-[Collection("console-capture")]
+[Collection("env-mutation")]
 public sealed class InstallBlockTargetsTests : IDisposable
 {
     private readonly string _root;
