@@ -148,7 +148,7 @@ csmesh map                                          # orient first in an unfamil
 csmesh where discount                               # find symbol or route when you have words
 csmesh context PaymentService.Process --budget 900  # everything about one symbol, one call
 csmesh trace PaymentController.Post --budget 700
-csmesh impl IPaymentGateway --budget 300
+csmesh impl IPaymentGateway --budget 600
 csmesh blast-radius Order.Status --budget 800 --depth 2
 csmesh path PaymentController.Post StripeGateway.Authorize
 csmesh entrypoints payments
@@ -189,9 +189,9 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 | 1 | nothing found | `csmesh silence <symbol>` before anything else |
 | 2 | answer exists but exceeds the budget | in order: the depth the message names, then `--under <path>`, then `--depth 1` for direct edges only. Do **not** just raise `--budget` to a huge number, and do **not** run `silence` here -- a *narrowed* query that then exits 1 is when `silence` applies |
 | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
-| 4 | no index, or one written by an older csmesh | run `csmesh index` |
+| 4 | no index; one written by an older csmesh; or (review) an index that predates HEAD | run `csmesh index` |
 | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
-| 64 | bad command line | run `csmesh <cmd> --help` |
+| 64 | bad command line, including `review --accept` when the index predates HEAD | run `csmesh <cmd> --help` |
 | 70 | csmesh itself failed | re-run with `--debug`; that is a bug, not your query |
 | 75 | index file contended by another process | nothing was written and nothing is broken — wait briefly and retry the command; do not report it |
 
@@ -202,8 +202,8 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
   `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
   a member, **always use `where <member-name>` first** to discover the correct qualified name
   rather than guessing from the file or outer class name.
-- Always pass `--budget`. Default it to 700 for `trace`, 300 for `impl`, 800 for `blast-radius`
-  and `diff`, 900 for `context`, 400 for `path`.
+- Always pass `--budget`. Default it to 700 for `trace`, 600 for `impl`, 800 for `blast-radius`
+  and `diff`, 900 for `context`, 500 for `path`.
 - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
   question is cheaper than paying for the whole tree.
 - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3.
