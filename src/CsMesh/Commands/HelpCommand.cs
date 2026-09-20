@@ -239,13 +239,13 @@ public static class HelpCommand
             <IInterface>       Interface or abstract base type (e.g. IPaymentGateway)
 
         OPTIONS:
-            --budget <N>       Maximum output tokens (default: 300, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
 
         EXAMPLES:
-            csmesh impl IPaymentGateway --budget 300
+            csmesh impl IPaymentGateway --budget 600
             csmesh impl PaymentHandlerBase
         """;
 

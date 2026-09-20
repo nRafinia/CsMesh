@@ -50,4 +50,17 @@ public sealed class TelemetryBudgetTests
         // explicit-budget row reached 760, so the ceiling above 700 was never observable.
         Assert.Equal(850, QueryCommand.WriterFor("map", new Options([])).Budget);
     }
+
+    /// <summary>
+    /// Sized against the worst reasonable answer from the widened replay, not the median the original
+    /// log happened to contain. Each is pinned here so the next person does not start from the log
+    /// again: impl against a 20-implementation interface, path against a 12-hop chain, silence
+    /// against the largest type that produced a diagnostic.
+    /// </summary>
+    [Theory]
+    [InlineData("impl", 600)]
+    public void Defaults_are_sized_against_the_worst_replayed_answer(string kind, int budget)
+    {
+        Assert.Equal(budget, QueryCommand.WriterFor(kind, new Options([])).Budget);
+    }
 }
