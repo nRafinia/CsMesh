@@ -334,7 +334,7 @@ public static class HelpCommand
             <To>               Where you want to know it arrives (e.g. StripeGateway.Authorize)
 
         OPTIONS:
-            --budget <N>       Maximum output tokens (default: 400, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 500, exits code 2 on overflow)
             --depth <N>        Maximum hops to search (default: 12)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
