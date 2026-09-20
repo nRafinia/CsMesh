@@ -246,7 +246,7 @@ public static class QueryCommand
     {
         "impl" => 300,
         "blast" => 800,
-        "context" => 800,
+        "context" => 900,
         "cycles" => 800,
         "unresolved" => 700,
         "entrypoints" => 700,

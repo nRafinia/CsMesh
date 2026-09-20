@@ -78,7 +78,7 @@ public static partial class Queries
             if (near.Count > 0)
             {
                 w.Force("did you mean: " + string.Join(", ", near.Select(h => $"{h.Node.Short} [{h.Why}]")));
-                w.Force($"next: csmesh context {near[0].Node.Short} --budget 800");
+                w.Force($"next: csmesh context {near[0].Node.Short} --budget 900");
                 return Exit.NotFound;
             }
 
@@ -150,7 +150,7 @@ public static partial class Queries
         w.Force("");
         w.Force(top.Entrypoints > 0 || IsEntrypoint(top.Node)
             ? $"next: csmesh trace {top.Node.Short} --budget 600"
-            : $"next: csmesh context {top.Node.Short} --budget 800");
+            : $"next: csmesh context {top.Node.Short} --budget 900");
 
         return Exit.Ok;
     }

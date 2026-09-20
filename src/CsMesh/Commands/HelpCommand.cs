@@ -305,7 +305,7 @@ public static class HelpCommand
             <Type.Member>      Target symbol (e.g. PaymentService.Process)
 
         OPTIONS:
-            --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
+            --budget <N>       Maximum output tokens (default: 900, exits code 2 on overflow)
             --depth <N>        Reverse traversal depth for impact and entrypoints (default: 3)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -317,7 +317,7 @@ public static class HelpCommand
             exhausted budget drops the tail rather than the answer.
 
         EXAMPLES:
-            csmesh context PaymentService.Process --budget 800
+            csmesh context PaymentService.Process --budget 900
             csmesh context IPaymentGateway --depth 2
         """;
 
