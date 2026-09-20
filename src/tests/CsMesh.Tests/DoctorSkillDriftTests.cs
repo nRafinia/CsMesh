@@ -105,6 +105,26 @@ public sealed class DoctorSkillDriftTests : IDisposable
         Assert.DoesNotContain("differ from this build", output, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// `.clinerules` is a block file only when it is a file. When it is a directory, install writes
+    /// the dedicated `.clinerules/csmesh.md` instead, but BlockTargets still yields the directory
+    /// path. doctor has to skip it rather than open it or report it; File.Exists is false for a
+    /// directory, and that is the guard.
+    /// </summary>
+    [Fact]
+    public void ADirectoryClinerulesIsSkippedRatherThanReportedOrRead()
+    {
+        var rulesDir = Path.Combine(_root, ".clinerules");
+        Directory.CreateDirectory(rulesDir);
+        File.WriteAllText(Path.Combine(rulesDir, "csmesh.md"), SkillBlock.Render(SkillText.Rules));
+
+        var (exit, output) = RunDoctor("--no-telemetry");
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.DoesNotContain("differ from this build", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(".clinerules: installed", output, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void JsonModeCarriesTheStaleBlockAndEmitsNothingElse()
     {
