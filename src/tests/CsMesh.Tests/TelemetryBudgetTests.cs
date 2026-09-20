@@ -34,14 +34,16 @@ public sealed class TelemetryBudgetTests
     }
 
     /// <summary>
-    /// The two code defaults raised on the exit=2 distribution: entrypoints and unresolved answers
-    /// clustered just past 600. where moved too: its job is to surface the one symbol the task is
-    /// about, and dropping the candidate that mattered is the failure mode, so it stops at 600.
+    /// The code defaults raised on the exit=2 distribution: unresolved answers clustered just past
+    /// 600, and every recorded entrypoints overflow was a large API surface the cap could not hold,
+    /// so entrypoints moved further than unresolved. where moved too: its job is to surface the one
+    /// symbol the task is about, and dropping the candidate that mattered is the failure mode, so it
+    /// stops at 600.
     /// </summary>
     [Fact]
     public void Entrypoints_and_unresolved_carry_the_raised_defaults()
     {
-        Assert.Equal(700, QueryCommand.WriterFor("entrypoints", new Options([])).Budget);
+        Assert.Equal(800, QueryCommand.WriterFor("entrypoints", new Options([])).Budget);
         Assert.Equal(700, QueryCommand.WriterFor("unresolved", new Options([])).Budget);
         Assert.Equal(600, QueryCommand.WriterFor("where", new Options([])).Budget);
         // map's old 700 was clipping it: every exit=0 sample sat 2-27 tokens under the cap and one

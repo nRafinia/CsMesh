@@ -249,7 +249,7 @@ public static class QueryCommand
         "context" => 900,
         "cycles" => 800,
         "unresolved" => 700,
-        "entrypoints" => 700,
+        "entrypoints" => 800,
         "changes" => 800,
         "diff" => 800,
         "silence" => 700,
