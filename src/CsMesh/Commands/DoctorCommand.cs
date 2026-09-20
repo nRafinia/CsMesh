@@ -92,6 +92,18 @@ public static class DoctorCommand
                 e.Line("  include them with: csmesh index --all");
             }
 
+            // Source the ownership rules left out is named rather than dropped in silence. Both are
+            // printed only when non-zero so the common case stays quiet.
+            if (graph.ExcludedLooseFiles > 0)
+            {
+                e.Line($"loose files     {graph.ExcludedLooseFiles} .cs file(s) outside every project are not indexed");
+            }
+
+            if (graph.UnevaluableCompileItems > 0)
+            {
+                e.Line($"unevaluable     {graph.UnevaluableCompileItems} compile item(s) name an MSBuild property not evaluated");
+            }
+
             e.Line($"global usings   {graph.GlobalUsingSources} set(s) compiled in"
                               + (graph.GlobalUsingSources == 0
                                   ? "  -- none; the System namespace is missing and nothing will bind"

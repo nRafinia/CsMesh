@@ -578,6 +578,8 @@ public static partial class Indexer
             SkippedProjects = scope.Excluded,
             SkippedProjectsReason = scope.Reason,
             ScopeDecision = scope.Decision,
+            ExcludedLooseFiles = CountExcludedLooseFiles(root, scope),
+            UnevaluableCompileItems = scope.UnevaluableCompileItems,
             ProjectReferences = scope.References,
             Dirs = dirs.Select(kv => new DirStamp { Path = kv.Key, Ticks = kv.Value }).ToList(),
             ReferenceCount = references.Count,
@@ -603,6 +605,39 @@ public static partial class Indexer
         graph.AmbiguousMessageDispatches = builder.AmbiguousMessageDispatches;
         graph.UnmatchedMessageDispatches = builder.UnmatchedMessageDispatches;
         return graph;
+    }
+
+    /// <summary>
+    /// How many .cs files sit outside every project while the repository has projects. Counted
+    /// rather than silently skipped: a file the reader expected to find and cannot is worse than a
+    /// line saying it was left out. Generated and designer files are not counted, because
+    /// <see cref="EnumerateSourceFiles"/> never considered them in the first place.
+    /// </summary>
+    private static int CountExcludedLooseFiles(string root, ProjectScope scope)
+    {
+        if (!scope.HasProjects) return 0;
+
+        var count = 0;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+            {
+                if (IsSkipped(root, file)) continue;
+
+                var normalized = file.Replace('\\', '/');
+                if (normalized.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)) continue;
+                if (normalized.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase)) continue;
+                if (normalized.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (scope.IsLoose(file) && !scope.Includes(file)) count++;
+            }
+        }
+        catch
+        {
+            // An unreadable tree contributes no count rather than failing the index.
+        }
+
+        return count;
     }
 
     /// <summary>

@@ -18,6 +18,9 @@ namespace CsMesh.Analysis;
 public sealed class ProjectScope
 {
     private readonly HashSet<string> _live = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CompileItemModel> _models = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string?> _nearestByDirectory = new(StringComparer.OrdinalIgnoreCase);
+    private readonly bool _hasProjects;
 
     private ProjectScope(string root, IEnumerable<string> live, IEnumerable<string> excluded,
                          string reason, string decision)
@@ -28,7 +31,14 @@ public sealed class ProjectScope
         Excluded = excluded.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
 
         var paths = live.ToList();
-        foreach (var path in paths) _live.Add(Directory.GetParent(path)!.FullName);
+        _hasProjects = paths.Count + Excluded.Count > 0;
+
+        foreach (var path in paths)
+        {
+            var directory = Directory.GetParent(path)!.FullName;
+            _live.Add(directory);
+            _models[directory] = CompileItems.Parse(path);
+        }
 
         var nameByPath = paths.ToDictionary(
             Path.GetFullPath,
@@ -84,35 +94,90 @@ public sealed class ProjectScope
     public IReadOnlyCollection<string> LiveDirectories => _live;
 
     /// <summary>
-    /// True when a file belongs to a project that is part of the build, or to no project at all.
-    /// A loose .cs file with no csproj above it is kept: there is nothing to judge it by, and
-    /// silently dropping it would be worse than including it.
+    /// True when any in-scope project owns the file.
     ///
-    /// The nearest ancestor directory that carries a .csproj owns the file, and the file is included
-    /// exactly when that project is in scope. Returning true at the first live ancestor instead let a
-    /// parent project claim a nested project's sources: every
-    /// src/tests/CsMesh.Tests/Fixtures/*/Bus.cs was compiled into CsMesh.Tests even though each
-    /// Fixtures/* directory has its own Fixture.csproj, so Demo.IMediator was declared eight times in
-    /// one compilation (CS0101 x14, CS0111 x6), the fixture projects' own types never existed as
-    /// themselves, and a query like impl IMediator answered from a graph half of which was duplicate
-    /// noise. This mirrors the nearest-project walk in Indexer.ProjectLocator.For, which already
-    /// decides which project a file belongs to.
+    /// Ownership is not only the nearest csproj. The nearest live project owns a file through its
+    /// default glob unless it removed that file or turned the default glob off; separately, any
+    /// in-scope project that explicitly includes the file -- a link from outside its directory, or a
+    /// shared .projitems -- owns it too, and a file may have several owners. A file with no csproj
+    /// above it is excluded when the repository has projects and kept when it has none, because
+    /// there is nothing to judge it by in the latter case and dropping source in silence is worse.
+    ///
+    /// This mirrors Indexer.ProjectLocator.For's nearest-project walk and extends it with what the
+    /// csproj says it compiles. Returning true at the first live ancestor instead let a parent
+    /// project claim a nested project's sources.
     /// </summary>
     public bool Includes(string file)
     {
-        if (_live.Count == 0) return true;
+        if (!_hasProjects) return true;
+        return Owners(file).Count > 0;
+    }
 
-        var dir = Directory.GetParent(file);
-        var stop = Path.GetFullPath(Root);
+    /// <summary>
+    /// The in-scope project directories that compile this file, in no particular order. More than one
+    /// means the build compiles the file into each of those assemblies; a single compilation still
+    /// parses it once, and the split must place it in every owner.
+    /// </summary>
+    public IReadOnlyList<string> Owners(string file)
+    {
+        var full = Path.GetFullPath(file);
+        var owners = new List<string>();
 
-        while (dir != null && dir.FullName.StartsWith(stop, StringComparison.OrdinalIgnoreCase))
+        foreach (var projectDirectory in _live)
         {
-            if (HasProjectFile(dir)) return _live.Contains(dir.FullName);
-            dir = dir.Parent;
+            if (_models.TryGetValue(projectDirectory, out var model) &&
+                model.IncludesFile(projectDirectory, full))
+            {
+                owners.Add(projectDirectory);
+            }
         }
 
-        // No csproj anywhere above it: a loose source file with nothing to judge it by.
-        return true;
+        var nearest = NearestProject(full);
+        if (nearest is not null && _live.Contains(nearest) &&
+            !owners.Contains(nearest, StringComparer.OrdinalIgnoreCase))
+        {
+            var model = _models[nearest];
+            if (model.EnableDefaultCompileItems && !model.RemovesFile(nearest, full))
+                owners.Add(nearest);
+        }
+
+        return owners;
+    }
+
+    /// <summary>True for a source file with no csproj ancestor.</summary>
+    public bool IsLoose(string file) => NearestProject(Path.GetFullPath(file)) is null;
+
+    /// <summary>True when the repository holds any csproj at all, in scope or not.</summary>
+    public bool HasProjects => _hasProjects;
+
+    /// <summary>
+    /// Compile items in scope that name an MSBuild property this parser does not evaluate. Each is a
+    /// file the model cannot place, so it is counted for doctor rather than guessed at.
+    /// </summary>
+    public int UnevaluableCompileItems => _models.Values.Sum(m => m.UnevaluableCount);
+
+    /// <summary>
+    /// The nearest ancestor directory that carries a .csproj, or null. Cached per directory; a file
+    /// shares the answer with every other file beside it.
+    /// </summary>
+    private string? NearestProject(string fullPath)
+    {
+        var directory = Path.GetDirectoryName(fullPath);
+        if (directory is null) return null;
+        if (_nearestByDirectory.TryGetValue(directory, out var cached)) return cached;
+
+        var stop = Path.GetFullPath(Root);
+        var current = new DirectoryInfo(directory);
+        string? found = null;
+
+        while (current is not null && current.FullName.StartsWith(stop, StringComparison.OrdinalIgnoreCase))
+        {
+            if (HasProjectFile(current)) { found = current.FullName; break; }
+            current = current.Parent;
+        }
+
+        _nearestByDirectory[directory] = found;
+        return found;
     }
 
     /// <summary>

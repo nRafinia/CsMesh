@@ -142,6 +142,19 @@ public sealed class Graph
     public string ScopeDecision { get; set; } = string.Empty;
 
     /// <summary>
+    /// Loose .cs files left out because the repository holds projects. A file with no csproj above
+    /// it has no assembly to be compiled into, and the real build does not compile it either.
+    /// Counted so doctor can say how many were dropped instead of leaving the omission invisible.
+    /// </summary>
+    public int ExcludedLooseFiles { get; set; }
+
+    /// <summary>
+    /// Compile items naming an MSBuild property the parser does not evaluate. Each is a file whose
+    /// owning project cannot be decided, so it is counted for doctor rather than guessed at.
+    /// </summary>
+    public int UnevaluableCompileItems { get; set; }
+
+    /// <summary>
     /// Declared ProjectReference edges, by project name. The authority on what depends on what;
     /// symbol edges answer a different question and point the other way for dispatch.
     /// </summary>
