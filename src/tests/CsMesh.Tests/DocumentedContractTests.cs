@@ -28,6 +28,7 @@ namespace CsMesh.Tests;
 /// that constant is the only budget review ever applies.</item>
 /// </list>
 /// </summary>
+[Collection("telemetry-state")]
 public sealed class DocumentedContractTests
 {
     private static string Root()
