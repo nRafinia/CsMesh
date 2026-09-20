@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using CsMesh.Common;
+using CsMesh.Storage;
 
 namespace CsMesh.Telemetry;
 
@@ -37,8 +38,7 @@ public static class Telemetry
 
         try
         {
-            var dir = Path.Combine(Current.Root, ".csmesh");
-            Directory.CreateDirectory(dir);
+            CsMeshDir.Ensure(Current.Root);
 
             var line = JsonSerializer.Serialize(Current, AppJsonContext.Default.Invocation);
             using var fs = new FileStream(LogPath(Current.Root), FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
