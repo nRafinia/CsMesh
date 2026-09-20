@@ -142,6 +142,66 @@ public sealed class ProjectScopeTests : IDisposable
         Assert.True(scope.Includes(Path_("src/Dead/Code.cs")));
     }
 
+    // ------------------------------------------------------------------ nested projects
+
+    /// <summary>
+    /// The nearest csproj owns a file. A live parent must not claim a nested project's sources:
+    /// compiling them twice duplicated every type the nested project declared, which is what turned
+    /// eight Fixtures/*/Bus.cs files into CS0101 x14 in one compilation.
+    /// </summary>
+    [Fact]
+    public void A_nested_projects_files_are_not_claimed_by_its_live_parent()
+    {
+        Write("src/P/P.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>");
+        Write("src/P/N/N.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        Write("src/P/N/Nested.cs", "namespace N; public class Nested { }");
+        Write("App.slnx", "<Solution><Project Path=\"src/P/P.csproj\" /></Solution>");
+
+        var scope = ProjectScope.Discover(_root);
+
+        Assert.False(scope.Includes(Path_("src/P/N/Nested.cs")));
+        Assert.Contains("N.csproj", string.Join(",", scope.Excluded));
+    }
+
+    [Fact]
+    public void A_nested_project_in_scope_owns_its_files_rather_than_its_parent()
+    {
+        Write("src/P/P.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>");
+        Write("src/P/Top.cs", "namespace P; public class Top { }");
+        Write("src/P/N/N.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        Write("src/P/N/Nested.cs", "namespace N; public class Nested { }");
+
+        // index --all marks every project live, so N's files come in on N's own account.
+        var all = ProjectScope.Everything(_root);
+        Assert.True(all.Includes(Path_("src/P/N/Nested.cs")));
+
+        // With only N named, N's files are still included and P's own file is not: ownership
+        // follows the nearest csproj, not whichever ancestor happens to contain N.
+        Write("App.slnx", "<Solution><Project Path=\"src/P/N/N.csproj\" /></Solution>");
+        var scope = ProjectScope.Discover(_root);
+        Assert.True(scope.Includes(Path_("src/P/N/Nested.cs")));
+        Assert.False(scope.Includes(Path_("src/P/Top.cs")));
+    }
+
+    /// <summary>
+    /// The fix must not start excluding plain folders: a subdirectory with no csproj of its own
+    /// still belongs to the project above it.
+    /// </summary>
+    [Fact]
+    public void A_plain_subfolder_of_a_live_project_is_still_included()
+    {
+        Write("src/P/P.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>");
+        Write("src/P/Sub/Code.cs", "namespace P; public class Sub { }");
+        Write("App.slnx", "<Solution><Project Path=\"src/P/P.csproj\" /></Solution>");
+
+        var scope = ProjectScope.Discover(_root);
+
+        Assert.True(scope.Includes(Path_("src/P/Sub/Code.cs")));
+    }
+
     // ------------------------------------------------------------------ safety
 
     [Fact]

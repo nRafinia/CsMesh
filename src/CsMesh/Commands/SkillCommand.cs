@@ -74,6 +74,42 @@ public static class SkillCommand
         yield return Path.Combine(home, ".opencode", "commands", "csmesh.md");
     }
 
+    /// <summary>
+    /// The files, for one install scope, that receive the delimited rules block rather than a
+    /// dedicated skill file. doctor compares exactly these: a dedicated file has no markers to
+    /// extract and is reported as installed, not stale.
+    ///
+    /// Kept beside the Install methods it mirrors. A target added there without one here is then a
+    /// missing line in a list a reader can compare against those methods, not a silent hole in the
+    /// drift check.
+    /// </summary>
+    public static IEnumerable<string> BlockTargets(string basePath, bool isGlobal)
+    {
+        if (isGlobal)
+        {
+            var claudeHome = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR") ?? Path.Combine(basePath, ".claude");
+            var copilotHome = Environment.GetEnvironmentVariable("COPILOT_HOME") ?? Path.Combine(basePath, ".copilot");
+            var codexHome = Environment.GetEnvironmentVariable("CODEX_HOME") ?? Path.Combine(basePath, ".codex");
+            var configDir = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ?? Path.Combine(basePath, ".config");
+
+            yield return Path.Combine(claudeHome, "CLAUDE.md");
+            yield return Path.Combine(basePath, ".codeium", "windsurf", "memories", "global_rules.md");
+            yield return Path.Combine(copilotHome, "copilot-instructions.md");
+            yield return Path.Combine(basePath, ".mimo", "instructions.md");
+            yield return Path.Combine(codexHome, "AGENTS.md");
+            yield return Path.Combine(basePath, ".gemini", "GEMINI.md");
+            yield return Path.Combine(configDir, "opencode", "AGENTS.md");
+        }
+        else
+        {
+            yield return Path.Combine(basePath, ".windsurfrules");
+            yield return Path.Combine(basePath, ".clinerules");
+            yield return Path.Combine(basePath, ".github", "copilot-instructions.md");
+            yield return Path.Combine(basePath, "AGENTS.md");
+            yield return Path.Combine(basePath, "GEMINI.md");
+        }
+    }
+
     public static int Execute(string root, Options opt, SkillMode mode = SkillMode.Skill)
     {
         var helpRequested = opt.Flag("help") || opt.Flag("h") || opt.Positional.Contains("help");
@@ -257,7 +293,14 @@ public static class SkillCommand
         "copilot", "kilocode", "mimo", "mimocode", "codex", "kimi", "gemini", "opencode", "all"
     }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
-    private static int Install(string basePath, string targetAgent, bool isGlobal)
+    /// <summary>
+    /// Writes the skill and rule files for one scope. Internal rather than private so a test can run
+    /// the real write path and compare the files that carry a block against
+    /// <see cref="BlockTargets"/> -- the list doctor reads. The two are maintained separately, and
+    /// the failure this guards against is a block target added here and missing there, which leaves
+    /// doctor silently blind to exactly the file that needed checking.
+    /// </summary>
+    internal static int Install(string basePath, string targetAgent, bool isGlobal)
     {
         if (!ValidAgents.Contains(targetAgent))
         {
@@ -618,10 +661,10 @@ public static class SkillCommand
 
     private static void WriteOrUpdateBlock(string filePath, string blockContent)
     {
-        const string startTag = "<!-- csmesh-instructions -->";
-        const string endTag = "<!-- /csmesh-instructions -->";
+        const string startTag = SkillBlock.StartTag;
+        const string endTag = SkillBlock.EndTag;
 
-        var wrappedBlock = $"{startTag}\n{blockContent.Trim()}\n{endTag}";
+        var wrappedBlock = SkillBlock.Render(blockContent);
 
         if (!File.Exists(filePath))
         {
@@ -862,8 +905,8 @@ public static class SkillCommand
 
     private static void RemoveBlock(string filePath)
     {
-        const string startTag = "<!-- csmesh-instructions -->";
-        const string endTag = "<!-- /csmesh-instructions -->";
+        const string startTag = SkillBlock.StartTag;
+        const string endTag = SkillBlock.EndTag;
 
         if (!File.Exists(filePath)) return;
 

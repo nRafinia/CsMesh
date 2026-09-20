@@ -1,3 +1,5 @@
+using CsMesh.Storage;
+
 namespace CsMesh.Common;
 
 /// <summary>
@@ -44,7 +46,7 @@ public static class BaselineFile
         var pruned = previous.Count(id => !currentIds.Contains(id));
 
         var path = PathFor(root);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        CsMeshDir.Ensure(root);
 
         var lines = new List<string>
         {

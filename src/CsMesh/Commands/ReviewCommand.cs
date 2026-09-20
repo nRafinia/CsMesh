@@ -222,7 +222,7 @@ public static class ReviewCommand
             return true;
         }
 
-        EnsureGitIgnoreEntry(root);
+        CsMeshDir.Ensure(root);
 
         var worktreePath = GraphStore.BaseWorktreePath(root);
         CleanupWorktree(root, worktreePath);
@@ -283,38 +283,6 @@ public static class ReviewCommand
 
     private static string ToGitRelativePath(string root, string path) =>
         Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/');
-
-    /// <summary>
-    /// A worktree inside the repository is untracked noise in the user's own git status unless
-    /// ignored -- exactly the kind of thing a tool meant to reduce noise should not cause.
-    /// </summary>
-    private static void EnsureGitIgnoreEntry(string root)
-    {
-        const string entry = ".csmesh/";
-        var path = Path.Combine(root, ".gitignore");
-
-        try
-        {
-            if (!File.Exists(path))
-            {
-                File.WriteAllText(path, entry + Environment.NewLine);
-                return;
-            }
-
-            var content = File.ReadAllText(path);
-            var alreadyPresent = content.Split('\n')
-                .Select(l => l.TrimEnd('\r').Trim())
-                .Any(l => l is ".csmesh/" or ".csmesh");
-            if (alreadyPresent) return;
-
-            var prefix = content.Length == 0 || content.EndsWith('\n') ? "" : Environment.NewLine;
-            File.AppendAllText(path, prefix + entry + Environment.NewLine);
-        }
-        catch (Exception ex)
-        {
-            Dbg.Log($"could not update .gitignore: {ex.Message}");
-        }
-    }
 
     // ------------------------------------------------------------------ baseline text
 

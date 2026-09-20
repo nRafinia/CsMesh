@@ -176,7 +176,7 @@ public static class GraphStore
 
     public static void Save(Graph g)
     {
-        Directory.CreateDirectory(DirFor(g.Root));
+        CsMeshDir.Ensure(g.Root);
 
         using var guard = AcquireLock(g.Root);
 
@@ -200,7 +200,7 @@ public static class GraphStore
     /// </summary>
     public static void SaveInPlace(Graph g)
     {
-        Directory.CreateDirectory(DirFor(g.Root));
+        CsMeshDir.Ensure(g.Root);
 
         using var guard = AcquireLock(g.Root);
         WriteAtomic(g, PathFor(g.Root));
@@ -317,7 +317,7 @@ public static class GraphStore
 
     public static void SaveBaseGraph(string root, string sha, Graph g)
     {
-        Directory.CreateDirectory(DirFor(root));
+        CsMeshDir.Ensure(root);
         WriteAtomic(g, BaseGraphPathFor(root, sha));
     }
 
