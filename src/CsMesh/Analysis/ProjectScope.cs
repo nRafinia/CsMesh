@@ -427,7 +427,7 @@ public sealed class ProjectScope
         return false;
     }
 
-    private static List<string> ReferencedProjects(string csproj)
+    internal static List<string> ReferencedProjects(string csproj)
     {
         var result = new List<string>();
         var directory = Path.GetDirectoryName(csproj)!;

@@ -304,15 +304,42 @@ public static class DoctorCommand
         if (graph.Diagnostics.Count > 0)
         {
             e.Line("  compiler said");
-            foreach (var note in graph.Diagnostics.Take(5))
-            {
-                e.Line($"    {note.Id} x{note.Count,-6} {note.Message}");
-            }
 
-            if (graph.Diagnostics.Any(d => d.Id == "CS0433"))
+            // Grouped by project: one project's missing reference and another's bad using are
+            // different problems, and a flat list lets the first project crowd the rest out. Each
+            // project shows its five largest groups.
+            var byProject = graph.Diagnostics
+                .GroupBy(d => d.Project, StringComparer.Ordinal)
+                .OrderByDescending(g => g.Max(x => x.Count))
+                .ThenBy(g => g.Key, StringComparer.Ordinal)
+                .ToList();
+
+            foreach (var project in byProject)
             {
-                e.Line("    CS0433 means a type arrived from two assemblies. bin/ probably holds a");
-                e.Line("    compiled copy of the source being indexed; that breaks resolution.");
+                if (project.Key.Length > 0) e.Line($"    {project.Key}");
+
+                var shown = 0;
+                foreach (var note in project.OrderByDescending(x => x.Count))
+                {
+                    if (shown++ >= 5) break;
+                    e.Line($"    {note.Id} x{note.Count,-6} {note.Message}");
+                }
+
+                if (project.Any(d => d.Id == "CS0433"))
+                {
+                    e.Line("    CS0433 means a type arrived from two assemblies. bin/ probably holds a");
+                    e.Line("    compiled copy of the source being indexed; that breaks resolution.");
+                }
+            }
+        }
+
+        if (graph.ProjectCycles.Count > 0)
+        {
+            e.Line($"  cycle broken    {graph.ProjectCycles.Count} ProjectReference cycle edge(s);");
+            e.Line("                  the compilation for each broken edge does not exist:");
+            foreach (var cycle in graph.ProjectCycles.Take(8))
+            {
+                e.Line($"    {cycle}");
             }
         }
 

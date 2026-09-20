@@ -1,4 +1,4 @@
-﻿using CsMesh.Common;
+using CsMesh.Common;
 using CsMesh.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -189,35 +189,40 @@ public static partial class Indexer
             return null;
         }
 
-        var syntax = trees.Where(t => t != null).Select(t => t!).ToList();
         var freshStamps = stamps.Where(s => s != null).Select(s => s!).ToList();
 
-        var globalUsings = GlobalUsingSets(root, scope);
-
-        for (var i = 0; i < globalUsings.Count; i++)
+        // The compilations are whole-solution even though binding is not: a partial used by an
+        // edited file has its other half in a generated tree, and a compilation missing it binds
+        // the edit against nothing. Generated trees are parsed here too, without stamping -- this
+        // pass may not move the freshness baseline for build output it did not produce.
+        var ownedTrees = new List<OwnedTree>(files.Count);
+        for (var i = 0; i < files.Count; i++)
         {
-            syntax.Add(CSharpSyntaxTree.ParseText(globalUsings[i], parseOptions, path: $"<global-usings-{i}>"));
+            if (trees[i] is null) continue;
+            ownedTrees.Add(new OwnedTree(trees[i]!, OwnershipOf(scope, files[i])));
         }
 
-        // The compilation is whole-solution even though binding is not: a partial used by an edited
-        // file has its other half in a generated tree, and a compilation missing it binds the edit
-        // against nothing. Parse them here too, without stamping -- this pass may not move the
-        // freshness baseline for build output it did not produce.
+        ownedTrees.AddRange(GlobalUsingTrees(scope, parseOptions));
+
         var (razorSources, _) = CollectGeneratedRazorSources(scope);
-        foreach (var (razorPath, text) in razorSources)
+        foreach (var (projectDir, razorPath, text) in razorSources)
         {
-            syntax.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath));
+            ownedTrees.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath),
+                new[] { projectDir }));
         }
 
         var (generatedSources, _) = CollectGeneratedSources(root, scope);
-        foreach (var (generated, text) in generatedSources)
+        foreach (var (projectDir, generated, text) in generatedSources)
         {
-            syntax.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: generated));
+            ownedTrees.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(text, parseOptions, path: generated),
+                new[] { projectDir }));
         }
 
         var references = ReferenceSet(root, scope, out _);
 
-        var compilation = CreateCompilations("csmesh.index", syntax, references);
+        var compilations = CreateCompilations(root, scope, ownedTrees, references);
 
         var dirtySet = dirty
             .Select(d => d.Replace('\\', '/'))
@@ -246,7 +251,7 @@ public static partial class Indexer
         previous.Edges.RemoveAll(e => retired.Contains(e.From));
         previous.InvalidateLookups();
 
-        var builder = new Builder(previous, compilation, new ProjectLocator(root));
+        var builder = new Builder(previous, compilations, new ProjectLocator(root));
         builder.Recycle = recycle;
         builder.OnlyFiles = dirtySet;
         builder.Seed();

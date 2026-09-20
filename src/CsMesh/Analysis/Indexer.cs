@@ -143,7 +143,7 @@ public static partial class Indexer
         """;
 
     /// <summary>
-    /// Global using sets to compile, one per project rather than every obj/ directory on disk.
+    /// Global using trees to compile, one project at a time.
     ///
     /// Read from the project's chosen target framework on purpose: a project retargeted from net8
     /// to net10 leaves both <c>obj/Debug/net8.0</c> and <c>obj/Debug/net10.0</c> behind, and the
@@ -155,47 +155,52 @@ public static partial class Indexer
     /// namespaces only for a Web project. A repository with no csproj at all keeps the historic
     /// one-size-fits-all set, since there is no project to read a framework or an opt-in from.
     /// </summary>
-    private static List<string> GlobalUsingSets(string root, ProjectScope scope)
+    private static List<OwnedTree> GlobalUsingTrees(ProjectScope scope, CSharpParseOptions parseOptions)
     {
-        var result = new List<string>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<OwnedTree>();
 
-        var projects = ProjectDirectories(root);
-        if (projects.Count == 0)
+        if (!scope.HasProjects)
         {
-            result.Add(ImplicitUsings);
+            result.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(ImplicitUsings, parseOptions, path: "<global-usings>"),
+                new[] { "" }));
             return result;
         }
 
-        var live = new HashSet<string>(scope.LiveDirectories, StringComparer.OrdinalIgnoreCase);
-
-        foreach (var projectDirectory in projects)
+        var index = 0;
+        foreach (var projectDirectory in scope.LiveDirectories)
         {
-            var csproj = ProjectTfm.Single(projectDirectory);
-            if (csproj is null) continue;
-
-            var files = GlobalUsingFilesIn(projectDirectory, ProjectTfm.Choose(projectDirectory, "obj"));
-            var found = false;
-            foreach (var file in files)
+            foreach (var text in ProjectGlobalUsingTexts(projectDirectory))
             {
-                string text;
-                try { text = File.ReadAllText(file); } catch { continue; }
-
-                found = true;
-                if (seen.Add(text)) result.Add(text);
+                result.Add(new OwnedTree(
+                    CSharpSyntaxTree.ParseText(text, parseOptions, path: $"<global-usings-{index++}>"),
+                    new[] { projectDirectory }));
             }
-
-            // Only a project in scope may contribute a generated set it does not have. Synthesizing
-            // for an out-of-scope project would put its usings into the compilation the same way its
-            // sources were once pulled in, which the scope filter exists to prevent.
-            if (found || !live.Contains(projectDirectory)) continue;
-            if (!ProjectTfm.ImplicitUsingsEnabled(csproj)) continue;
-
-            var synthesized = ProjectTfm.Synthesize(csproj);
-            if (seen.Add(synthesized)) result.Add(synthesized);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The SDK global-using sets for one project: what the build generated for its chosen target
+    /// framework, or the set its ImplicitUsings and Sdk imply when no build wrote one. A source
+    /// global-using file is not here; it is an ordinary owned .cs and arrives with the source.
+    /// </summary>
+    private static List<string> ProjectGlobalUsingTexts(string projectDirectory)
+    {
+        var csproj = ProjectTfm.Single(projectDirectory);
+        if (csproj is null) return [];
+
+        var texts = new List<string>();
+        foreach (var file in GlobalUsingFilesIn(projectDirectory, ProjectTfm.Choose(projectDirectory, "obj")))
+        {
+            try { texts.Add(File.ReadAllText(file)); } catch { /* unreadable contributes nothing */ }
+        }
+
+        if (texts.Count == 0 && ProjectTfm.ImplicitUsingsEnabled(csproj))
+            texts.Add(ProjectTfm.Synthesize(csproj));
+
+        return texts.Distinct(StringComparer.Ordinal).ToList();
     }
 
     /// <summary>Generated global-usings files for one project under its chosen target framework.</summary>
@@ -224,26 +229,6 @@ public static partial class Indexer
         }
 
         return result;
-    }
-
-    /// <summary>Directories holding a csproj, excluding anything under bin/ or obj/.</summary>
-    private static List<string> ProjectDirectories(string root)
-    {
-        try
-        {
-            return Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories)
-                .Where(p => !p.Replace('\\', '/').Contains("/bin/", StringComparison.OrdinalIgnoreCase))
-                .Where(p => !p.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase))
-                .Select(Path.GetDirectoryName)
-                .Where(d => d is not null)
-                .Select(d => d!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-        catch
-        {
-            return [];
-        }
     }
 
     /// <summary>
@@ -383,9 +368,9 @@ public static partial class Indexer
     /// until some unrelated edit happens to touch the same file again. Skipping leaves the .razor
     /// file untracked instead, which is the honest state: unknown, not confidently wrong.
     /// </summary>
-    private static (List<(string RazorPath, string Text)> Sources, int Stale) CollectGeneratedRazorSources(ProjectScope scope)
+    private static (List<(string ProjectDir, string RazorPath, string Text)> Sources, int Stale) CollectGeneratedRazorSources(ProjectScope scope)
     {
-        var result = new List<(string, string)>();
+        var result = new List<(string, string, string)>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var stale = 0;
 
@@ -413,7 +398,7 @@ public static partial class Indexer
                     continue;
                 }
 
-                result.Add((razorPath, text));
+                result.Add((projectDir, razorPath, text));
             }
         }
 
@@ -433,10 +418,10 @@ public static partial class Indexer
     /// last build wrote; an edited source still marks its own file [STALE], and a clean rebuild is
     /// what refreshes the generated half. A file that cannot be read is skipped rather than counted.
     /// </summary>
-    private static (List<(string File, string Text)> Sources, int Unreadable) CollectGeneratedSources(
+    private static (List<(string ProjectDir, string File, string Text)> Sources, int Unreadable) CollectGeneratedSources(
         string root, ProjectScope scope)
     {
-        var result = new List<(string, string)>();
+        var result = new List<(string, string, string)>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var unreadable = 0;
 
@@ -451,7 +436,7 @@ public static partial class Indexer
                 try { text = File.ReadAllText(generated); }
                 catch { unreadable++; continue; }
 
-                result.Add((generated, text));
+                result.Add((projectDir, generated, text));
             }
         }
 
@@ -464,7 +449,7 @@ public static partial class Indexer
         var files = EnumerateSourceFiles(root, scope).ToList();
         progress?.Invoke($"parsing {files.Count} files");
 
-        var trees = new List<SyntaxTree>(files.Count);
+        var owned = new List<OwnedTree>(files.Count);
         var stamps = new List<FileStamp>(files.Count);
         var dirs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
@@ -475,7 +460,10 @@ public static partial class Indexer
             string text;
             try { text = File.ReadAllText(file); } catch { continue; }
 
-            trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: file));
+            owned.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(text, parseOptions, path: file),
+                OwnershipOf(scope, file)));
+
             var fileInfo = new FileInfo(file);
             stamps.Add(new FileStamp
             {
@@ -503,9 +491,11 @@ public static partial class Indexer
         // path, so this one substitution is what keeps components pointing at source a user can
         // actually open instead of an obj/ path that a clean deletes.
         var (razorSources, staleRazorSources) = CollectGeneratedRazorSources(scope);
-        foreach (var (razorPath, text) in razorSources)
+        foreach (var (projectDir, razorPath, text) in razorSources)
         {
-            trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath));
+            owned.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath),
+                new[] { projectDir }));
 
             var razorInfo = new FileInfo(razorPath);
             stamps.Add(new FileStamp
@@ -523,9 +513,11 @@ public static partial class Indexer
         // EnumerateSourceFiles stays: these are added through their own path so the two sets cannot
         // collide, exactly as Razor already did.
         var (generatedSources, _) = CollectGeneratedSources(root, scope);
-        foreach (var (generated, text) in generatedSources)
+        foreach (var (projectDir, generated, text) in generatedSources)
         {
-            trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: generated));
+            owned.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(text, parseOptions, path: generated),
+                new[] { projectDir }));
 
             var generatedInfo = new FileInfo(generated);
             stamps.Add(new FileStamp
@@ -542,18 +534,16 @@ public static partial class Indexer
             try { dirs["."] = Directory.GetLastWriteTimeUtc(root).Ticks; } catch { }
         }
 
-        // Without these the compilation has no System namespace and almost nothing binds.
-        var globalUsings = GlobalUsingSets(root, scope);
-
-        for (var i = 0; i < globalUsings.Count; i++)
-        {
-            trees.Add(CSharpSyntaxTree.ParseText(globalUsings[i], parseOptions, path: $"<global-usings-{i}>"));
-        }
+        // Each project gets its own SDK set, and a repository with no projects keeps the historic
+        // one-size-fits-all set. A source global-using file is an ordinary owned .cs and arrives
+        // through the source set above, so only the generated and synthesized sets are here.
+        var globalUsings = GlobalUsingTrees(scope, parseOptions);
+        owned.AddRange(globalUsings);
 
         var references = ReferenceSet(root, scope, out var referenceReport);
         progress?.Invoke($"compiling against {references.Count} references");
 
-        var compilation = CreateCompilations("csmesh.index", trees, references);
+        var compilations = CreateCompilations(root, scope, owned, references);
 
         var graph = new Graph
         {
@@ -575,6 +565,7 @@ public static partial class Indexer
             ExcludedLooseFiles = CountExcludedLooseFiles(root, scope),
             UnevaluableCompileItems = scope.UnevaluableCompileItems,
             ProjectReferences = scope.References,
+            ProjectCycles = compilations.Cycles,
             Dirs = dirs.Select(kv => new DirStamp { Path = kv.Key, Ticks = kv.Value }).ToList(),
             ReferenceCount = references.Count,
             RuntimeReferences = referenceReport.Runtime,
@@ -585,9 +576,9 @@ public static partial class Indexer
             ShadowedOutputs = referenceReport.Shadowed
         };
 
-        CaptureDiagnostics(compilation, graph);
+        CaptureDiagnostics(compilations, graph);
 
-        var builder = new Builder(graph, compilation, new ProjectLocator(root));
+        var builder = new Builder(graph, compilations, new ProjectLocator(root));
         builder.Pass1_Declarations(progress);
         builder.Pass2_Bodies(progress);
         builder.Pass3_Indirection(progress);
@@ -599,28 +590,6 @@ public static partial class Indexer
         graph.AmbiguousMessageDispatches = builder.AmbiguousMessageDispatches;
         graph.UnmatchedMessageDispatches = builder.UnmatchedMessageDispatches;
         return graph;
-    }
-
-    /// <summary>
-    /// Builds the compilation(s) both the full index and the incremental refresh bind against.
-    ///
-    /// The two paths used to construct their compilation separately, so a change to how one was
-    /// made could leave the other behind and two graphs with different rules. One entry point is
-    /// what lets the per-project split switch both at once. For now it returns the single
-    /// whole-solution compilation the indexer has always used.
-    /// </summary>
-    private static CSharpCompilation CreateCompilations(
-        string name,
-        IEnumerable<SyntaxTree> trees,
-        IEnumerable<MetadataReference> references)
-    {
-        // ConsoleApplication so that top-level statements bind to a real entry point instead of
-        // being rejected outright. Diagnostics are advisory here; we never require a clean build.
-        return CSharpCompilation.Create(
-            name,
-            trees,
-            references,
-            new CSharpCompilationOptions(OutputKind.ConsoleApplication, allowUnsafe: true));
     }
 
     /// <summary>
@@ -657,7 +626,7 @@ public static partial class Indexer
     }
 
     /// <summary>
-    /// What the compiler thinks is wrong with the reference set.
+    /// What the compiler thinks is wrong, per project.
     ///
     /// The indexer treats diagnostics as advisory and indexes whatever binds, which is the right
     /// default -- a graph from a half-compiling tree is still useful. But when resolution is poor
@@ -666,35 +635,43 @@ public static partial class Indexer
     /// holds a compiled copy of the very source being parsed. Those two call for opposite fixes,
     /// and guessing between them wasted a long time.
     ///
+    /// One compilation per project also makes the project the unit that matters: a diagnostic is
+    /// about one project's references, and a flat list mixed eight projects' errors into one pile.
+    /// Each project keeps its own top eight by count; doctor decides how many to show.
+    ///
     /// Declaration diagnostics only: method bodies produce thousands and none of them are about
     /// references.
     /// </summary>
-    private static void CaptureDiagnostics(CSharpCompilation compilation, Graph graph)
+    private static void CaptureDiagnostics(CompilationSet compilations, Graph graph)
     {
-        try
+        foreach (var (project, compilation) in compilations.Named)
         {
-            var interesting = compilation.GetDeclarationDiagnostics()
-                .Where(d => d.Severity == DiagnosticSeverity.Error)
-                .GroupBy(d => d.Id)
-                .OrderByDescending(x => x.Count())
-                .Take(8);
-
-            foreach (var group in interesting)
+            try
             {
-                var sample = group.First().GetMessage();
-                if (sample.Length > 160) sample = sample[..157] + "...";
-                graph.Diagnostics.Add(new CompilerNote
+                var interesting = compilation.GetDeclarationDiagnostics()
+                    .Where(d => d.Severity == DiagnosticSeverity.Error)
+                    .GroupBy(d => d.Id)
+                    .OrderByDescending(x => x.Count())
+                    .Take(8);
+
+                foreach (var group in interesting)
                 {
-                    Id = group.Key,
-                    Count = group.Count(),
-                    Message = sample
-                });
+                    var sample = group.First().GetMessage();
+                    if (sample.Length > 160) sample = sample[..157] + "...";
+                    graph.Diagnostics.Add(new CompilerNote
+                    {
+                        Id = group.Key,
+                        Count = group.Count(),
+                        Message = sample,
+                        Project = project
+                    });
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            // Diagnostics are a nicety; failing to collect them must not fail an index.
-            Dbg.Log($"diagnostics unavailable: {ex.Message}");
+            catch (Exception ex)
+            {
+                // Diagnostics are a nicety; failing to collect them must not fail an index.
+                Dbg.Log($"diagnostics unavailable for '{project}': {ex.Message}");
+            }
         }
     }
 
@@ -987,7 +964,7 @@ public static partial class Indexer
         public int Shadowed;
     }
 
-    private sealed class Builder(Graph g, CSharpCompilation comp, ProjectLocator projects)
+    private sealed class Builder(Graph g, CompilationSet comps, ProjectLocator projects)
     {
         private static readonly SymbolDisplayFormat KeyFormat = SymbolDisplayFormat.FullyQualifiedFormat;
 
@@ -1336,7 +1313,9 @@ public static partial class Indexer
 
             var assembly = type.ContainingAssembly?.Name ?? "";
             if (assembly.Length == 0) return;
-            if (assembly == comp.AssemblyName) return;
+            // The comparison is against the assembly of the compilation that owns this tree, so a
+            // type declared in a referenced project is not mistaken for one declared here.
+            if (assembly == comps.AssemblyNameOf(at.SyntaxTree)) return;
             if (FrameworkAssemblyPrefixes.Any(p => assembly.StartsWith(p, StringComparison.Ordinal))) return;
 
             var name = type.OriginalDefinition.Name;
@@ -1436,10 +1415,10 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 1: declarations");
 
-            foreach (var tree in comp.SyntaxTrees)
+            foreach (var tree in comps.BindOrder)
             {
                 if (Skip(tree)) continue;
-                var model = comp.GetSemanticModel(tree);
+                var model = comps.ModelOf(tree);
 
                 // Enums and delegates derive from BaseTypeDeclarationSyntax / MemberDeclarationSyntax,
                 // not from TypeDeclarationSyntax, so a loop over TypeDeclarationSyntax alone leaves
@@ -1824,7 +1803,7 @@ public static partial class Indexer
             // using-imported request type keeps its real identity instead of collapsing to a name.
             if (decl.BaseList != null)
             {
-                var model = comp.GetSemanticModel(decl.SyntaxTree);
+                var model = comps.ModelOf(decl.SyntaxTree);
                 foreach (var baseType in decl.BaseList.Types)
                 {
                     if (baseType.Type is not GenericNameSyntax gen) continue;
@@ -1887,10 +1866,10 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 2: call edges");
 
-            foreach (var tree in comp.SyntaxTrees)
+            foreach (var tree in comps.BindOrder)
             {
                 if (Skip(tree)) continue;
-                var model = comp.GetSemanticModel(tree);
+                var model = comps.ModelOf(tree);
                 var root = tree.GetRoot();
 
                 // Top-level statements have no containing method declaration. Without this branch

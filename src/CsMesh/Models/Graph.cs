@@ -230,6 +230,14 @@ public sealed class Graph
     public List<CompilerNote> Diagnostics { get; set; } = [];
 
     /// <summary>
+    /// ProjectReference cycles that had to be broken to order the per-project compilations, each as
+    /// "dependent -&gt; dependency". A cycle is legal in a csproj graph only in the sense that
+    /// nothing stops it being written; the compilation for the broken edge is the one that cannot
+    /// exist, and naming it is the difference between a quiet guess and a stated limit.
+    /// </summary>
+    public List<string> ProjectCycles { get; set; } = [];
+
+    /// <summary>
     /// Registration helpers that bind by convention rather than by name: Scrutor's Scan, MediatR's
     /// assembly registration, FluentValidation, AutoMapper. Recorded so 'doctor' can say the
     /// container is wired by scanning instead of reporting no bindings at all, which reads as a
