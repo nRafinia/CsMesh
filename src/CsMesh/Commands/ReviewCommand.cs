@@ -55,16 +55,9 @@ public static class ReviewCommand
             return Fail(result, writer, json, Exit.NoIndex, $"no usable index ({problem}). run: csmesh index");
         }
 
-        // Both sides of a review are graphs; the working tree is never read, so working-tree
-        // staleness is the wrong question here. The one that matters is whether the index standing
-        // in for "current" was built at HEAD. If it was built at an older commit, findings can be
-        // missing changes the index never saw and can report changes already gone -- wrong, not
-        // merely thin. Reserved rather than droppable, for the same reason as QueryCommand's notes.
-        var gap = CommitGapNotice(root, current);
-        if (gap != null)
+        if (RefuseOnCommitGap(root, current, accept, result, writer, json) is { } gapExit)
         {
-            result.Notes.Add(gap);
-            if (!json) writer.AddOpeningNote(gap);
+            return gapExit;
         }
 
         var findings = Queries.DiffFindings(current, baseGraph, includeCalls);
@@ -143,19 +136,53 @@ public static class ReviewCommand
     }
 
     /// <summary>
-    /// The warning when the current index cannot be shown to be at HEAD, or null when it can. An
-    /// empty <see cref="Graph.BuiltFromCommit"/> is included deliberately: an index that records no
-    /// commit cannot be shown current, and silence there is the same failure in a different costume
-    /// as a known gap. The text names the remedy and says the findings may be wrong, not merely old.
+    /// Refuses the run when the current index cannot be shown to be at HEAD, returning the exit code
+    /// to stop with, or null when the review may proceed.
     /// </summary>
+    /// <remarks>
+    /// Both sides of a review are graphs; the working tree is never read, so working-tree staleness
+    /// is the wrong question here. The one that matters is whether the index standing in for
+    /// "current" was built at HEAD. When it was not, the comparison is wrong rather than thin: the
+    /// index may never have seen the change under review, or may still hold one that was reverted.
+    /// A warning would let a gate pass the very change it exists to catch, so the command refuses
+    /// instead.
+    ///
+    /// The exit is <see cref="Exit.NoIndex"/>: the index exists but cannot answer this question,
+    /// which is what 4 already tells a caller to fix with 'csmesh index'. <see cref="Exit.Changed"/>
+    /// is not reused -- 5 gates a merge, so a gap would block for the right outcome but the wrong
+    /// reason, and a caller treating 5 as a findings list would act on a list that does not exist.
+    /// --accept under a gap is worse still: it writes findings from the wrong current side into the
+    /// baseline, and every later review inherits the error silently, so it is a usage error (64).
+    ///
+    /// Auto-healing is deliberately not offered. Review already builds a base graph in a disposable
+    /// worktree; silently re-indexing the current side would turn a read command into one that
+    /// rewrites the user's own index as a side effect, at exactly the moment the user's assumptions
+    /// are already wrong. The remedy is one command and the message names it.
+    ///
+    /// An empty <see cref="Graph.BuiltFromCommit"/> takes the same path: an index that records no
+    /// commit cannot be shown current, and silence there is the same failure in a different costume.
+    /// </remarks>
+    private static int? RefuseOnCommitGap(
+        string root, Graph current, bool accept, QueryResult result, BudgetWriter writer, bool json)
+    {
+        var gap = CommitGapNotice(root, current);
+        if (gap == null) return null;
+
+        return accept
+            ? Fail(result, writer, json, Exit.Usage,
+                gap + ". --accept is refused: it would record findings from the wrong current side")
+            : Fail(result, writer, json, Exit.NoIndex, gap);
+    }
+
+    /// <summary>Describes why the current index is not at HEAD, naming the remedy, or null.</summary>
     private static string? CommitGapNotice(string root, Graph current)
     {
-        const string tail = " run: csmesh index. Findings below may be missing changes or report changes that are already gone";
+        const string remedy = " run: csmesh index, then re-run review";
 
         var built = current.BuiltFromCommit;
         if (built.Length == 0)
         {
-            return "# this index records no commit, so it cannot be shown current;" + tail;
+            return $"# this index records no commit, so it cannot be shown current;{remedy}";
         }
 
         if (!GitTool.TryRun(root, "rev-parse HEAD", out var headOut, out _, out _)) return null;
@@ -165,7 +192,7 @@ public static class ReviewCommand
         if (head.StartsWith(built, StringComparison.OrdinalIgnoreCase)) return null;
 
         var shortHead = head.Length > built.Length ? head[..built.Length] : head;
-        return $"# index built at {built}, HEAD is {shortHead};" + tail;
+        return $"# index built at {built}, HEAD is {shortHead};{remedy}";
     }
 
     // ------------------------------------------------------------------ base graph, cached per commit
