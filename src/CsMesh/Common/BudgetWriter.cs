@@ -58,7 +58,7 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     /// <summary>
     /// The size the answer wanted on the first refusal: the emitted total plus the line that did not
     /// fit. Lower bound, not the full answer -- a query returns at the first refusal, so everything
-    /// after it is never measured. Frozen at that moment, so the forced "OVER BUDGET" prose that
+    /// after it is never measured. Frozen at that moment, so the forced "INCOMPLETE" prose that
     /// follows does not inflate it. Equal to <see cref="Tokens"/> when nothing overflowed.
     /// </summary>
     public int WouldBeTokens => Overflowed ? _wouldBeTokens : _tokens;
