@@ -179,4 +179,42 @@ public sealed class IncrementalIndexTests(GraphFixture fixture) : IClassFixture<
         Assert.All(graph.Nodes, n => Assert.NotEqual(string.Empty, n.Key));
         Assert.Equal(graph.Nodes.Count, graph.Nodes.Select(n => n.Key).Distinct(StringComparer.Ordinal).Count());
     }
+
+    /// <summary>
+    /// A nested project that is out of scope must not have its files pulled into the parent's
+    /// compilation, including when one of them is the edited file this pass was called for. The
+    /// scope used to be re-derived from the parent, so an edit under the nested project re-entered
+    /// the parent graph as if it were source of the parent.
+    /// </summary>
+    [Fact]
+    public void An_edit_under_an_out_of_scope_nested_project_does_not_enter_the_parent()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "csmesh-nested-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(root, "src", "P", "N"));
+
+        File.WriteAllText(Path.Combine(root, "src", "P", "P.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>");
+        File.WriteAllText(Path.Combine(root, "src", "P", "Top.cs"), "namespace P; public class Top { }");
+        File.WriteAllText(Path.Combine(root, "src", "P", "N", "N.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+        var nested = Path.Combine(root, "src", "P", "N", "Nested.cs");
+        File.WriteAllText(nested, "namespace N; public class Nested { }");
+
+        try
+        {
+            var before = Indexer.Build(root);
+            Assert.Contains(before.Nodes, n => n.File.Contains("Top.cs", StringComparison.Ordinal));
+            Assert.DoesNotContain(before.Nodes, n => n.File.Contains("Nested.cs", StringComparison.Ordinal));
+
+            File.AppendAllText(nested, "\n// edited\n");
+
+            var after = Indexer.BuildIncremental(before, new[] { Path.GetRelativePath(root, nested) });
+
+            Assert.NotNull(after);
+            Assert.DoesNotContain(after!.Nodes, n => n.File.Contains("Nested.cs", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* temp dir */ }
+        }
+    }
 }

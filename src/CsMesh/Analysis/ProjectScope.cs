@@ -87,6 +87,16 @@ public sealed class ProjectScope
     /// True when a file belongs to a project that is part of the build, or to no project at all.
     /// A loose .cs file with no csproj above it is kept: there is nothing to judge it by, and
     /// silently dropping it would be worse than including it.
+    ///
+    /// The nearest ancestor directory that carries a .csproj owns the file, and the file is included
+    /// exactly when that project is in scope. Returning true at the first live ancestor instead let a
+    /// parent project claim a nested project's sources: every
+    /// src/tests/CsMesh.Tests/Fixtures/*/Bus.cs was compiled into CsMesh.Tests even though each
+    /// Fixtures/* directory has its own Fixture.csproj, so Demo.IMediator was declared eight times in
+    /// one compilation (CS0101 x14, CS0111 x6), the fixture projects' own types never existed as
+    /// themselves, and a query like impl IMediator answered from a graph half of which was duplicate
+    /// noise. This mirrors the nearest-project walk in Indexer.ProjectLocator.For, which already
+    /// decides which project a file belongs to.
     /// </summary>
     public bool Includes(string file)
     {
@@ -94,25 +104,26 @@ public sealed class ProjectScope
 
         var dir = Directory.GetParent(file);
         var stop = Path.GetFullPath(Root);
-        var sawProject = false;
 
         while (dir != null && dir.FullName.StartsWith(stop, StringComparison.OrdinalIgnoreCase))
         {
-            if (_live.Contains(dir.FullName)) return true;
-
-            try
-            {
-                if (dir.EnumerateFiles("*.csproj").Any()) sawProject = true;
-            }
-            catch
-            {
-                // Unreadable directory: treat as no project and let the file through.
-            }
-
+            if (HasProjectFile(dir)) return _live.Contains(dir.FullName);
             dir = dir.Parent;
         }
 
-        return !sawProject;
+        // No csproj anywhere above it: a loose source file with nothing to judge it by.
+        return true;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="directory"/> directly holds a .csproj. An unreadable directory is
+    /// unknown rather than empty, so the walk continues upward instead of claiming the file for a
+    /// project that may not be the nearest one.
+    /// </summary>
+    private static bool HasProjectFile(DirectoryInfo directory)
+    {
+        try { return directory.EnumerateFiles("*.csproj").Any(); }
+        catch { return false; }
     }
 
     /// <summary>
