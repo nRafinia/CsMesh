@@ -564,6 +564,7 @@ public static partial class Indexer
             ScopeDecision = scope.Decision,
             ExcludedLooseFiles = CountExcludedLooseFiles(root, scope),
             UnevaluableCompileItems = scope.UnevaluableCompileItems,
+            UnevaluableInternalsVisibleTo = compilations.UnevaluableInternalsVisibleTo,
             ProjectReferences = scope.References,
             ProjectCycles = compilations.Cycles,
             Dirs = dirs.Select(kv => new DirStamp { Path = kv.Key, Ticks = kv.Value }).ToList(),

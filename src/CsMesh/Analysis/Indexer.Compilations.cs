@@ -45,11 +45,14 @@ public static partial class Indexer
         /// <summary>Each compilation with the name to report against it, for diagnostics.</summary>
         public List<(string Project, CSharpCompilation Compilation)> Named { get; } = [];
 
+        /// <summary>InternalsVisibleTo items naming a property this parser does not evaluate.</summary>
+        public int UnevaluableInternalsVisibleTo { get; set; }
+
         public SemanticModel ModelOf(SyntaxTree tree) => CompilationOf[tree].GetSemanticModel(tree);
 
         /// <summary>The assembly name of the compilation a tree belongs to, or empty.</summary>
         public string AssemblyNameOf(SyntaxTree tree) =>
-            CompilationOf.TryGetValue(tree, out var compilation) ? compilation.AssemblyName : "";
+            CompilationOf.TryGetValue(tree, out var compilation) ? compilation.AssemblyName ?? "" : "";
     }
 
     /// <summary>One in-scope project and the trees its compilation holds.</summary>
@@ -57,7 +60,13 @@ public static partial class Indexer
     {
         public string Directory { get; init; } = string.Empty;
         public string Csproj { get; init; } = string.Empty;
+
+        /// <summary>The MSBuild assembly name, before any disambiguation.</summary>
+        public string RealName { get; set; } = "csmesh.index";
+
+        /// <summary>The name the compilation is actually created with.</summary>
         public string AssemblyName { get; set; } = "csmesh.index";
+
         public List<SyntaxTree> Trees { get; } = [];
 
         /// <summary>In-scope projects this one declares a ProjectReference to.</summary>
@@ -159,6 +168,8 @@ public static partial class Indexer
             foreach (var owner in owners) units[owner].Trees.Add(entry.Tree);
         }
 
+        AddInternalsVisibleTo(root, units, set);
+
         var created = new Dictionary<string, CSharpCompilation>(StringComparer.OrdinalIgnoreCase);
         var closureCache = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
@@ -215,9 +226,75 @@ public static partial class Indexer
         foreach (var unit in units.Values)
         {
             var name = byDirectory[unit.Directory];
-            unit.AssemblyName = counts[name] == 1 ? name : $"{name}@{Relative(root, unit.Directory)}";
+            unit.RealName = name;
+            unit.AssemblyName = counts[name] == 1
+                ? name
+                : DisambiguatedName(name, Relative(root, unit.Directory));
         }
     }
+
+    /// <summary>
+    /// A deterministic, valid assembly name for a project whose natural name is shared. The relative
+    /// path is legible but its separators are not legal in an assembly name, so anything but a
+    /// letter, digit, dot, underscore or dash becomes an underscore; a short hash of the exact path
+    /// keeps two paths that sanitise to the same text distinct. Roslyn rejects a '/' in a name with
+    /// CS8203, which is what an earlier rule using the raw path produced.
+    /// </summary>
+    private static string DisambiguatedName(string name, string relativePath)
+    {
+        var readable = new string(relativePath
+            .Select(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-' ? c : '_')
+            .ToArray());
+
+        var hash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(relativePath)))[..6];
+
+        return $"{name}_{readable}_{hash}";
+    }
+
+    /// <summary>
+    /// Synthesizes each project's InternalsVisibleTo attributes into that project's compilation.
+    ///
+    /// IVT is matched against the friend's assembly name -- which for a source compilation is its
+    /// compilation name -- so a friend whose real name was disambiguated (two projects share it)
+    /// must be named by the compilation name it actually got, not the real one the csproj wrote.
+    /// ResolveFriend does that translation when the real name picks out exactly one in-scope
+    /// project; an ambiguous or external friend keeps the written text, since there is no single
+    /// compilation to point at. The target's own name being disambiguated does not change its
+    /// attributes, so a friend still reads its internals through the CompilationReference.
+    /// </summary>
+    private static void AddInternalsVisibleTo(
+        string root, Dictionary<string, ProjectUnit> units, CompilationSet set)
+    {
+        var compilationNameByRealName = units.Values
+            .GroupBy(unit => unit.RealName, StringComparer.Ordinal)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single().AssemblyName, StringComparer.Ordinal);
+
+        foreach (var unit in units.Values)
+        {
+            if (unit.Csproj.Length == 0) continue;
+
+            var (friends, unevaluable) = InternalsVisibleTo.Read(unit.Csproj);
+            set.UnevaluableInternalsVisibleTo += unevaluable;
+            if (friends.Count == 0) continue;
+
+            var attributes = friends
+                .Select(friend => InternalsVisibleTo.Resolve(friend, compilationNameByRealName))
+                .Select(friend => $"[assembly: System.Runtime.CompilerServices.InternalsVisibleTo(\"{Escape(friend)}\")]");
+
+            // Preview, because every other tree in the project is parsed with it and Roslyn refuses
+            // a compilation whose trees disagree on the language version.
+            unit.Trees.Add(CSharpSyntaxTree.ParseText(
+                string.Join("\n", attributes),
+                new CSharpParseOptions(LanguageVersion.Preview),
+                path: $"<internals-visible-to:{Relative(root, unit.Directory)}>"));
+        }
+    }
+
+    private static string Escape(string value) =>
+        value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     /// <summary>
     /// Dependencies before dependents. When no project is ready every remaining project is in a

@@ -155,6 +155,13 @@ public sealed class Graph
     public int UnevaluableCompileItems { get; set; }
 
     /// <summary>
+    /// InternalsVisibleTo items naming an MSBuild property the parser does not evaluate. Each is a
+    /// friend relationship that could not be turned into an attribute, so it is counted rather than
+    /// guessed at.
+    /// </summary>
+    public int UnevaluableInternalsVisibleTo { get; set; }
+
+    /// <summary>
     /// Declared ProjectReference edges, by project name. The authority on what depends on what;
     /// symbol edges answer a different question and point the other way for dispatch.
     /// </summary>
