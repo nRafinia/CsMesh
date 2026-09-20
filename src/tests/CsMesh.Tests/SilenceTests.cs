@@ -119,4 +119,24 @@ public sealed class SilenceTests : IClassFixture<GraphFixture>
 
         Assert.Contains("Absent from the graph is not the same as absent from the codebase.", Text(w));
     }
+
+    /// <summary>
+    /// The closing line is forced precisely so it survives any budget. It did not: the separator and
+    /// heading above it were guarded Adds, and when either was refused the method returned before the
+    /// forced line ran. Every integer, because the separator costs one token and a step above one can
+    /// straddle the single budget at which it is refused.
+    /// </summary>
+    [Fact]
+    public void The_closing_line_survives_a_separator_that_does_not_fit()
+    {
+        var node = _f.Node("CompanyB.Handlers.CreateOrderHandler.Handle");
+
+        for (var budget = 40; budget <= 800; budget++)
+        {
+            var w = Writer(budget);
+            Queries.Silence(_f.Graph, node, null, 12, w, []);
+
+            Assert.Contains("Absent from the graph is not the same as absent from the codebase.", Text(w));
+        }
+    }
 }

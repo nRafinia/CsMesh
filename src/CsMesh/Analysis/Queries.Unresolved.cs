@@ -102,7 +102,7 @@ public static partial class Queries
                 continue;
             }
 
-            if (!w.Add("")) return TooMany(w, sites.Count);
+            w.Separator();
             if (!w.Add($"{group.Key}  ({group.Count()})")) return TooMany(w, sites.Count);
 
             var shown = 0;
@@ -133,7 +133,9 @@ public static partial class Queries
             groupsShown++;
         }
 
-        if (!w.Add("")) return Exit.Ok;
+        // A separator, so it yields rather than ends the query: the withheld footer below has the
+        // reserve to use and must still be attempted.
+        w.Separator();
         w.Add(Advice(sites));
 
         if (capped.Count > 0)

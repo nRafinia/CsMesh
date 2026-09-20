@@ -102,6 +102,23 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     }
 
     /// <summary>
+    /// A blank separator between sections. Cosmetic, so it never ends a query: when it does not fit
+    /// it is skipped and the caller carries on to the line that actually matters. Guarded as
+    /// <c>if (!w.Add("")) return ...</c> it was read as the end of the answer, and the closing line
+    /// behind it was never attempted -- a capped answer lost the footer naming what it withheld
+    /// whenever the separator landed exactly on the content boundary. A separator costs one token
+    /// (Estimate("") == 1), so that window is one token wide and easy to step over.
+    /// </summary>
+    public void Separator()
+    {
+        var cost = Estimate("");
+        if (_tokens + cost > ContentCap) return;
+
+        _lines.Add("");
+        _tokens += cost;
+    }
+
+    /// <summary>
     /// Writes the line that closes an answer: the completion marker on overflow, or the footer
     /// naming what a bounded sample withheld. This is the one line allowed past the content cap,
     /// because a closing line dropped for room is exactly the silent truncation the reserve exists

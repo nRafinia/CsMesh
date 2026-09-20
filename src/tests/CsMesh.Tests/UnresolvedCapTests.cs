@@ -90,12 +90,17 @@ public sealed class UnresolvedCapTests
     /// The footer is the whole point of the bound: without it a capped answer reads as complete.
     /// Written as a content note it was the first thing dropped when the rows filled the content
     /// cap -- reachable at the default on a real repo -- so it goes through the reserve as the
-    /// closing line. The sweep is the honest check: a few round budgets would miss the window.
+    /// closing line.
+    ///
+    /// Every integer from 40 to 1400, no step: a blank separator costs one token (Estimate("") == 1),
+    /// so the window in which it is refused while the footer still fits is exactly one token wide.
+    /// Any step above one can straddle it -- the earlier step of five skipped budget 247, which is
+    /// where the footer was lost -- so step one is the only spacing that cannot miss it.
     /// </summary>
     [Fact]
     public void The_withheld_footer_survives_a_budget_that_barely_fits_the_rows()
     {
-        for (var budget = 60; budget <= 1200; budget += 5)
+        for (var budget = 40; budget <= 1400; budget++)
         {
             var w = Writer(budget);
             var exit = Queries.Unresolved(ManySites(), null, null, w, []);
