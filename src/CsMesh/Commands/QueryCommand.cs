@@ -64,9 +64,11 @@ public static class QueryCommand
 
         if (dirty.Count > 0)
         {
+            // Reserved, not droppable: a stale graph can hide a whole change, and no per-row [STALE]
+            // tag can mark a row that was never built. See the commit that moved this off AddNote.
             var note = $"# index is {dirty.Count} file(s) behind working tree; rows from those files are marked [STALE]. run: csmesh index";
             result.Notes.Add(note);
-            if (!json) writer.AddNote(note);
+            if (!json) writer.AddOpeningNote(note);
         }
 
         // A version gap is invisible in the rows themselves -- every line looks as confident as

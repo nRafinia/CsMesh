@@ -102,23 +102,6 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     }
 
     /// <summary>
-    /// A pre-query note that yields: content, not a result. It respects the content cap and is
-    /// dropped rather than run into the room the completion marker needs. A note that must not be
-    /// dropped -- a version gap, where every row would otherwise read as confident as any other --
-    /// goes through <see cref="AddOpeningNote"/> instead.
-    /// </summary>
-    public bool AddNote(string line)
-    {
-        var cost = Estimate(line);
-        if (_contentTokens + cost > ContentCap) return false;
-
-        _lines.Add(line);
-        _tokens += cost;
-        _contentTokens += cost;
-        return true;
-    }
-
-    /// <summary>
     /// Writes a note that must survive. It draws from its own pool rather than competing with the
     /// rows: the line is shortened to <paramref name="maxTokens"/> and always emitted, and its cost
     /// is held out of the content cap and the completion-marker reserve. The query then pays for the

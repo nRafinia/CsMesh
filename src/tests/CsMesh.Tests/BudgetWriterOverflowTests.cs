@@ -51,11 +51,11 @@ public sealed class BudgetWriterOverflowTests
     /// come back unmarked -- the same failure map had, reintroduced through a different door.
     /// </summary>
     [Fact]
-    public void An_incomplete_answer_is_marked_even_when_notes_and_headers_consume_the_cap()
+    public void An_incomplete_answer_is_marked_even_when_content_and_headers_consume_the_cap()
     {
         var w = new BudgetWriter(90, BudgetWriter.CompletionMarkerReserve);
 
-        Assert.True(w.AddNote(new string('n', 120)));   // ~30 tokens against a 50-token content cap
+        Assert.True(w.Add(new string('n', 120)));        // ~30 tokens against a 50-token content cap
         w.Force(new string('h', 120));                   // forced header, past the cap
         Assert.False(w.Add("content that does not fit"));
 
