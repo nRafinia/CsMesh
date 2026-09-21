@@ -458,7 +458,16 @@ public static partial class Indexer
     public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false)
     {
         var scope = includeAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
-        var files = EnumerateSourceFiles(root, scope).ToList();
+
+        List<string> files;
+        List<IReadOnlyList<string>> owners;
+        using (Timings.Phase("enumerate+ownership"))
+        {
+            files = EnumerateSourceFiles(root, scope).ToList();
+            owners = new List<IReadOnlyList<string>>(files.Count);
+            foreach (var file in files) owners.Add(OwnershipOf(scope, file));
+        }
+
         progress?.Invoke($"parsing {files.Count} files");
 
         var owned = new List<OwnedTree>(files.Count);
@@ -467,29 +476,33 @@ public static partial class Indexer
 
         var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
 
-        foreach (var file in files)
+        using (Timings.Phase("parse"))
         {
-            string text;
-            try { text = File.ReadAllText(file); } catch { continue; }
-
-            owned.Add(new OwnedTree(
-                CSharpSyntaxTree.ParseText(text, parseOptions, path: file),
-                OwnershipOf(scope, file)));
-
-            var fileInfo = new FileInfo(file);
-            stamps.Add(new FileStamp
+            for (var i = 0; i < files.Count; i++)
             {
-                Path = Path.GetRelativePath(root, file),
-                Ticks = fileInfo.LastWriteTimeUtc.Ticks,
-                Size = fileInfo.Length
-            });
+                var file = files[i];
+                string text;
+                try { text = File.ReadAllText(file); } catch { continue; }
 
-            var dir = fileInfo.DirectoryName;
-            if (dir == null) continue;
-            var relDir = Path.GetRelativePath(root, dir);
-            if (!dirs.ContainsKey(relDir))
-            {
-                try { dirs[relDir] = Directory.GetLastWriteTimeUtc(dir).Ticks; } catch { }
+                owned.Add(new OwnedTree(
+                    CSharpSyntaxTree.ParseText(text, parseOptions, path: file),
+                    owners[i]));
+
+                var fileInfo = new FileInfo(file);
+                stamps.Add(new FileStamp
+                {
+                    Path = Path.GetRelativePath(root, file),
+                    Ticks = fileInfo.LastWriteTimeUtc.Ticks,
+                    Size = fileInfo.Length
+                });
+
+                var dir = fileInfo.DirectoryName;
+                if (dir == null) continue;
+                var relDir = Path.GetRelativePath(root, dir);
+                if (!dirs.ContainsKey(relDir))
+                {
+                    try { dirs[relDir] = Directory.GetLastWriteTimeUtc(dir).Ticks; } catch { }
+                }
             }
         }
 
@@ -502,20 +515,25 @@ public static partial class Indexer
         // node built from it -- NodeFor, SyntheticNode -- takes its File from the syntax tree's
         // path, so this one substitution is what keeps components pointing at source a user can
         // actually open instead of an obj/ path that a clean deletes.
-        var (razorSources, staleRazorSources) = CollectGeneratedRazorSources(scope);
-        foreach (var (projectDir, razorPath, text) in razorSources)
+        List<(string ProjectDir, string RazorPath, string Text)> razorSources;
+        int staleRazorSources;
+        using (Timings.Phase("generated-razor"))
         {
-            owned.Add(new OwnedTree(
-                CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath),
-                new[] { projectDir }));
-
-            var razorInfo = new FileInfo(razorPath);
-            stamps.Add(new FileStamp
+            (razorSources, staleRazorSources) = CollectGeneratedRazorSources(scope);
+            foreach (var (projectDir, razorPath, text) in razorSources)
             {
-                Path = Path.GetRelativePath(root, razorPath),
-                Ticks = razorInfo.LastWriteTimeUtc.Ticks,
-                Size = razorInfo.Length
-            });
+                owned.Add(new OwnedTree(
+                    CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath),
+                    new[] { projectDir }));
+
+                var razorInfo = new FileInfo(razorPath);
+                stamps.Add(new FileStamp
+                {
+                    Path = Path.GetRelativePath(root, razorPath),
+                    Ticks = razorInfo.LastWriteTimeUtc.Ticks,
+                    Size = razorInfo.Length
+                });
+            }
         }
 
         // Non-Razor generators: System.Text.Json, Regex, LibraryImport, LoggerMessage and the rest.
@@ -524,20 +542,24 @@ public static partial class Indexer
         // is left unresolved, or resolved to the wrong overload. The .g.cs exclusion in
         // EnumerateSourceFiles stays: these are added through their own path so the two sets cannot
         // collide, exactly as Razor already did.
-        var (generatedSources, _) = CollectGeneratedSources(root, scope);
-        foreach (var (projectDir, generated, text) in generatedSources)
+        List<(string ProjectDir, string File, string Text)> generatedSources;
+        using (Timings.Phase("generated-sources"))
         {
-            owned.Add(new OwnedTree(
-                CSharpSyntaxTree.ParseText(text, parseOptions, path: generated),
-                new[] { projectDir }));
-
-            var generatedInfo = new FileInfo(generated);
-            stamps.Add(new FileStamp
+            (generatedSources, _) = CollectGeneratedSources(root, scope);
+            foreach (var (projectDir, generated, text) in generatedSources)
             {
-                Path = Path.GetRelativePath(root, generated),
-                Ticks = generatedInfo.LastWriteTimeUtc.Ticks,
-                Size = generatedInfo.Length
-            });
+                owned.Add(new OwnedTree(
+                    CSharpSyntaxTree.ParseText(text, parseOptions, path: generated),
+                    new[] { projectDir }));
+
+                var generatedInfo = new FileInfo(generated);
+                stamps.Add(new FileStamp
+                {
+                    Path = Path.GetRelativePath(root, generated),
+                    Ticks = generatedInfo.LastWriteTimeUtc.Ticks,
+                    Size = generatedInfo.Length
+                });
+            }
         }
 
         // The repository root itself may gain a new source file without any tracked directory changing.
@@ -549,13 +571,29 @@ public static partial class Indexer
         // Each project gets its own SDK set, and a repository with no projects keeps the historic
         // one-size-fits-all set. A source global-using file is an ordinary owned .cs and arrives
         // through the source set above, so only the generated and synthesized sets are here.
-        var globalUsings = GlobalUsingTrees(scope, parseOptions, out var unevaluableUsings);
+        List<OwnedTree> globalUsings;
+        int unevaluableUsings;
+        using (Timings.Accumulate("ivt-usings"))
+        {
+            globalUsings = GlobalUsingTrees(scope, parseOptions, out unevaluableUsings);
+        }
         owned.AddRange(globalUsings);
 
-        var references = ReferenceSet(root, scope, out var referenceReport);
+        List<MetadataReference> references;
+        ReferenceReport referenceReport;
+        using (var phase = Timings.Phase("reference-set"))
+        {
+            references = ReferenceSet(root, scope, out referenceReport);
+            phase.Detail($"references={references.Count} dlls-opened={referenceReport.Opened} " +
+                         $"bytes-opened={referenceReport.Bytes}");
+        }
         progress?.Invoke($"compiling against {references.Count} references");
 
-        var compilations = CreateCompilations(root, scope, owned, references);
+        CompilationSet compilations;
+        using (Timings.Phase("compile"))
+        {
+            compilations = CreateCompilations(root, scope, owned, references);
+        }
 
         var graph = new Graph
         {
@@ -590,12 +628,19 @@ public static partial class Indexer
             ShadowedOutputs = referenceReport.Shadowed
         };
 
-        CaptureDiagnostics(compilations, graph);
+        using (Timings.Phase("diagnostics"))
+        {
+            CaptureDiagnostics(compilations, graph);
+        }
+
+        // The two halves of synthesis were accumulated as they happened; one line, after the
+        // diagnostics that follow them in the report's expected order.
+        Timings.Flush("ivt-usings");
 
         var builder = new Builder(graph, compilations, new ProjectLocator(root));
-        builder.Pass1_Declarations(progress);
-        builder.Pass2_Bodies(progress);
-        builder.Pass3_Indirection(progress);
+        using (Timings.Phase("pass1")) builder.Pass1_Declarations(progress);
+        using (Timings.Phase("pass2")) builder.Pass2_Bodies(progress);
+        using (Timings.Phase("pass3")) builder.Pass3_Indirection(progress);
 
         builder.ExportDispatchTables();
         graph.UnresolvedCallSites = builder.UnresolvedCallSites;
@@ -769,6 +814,15 @@ public static partial class Indexer
                 // same assembly are the same file twice, and the header read is the expensive part.
                 if (!seen.Add(name)) continue;
 
+                // The byte tally is the diagnosis for a cold reference set: how much metadata the
+                // run actually pulled through the file cache. A stat is not worth paying on every
+                // ordinary index, so it is taken only when the timing report is on.
+                if (Timings.Enabled)
+                {
+                    tally.Opened++;
+                    try { tally.Bytes += new FileInfo(dll).Length; } catch { /* a length was not available */ }
+                }
+
                 // Native shims sit next to managed assemblies. Skipping them here rather than
                 // letting the compiler complain later keeps the diagnostics in 'doctor' about the
                 // caller's code instead of about the runtime's layout.
@@ -792,7 +846,12 @@ public static partial class Indexer
             }
         }
 
-        var runtimeDir = RuntimeLocator.FindSharedFramework();
+        string? runtimeDir;
+        using (var runtime = Timings.Phase("runtime"))
+        {
+            runtimeDir = RuntimeLocator.FindSharedFramework();
+            runtime.Detail(runtimeDir is null ? "not-found" : runtimeDir);
+        }
 
         if (runtimeDir == null)
         {
@@ -976,6 +1035,14 @@ public static partial class Indexer
         public int Failed;
         public int Native;
         public int Shadowed;
+
+        /// <summary>
+        /// How many DLL files were opened to test whether they are managed, and the sum of their
+        /// byte lengths. Only populated when CSMESH_TIMINGS=1: the count is what a cold-cache or
+        /// scanner diagnosis needs, and an ordinary run should not pay a stat per reference for it.
+        /// </summary>
+        public int Opened;
+        public long Bytes;
     }
 
     private sealed class Builder(Graph g, CompilationSet comps, ProjectLocator projects)

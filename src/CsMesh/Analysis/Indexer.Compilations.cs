@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using CsMesh.Common;
 
 namespace CsMesh.Analysis;
 
@@ -303,6 +304,10 @@ public static partial class Indexer
     private static void AddInternalsVisibleTo(
         string root, Dictionary<string, ProjectUnit> units, CompilationSet set)
     {
+        // The IVT half of the synthesis report. Accumulated, not printed here: the usings half was
+        // synthesized before the references and the two are one line in the report.
+        using var _ = Timings.Accumulate("ivt-usings");
+
         var compilationNameByRealName = units.Values
             .GroupBy(unit => unit.RealName, StringComparer.Ordinal)
             .Where(group => group.Count() == 1)
