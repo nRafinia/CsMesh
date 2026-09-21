@@ -186,7 +186,7 @@ public static class HelpCommand
 
         OPTIONS:
             --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
-            --full             Force a whole-solution rebuild instead of incremental refresh
+            --full             Force a full re-index of every in-scope project instead of incremental refresh
             --all              Include projects that are not built by any solution file
             --debug            Print debug details during indexing to stderr
             --no-telemetry     Do not record this invocation
