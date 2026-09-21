@@ -13,7 +13,7 @@ public sealed class Graph
     /// A graph written by an older version is rejected on load so the user is told to re-index
     /// instead of silently querying a graph built with different rules.
     /// </summary>
-    public const int CurrentFormatVersion = 12;
+    public const int CurrentFormatVersion = 13;
 
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }
@@ -142,6 +142,33 @@ public sealed class Graph
     public string ScopeDecision { get; set; } = string.Empty;
 
     /// <summary>
+    /// Loose .cs files left out because the repository holds projects. A file with no csproj above
+    /// it has no assembly to be compiled into, and the real build does not compile it either.
+    /// Counted so doctor can say how many were dropped instead of leaving the omission invisible.
+    /// </summary>
+    public int ExcludedLooseFiles { get; set; }
+
+    /// <summary>
+    /// Compile items naming an MSBuild property the parser does not evaluate. Each is a file whose
+    /// owning project cannot be decided, so it is counted for doctor rather than guessed at.
+    /// </summary>
+    public int UnevaluableCompileItems { get; set; }
+
+    /// <summary>
+    /// InternalsVisibleTo items naming an MSBuild property the parser does not evaluate. Each is a
+    /// friend relationship that could not be turned into an attribute, so it is counted rather than
+    /// guessed at.
+    /// </summary>
+    public int UnevaluableInternalsVisibleTo { get; set; }
+
+    /// <summary>
+    /// &lt;Using&gt; items naming an MSBuild property the parser does not evaluate. Each is a global
+    /// using that could not be reconstructed for a project with no generated set, so it is counted
+    /// rather than guessed at.
+    /// </summary>
+    public int UnevaluableUsings { get; set; }
+
+    /// <summary>
     /// Declared ProjectReference edges, by project name. The authority on what depends on what;
     /// symbol edges answer a different question and point the other way for dispatch.
     /// </summary>
@@ -215,6 +242,14 @@ public sealed class Graph
     /// graph usually is.
     /// </summary>
     public List<CompilerNote> Diagnostics { get; set; } = [];
+
+    /// <summary>
+    /// ProjectReference cycles that had to be broken to order the per-project compilations, each as
+    /// "dependent -&gt; dependency". A cycle is legal in a csproj graph only in the sense that
+    /// nothing stops it being written; the compilation for the broken edge is the one that cannot
+    /// exist, and naming it is the difference between a quiet guess and a stated limit.
+    /// </summary>
+    public List<string> ProjectCycles { get; set; } = [];
 
     /// <summary>
     /// Registration helpers that bind by convention rather than by name: Scrutor's Scan, MediatR's

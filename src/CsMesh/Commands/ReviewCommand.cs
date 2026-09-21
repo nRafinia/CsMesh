@@ -67,8 +67,18 @@ public static class ReviewCommand
             return gapExit;
         }
 
+        // Finding ids hash the two Node.Keys of an edge, so a format bump that re-keys the graph
+        // changes every id. A baseline written under an older format would re-surface its whole
+        // history as unaccepted; refusing is the honest answer. --accept is the remedy here, unlike
+        // the commit gap, because writing the new ids is exactly what the user needs.
+        var acceptedBefore = BaselineFile.Load(root, out var baselineFormat);
+        if (BaselineFile.Exists(root) && baselineFormat != Graph.CurrentFormatVersion && !accept)
+        {
+            return Fail(result, writer, json, Exit.NoIndex,
+                $"baseline predates format v{Graph.CurrentFormatVersion} -> csmesh review --accept");
+        }
+
         var findings = Queries.DiffFindings(current, baseGraph, includeCalls);
-        var acceptedBefore = BaselineFile.Load(root);
 
         var pruned = 0;
         if (accept)

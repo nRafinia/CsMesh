@@ -143,33 +143,104 @@ public static partial class Indexer
         """;
 
     /// <summary>
-    /// Global using files the build already generated, one per project. Read out of obj/ on
-    /// purpose: it is the only place the true set exists, and reconstructing it from the csproj
-    /// would mean evaluating MSBuild.
+    /// Global using trees to compile, one project at a time.
+    ///
+    /// Read from the project's chosen target framework on purpose: a project retargeted from net8
+    /// to net10 leaves both <c>obj/Debug/net8.0</c> and <c>obj/Debug/net10.0</c> behind, and the
+    /// build never reads the older one. Compiling both imports namespaces the current build cannot
+    /// see, which is a class of false binding rather than a missing one.
+    ///
+    /// When no generated file exists but the csproj asks for implicit usings, the set the SDK would
+    /// have written is synthesized from the csproj and its Sdk attribute -- the Web SDK's ASP.NET
+    /// namespaces only for a Web project. A repository with no csproj at all keeps the historic
+    /// one-size-fits-all set, since there is no project to read a framework or an opt-in from.
     /// </summary>
-    private static IEnumerable<string> GlobalUsingFiles(string root)
+    private static List<OwnedTree> GlobalUsingTrees(
+        ProjectScope scope, CSharpParseOptions parseOptions, out int unevaluableUsings)
     {
-        List<string> found;
-        try
+        unevaluableUsings = 0;
+        var result = new List<OwnedTree>();
+
+        if (!scope.HasProjects)
         {
-            found = Directory.EnumerateFiles(root, "*.GlobalUsings.g.cs", SearchOption.AllDirectories).ToList();
-        }
-        catch
-        {
-            yield break;
+            result.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(ImplicitUsings, parseOptions, path: "<global-usings>"),
+                new[] { "" }));
+            return result;
         }
 
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var file in found)
+        var index = 0;
+        foreach (var projectDirectory in scope.LiveDirectories)
         {
-            if (!file.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase)) continue;
+            var texts = ProjectGlobalUsingTexts(projectDirectory, out var unevaluable);
+            unevaluableUsings += unevaluable;
 
-            string text;
-            try { text = File.ReadAllText(file); } catch { continue; }
-
-            // Several target frameworks and configurations emit identical copies.
-            if (seen.Add(text)) yield return text;
+            foreach (var text in texts)
+            {
+                result.Add(new OwnedTree(
+                    CSharpSyntaxTree.ParseText(text, parseOptions, path: $"<global-usings-{index++}>"),
+                    new[] { projectDirectory }));
+            }
         }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The SDK global-using sets for one project: what the build generated for its chosen target
+    /// framework, or the set its ImplicitUsings, Sdk and &lt;Using&gt; items imply when no build
+    /// wrote one. A source global-using file is not here; it is an ordinary owned .cs and arrives
+    /// with the source. When a generated set exists it already contains the &lt;Using&gt; items, so
+    /// nothing is synthesized and nothing is added twice.
+    /// </summary>
+    private static List<string> ProjectGlobalUsingTexts(string projectDirectory, out int unevaluable)
+    {
+        unevaluable = 0;
+
+        var csproj = ProjectTfm.Single(projectDirectory);
+        if (csproj is null) return [];
+
+        var texts = new List<string>();
+        foreach (var file in GlobalUsingFilesIn(projectDirectory, ProjectTfm.Choose(projectDirectory, "obj")))
+        {
+            try { texts.Add(File.ReadAllText(file)); } catch { /* unreadable contributes nothing */ }
+        }
+
+        if (texts.Count == 0)
+        {
+            var synthesized = ProjectTfm.Synthesize(csproj, out unevaluable);
+            if (synthesized.Length > 0) texts.Add(synthesized);
+        }
+
+        return texts.Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>Generated global-usings files for one project under its chosen target framework.</summary>
+    private static List<string> GlobalUsingFilesIn(string projectDirectory, string? framework)
+    {
+        var result = new List<string>();
+        if (framework is null) return result;
+
+        var objDirectory = Path.Combine(projectDirectory, "obj");
+        if (!Directory.Exists(objDirectory)) return result;
+
+        foreach (var config in ProjectTfm.ConfigDirectories(objDirectory))
+        {
+            var frameworkDirectory = Path.Combine(config, framework);
+            if (!Directory.Exists(frameworkDirectory)) continue;
+
+            try
+            {
+                result.AddRange(Directory.EnumerateFiles(frameworkDirectory, "*.GlobalUsings.g.cs",
+                    SearchOption.AllDirectories));
+            }
+            catch
+            {
+                // An unreadable framework directory contributes nothing rather than failing the index.
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -309,9 +380,9 @@ public static partial class Indexer
     /// until some unrelated edit happens to touch the same file again. Skipping leaves the .razor
     /// file untracked instead, which is the honest state: unknown, not confidently wrong.
     /// </summary>
-    private static (List<(string RazorPath, string Text)> Sources, int Stale) CollectGeneratedRazorSources(ProjectScope scope)
+    private static (List<(string ProjectDir, string RazorPath, string Text)> Sources, int Stale) CollectGeneratedRazorSources(ProjectScope scope)
     {
-        var result = new List<(string, string)>();
+        var result = new List<(string, string, string)>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var stale = 0;
 
@@ -339,7 +410,7 @@ public static partial class Indexer
                     continue;
                 }
 
-                result.Add((razorPath, text));
+                result.Add((projectDir, razorPath, text));
             }
         }
 
@@ -359,10 +430,10 @@ public static partial class Indexer
     /// last build wrote; an edited source still marks its own file [STALE], and a clean rebuild is
     /// what refreshes the generated half. A file that cannot be read is skipped rather than counted.
     /// </summary>
-    private static (List<(string File, string Text)> Sources, int Unreadable) CollectGeneratedSources(
+    private static (List<(string ProjectDir, string File, string Text)> Sources, int Unreadable) CollectGeneratedSources(
         string root, ProjectScope scope)
     {
-        var result = new List<(string, string)>();
+        var result = new List<(string, string, string)>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var unreadable = 0;
 
@@ -377,7 +448,7 @@ public static partial class Indexer
                 try { text = File.ReadAllText(generated); }
                 catch { unreadable++; continue; }
 
-                result.Add((generated, text));
+                result.Add((projectDir, generated, text));
             }
         }
 
@@ -390,7 +461,7 @@ public static partial class Indexer
         var files = EnumerateSourceFiles(root, scope).ToList();
         progress?.Invoke($"parsing {files.Count} files");
 
-        var trees = new List<SyntaxTree>(files.Count);
+        var owned = new List<OwnedTree>(files.Count);
         var stamps = new List<FileStamp>(files.Count);
         var dirs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
@@ -401,7 +472,10 @@ public static partial class Indexer
             string text;
             try { text = File.ReadAllText(file); } catch { continue; }
 
-            trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: file));
+            owned.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(text, parseOptions, path: file),
+                OwnershipOf(scope, file)));
+
             var fileInfo = new FileInfo(file);
             stamps.Add(new FileStamp
             {
@@ -429,9 +503,11 @@ public static partial class Indexer
         // path, so this one substitution is what keeps components pointing at source a user can
         // actually open instead of an obj/ path that a clean deletes.
         var (razorSources, staleRazorSources) = CollectGeneratedRazorSources(scope);
-        foreach (var (razorPath, text) in razorSources)
+        foreach (var (projectDir, razorPath, text) in razorSources)
         {
-            trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath));
+            owned.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(text, parseOptions, path: razorPath),
+                new[] { projectDir }));
 
             var razorInfo = new FileInfo(razorPath);
             stamps.Add(new FileStamp
@@ -449,9 +525,11 @@ public static partial class Indexer
         // EnumerateSourceFiles stays: these are added through their own path so the two sets cannot
         // collide, exactly as Razor already did.
         var (generatedSources, _) = CollectGeneratedSources(root, scope);
-        foreach (var (generated, text) in generatedSources)
+        foreach (var (projectDir, generated, text) in generatedSources)
         {
-            trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path: generated));
+            owned.Add(new OwnedTree(
+                CSharpSyntaxTree.ParseText(text, parseOptions, path: generated),
+                new[] { projectDir }));
 
             var generatedInfo = new FileInfo(generated);
             stamps.Add(new FileStamp
@@ -468,25 +546,16 @@ public static partial class Indexer
             try { dirs["."] = Directory.GetLastWriteTimeUtc(root).Ticks; } catch { }
         }
 
-        // Without these the compilation has no System namespace and almost nothing binds.
-        var globalUsings = GlobalUsingFiles(root).ToList();
-        if (globalUsings.Count == 0) globalUsings.Add(ImplicitUsings);
-
-        for (var i = 0; i < globalUsings.Count; i++)
-        {
-            trees.Add(CSharpSyntaxTree.ParseText(globalUsings[i], parseOptions, path: $"<global-usings-{i}>"));
-        }
+        // Each project gets its own SDK set, and a repository with no projects keeps the historic
+        // one-size-fits-all set. A source global-using file is an ordinary owned .cs and arrives
+        // through the source set above, so only the generated and synthesized sets are here.
+        var globalUsings = GlobalUsingTrees(scope, parseOptions, out var unevaluableUsings);
+        owned.AddRange(globalUsings);
 
         var references = ReferenceSet(root, scope, out var referenceReport);
         progress?.Invoke($"compiling against {references.Count} references");
 
-        // ConsoleApplication so that top-level statements bind to a real entry point instead of
-        // being rejected outright. Diagnostics are advisory here; we never require a clean build.
-        var compilation = CSharpCompilation.Create(
-            "csmesh.index",
-            trees,
-            references,
-            new CSharpCompilationOptions(OutputKind.ConsoleApplication, allowUnsafe: true));
+        var compilations = CreateCompilations(root, scope, owned, references);
 
         var graph = new Graph
         {
@@ -505,7 +574,12 @@ public static partial class Indexer
             SkippedProjects = scope.Excluded,
             SkippedProjectsReason = scope.Reason,
             ScopeDecision = scope.Decision,
+            ExcludedLooseFiles = CountExcludedLooseFiles(root, scope),
+            UnevaluableCompileItems = scope.UnevaluableCompileItems,
+            UnevaluableInternalsVisibleTo = compilations.UnevaluableInternalsVisibleTo,
+            UnevaluableUsings = unevaluableUsings,
             ProjectReferences = scope.References,
+            ProjectCycles = compilations.Cycles,
             Dirs = dirs.Select(kv => new DirStamp { Path = kv.Key, Ticks = kv.Value }).ToList(),
             ReferenceCount = references.Count,
             RuntimeReferences = referenceReport.Runtime,
@@ -516,9 +590,9 @@ public static partial class Indexer
             ShadowedOutputs = referenceReport.Shadowed
         };
 
-        CaptureDiagnostics(compilation, graph);
+        CaptureDiagnostics(compilations, graph);
 
-        var builder = new Builder(graph, compilation, new ProjectLocator(root));
+        var builder = new Builder(graph, compilations, new ProjectLocator(root));
         builder.Pass1_Declarations(progress);
         builder.Pass2_Bodies(progress);
         builder.Pass3_Indirection(progress);
@@ -533,7 +607,40 @@ public static partial class Indexer
     }
 
     /// <summary>
-    /// What the compiler thinks is wrong with the reference set.
+    /// How many .cs files sit outside every project while the repository has projects. Counted
+    /// rather than silently skipped: a file the reader expected to find and cannot is worse than a
+    /// line saying it was left out. Generated and designer files are not counted, because
+    /// <see cref="EnumerateSourceFiles"/> never considered them in the first place.
+    /// </summary>
+    private static int CountExcludedLooseFiles(string root, ProjectScope scope)
+    {
+        if (!scope.HasProjects) return 0;
+
+        var count = 0;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+            {
+                if (IsSkipped(root, file)) continue;
+
+                var normalized = file.Replace('\\', '/');
+                if (normalized.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)) continue;
+                if (normalized.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase)) continue;
+                if (normalized.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (scope.IsLoose(file) && !scope.Includes(file)) count++;
+            }
+        }
+        catch
+        {
+            // An unreadable tree contributes no count rather than failing the index.
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// What the compiler thinks is wrong, per project.
     ///
     /// The indexer treats diagnostics as advisory and indexes whatever binds, which is the right
     /// default -- a graph from a half-compiling tree is still useful. But when resolution is poor
@@ -542,35 +649,43 @@ public static partial class Indexer
     /// holds a compiled copy of the very source being parsed. Those two call for opposite fixes,
     /// and guessing between them wasted a long time.
     ///
+    /// One compilation per project also makes the project the unit that matters: a diagnostic is
+    /// about one project's references, and a flat list mixed eight projects' errors into one pile.
+    /// Each project keeps its own top eight by count; doctor decides how many to show.
+    ///
     /// Declaration diagnostics only: method bodies produce thousands and none of them are about
     /// references.
     /// </summary>
-    private static void CaptureDiagnostics(CSharpCompilation compilation, Graph graph)
+    private static void CaptureDiagnostics(CompilationSet compilations, Graph graph)
     {
-        try
+        foreach (var (project, compilation) in compilations.Named)
         {
-            var interesting = compilation.GetDeclarationDiagnostics()
-                .Where(d => d.Severity == DiagnosticSeverity.Error)
-                .GroupBy(d => d.Id)
-                .OrderByDescending(x => x.Count())
-                .Take(8);
-
-            foreach (var group in interesting)
+            try
             {
-                var sample = group.First().GetMessage();
-                if (sample.Length > 160) sample = sample[..157] + "...";
-                graph.Diagnostics.Add(new CompilerNote
+                var interesting = compilation.GetDeclarationDiagnostics()
+                    .Where(d => d.Severity == DiagnosticSeverity.Error)
+                    .GroupBy(d => d.Id)
+                    .OrderByDescending(x => x.Count())
+                    .Take(8);
+
+                foreach (var group in interesting)
                 {
-                    Id = group.Key,
-                    Count = group.Count(),
-                    Message = sample
-                });
+                    var sample = group.First().GetMessage();
+                    if (sample.Length > 160) sample = sample[..157] + "...";
+                    graph.Diagnostics.Add(new CompilerNote
+                    {
+                        Id = group.Key,
+                        Count = group.Count(),
+                        Message = sample,
+                        Project = project
+                    });
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            // Diagnostics are a nicety; failing to collect them must not fail an index.
-            Dbg.Log($"diagnostics unavailable: {ex.Message}");
+            catch (Exception ex)
+            {
+                // Diagnostics are a nicety; failing to collect them must not fail an index.
+                Dbg.Log($"diagnostics unavailable for '{project}': {ex.Message}");
+            }
         }
     }
 
@@ -710,14 +825,68 @@ public static partial class Indexer
         foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories).Take(80))
         {
             tally.OutputDirectories++;
-            foreach (var cfg in Directory.EnumerateDirectories(bin, "*", SearchOption.AllDirectories).Take(20))
+
+            // Only the project's own chosen framework is read. A stale net8 tree next to a net10 one
+            // is build history the solution does not compile against, and loading its assemblies can
+            // shadow the current ones with the same simple name.
+            var chosen = ChosenFrameworkFor(root, bin);
+
+            var kept = 0;
+            foreach (var cfg in Directory.EnumerateDirectories(bin, "*", SearchOption.AllDirectories))
             {
+                if (chosen is not null && IsStaleFrameworkDirectory(cfg, bin, chosen)) continue;
+
                 AddDir(cfg, 200, runtime: false);
+                if (++kept >= 20) break;
             }
         }
 
         report = tally;
         return list;
+    }
+
+    /// <summary>
+    /// The target framework to read a bin/ tree through: the one the nearest csproj declares, or
+    /// the newest on disk when that framework was never built. Null when no project owns the tree,
+    /// in which case every framework directory is read as before.
+    /// </summary>
+    private static string? ChosenFrameworkFor(string root, string binDirectory)
+    {
+        var stop = Path.GetFullPath(root);
+        var directory = new DirectoryInfo(Path.GetFullPath(binDirectory));
+
+        while (directory is not null && directory.FullName.StartsWith(stop, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (directory.EnumerateFiles("*.csproj").Any())
+                    return ProjectTfm.Choose(directory.FullName, "bin");
+            }
+            catch
+            {
+                // An unreadable directory is unknown rather than empty; keep walking upward.
+            }
+
+            directory = directory.Parent;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// True for a directory under one of the chosen framework's siblings. The segment immediately
+    /// below the configuration names the framework, so "bin/Debug/net8.0" and "bin/Debug/net8.0/ref"
+    /// are stale when net10.0 is chosen and exists; "bin/Debug" itself and "bin/Debug/net10.0" are not.
+    /// </summary>
+    private static bool IsStaleFrameworkDirectory(string candidate, string binDirectory, string chosen)
+    {
+        var relative = Path.GetRelativePath(binDirectory, candidate);
+        var parts = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (parts.Length < 2) return false;
+
+        var framework = parts[1];
+        return ProjectTfm.IsFrameworkName(framework) &&
+               !framework.Equals(chosen, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -809,7 +978,7 @@ public static partial class Indexer
         public int Shadowed;
     }
 
-    private sealed class Builder(Graph g, CSharpCompilation comp, ProjectLocator projects)
+    private sealed class Builder(Graph g, CompilationSet comps, ProjectLocator projects)
     {
         private static readonly SymbolDisplayFormat KeyFormat = SymbolDisplayFormat.FullyQualifiedFormat;
 
@@ -857,7 +1026,21 @@ public static partial class Indexer
         private readonly HashSet<(int Service, int Implementation)> _diBoundPairs = new();
 
         private readonly HashSet<(int, int, EdgeKind)> _dedupe = new();
-        private readonly List<(INamedTypeSymbol Type, TypeDeclarationSyntax Decl, int Id)> _pendingHandlers = new();
+        private readonly List<(INamedTypeSymbol Type, TypeDeclarationSyntax Decl, int Id, SemanticModel Model)> _pendingHandlers = new();
+
+        /// <summary>
+        /// Members that override or implement a member declared in source, captured while the
+        /// semantic models are still alive in pass 1 and emitted in pass 3 once the DI pairs are
+        /// known (the di-bound note depends on pass 2).
+        ///
+        /// The relationship is read from the compiler -- OverriddenMethod/Property/Event and
+        /// FindImplementationForInterfaceMember -- not matched by member name. Name matching cannot
+        /// tell an override from a same-named neighbour: it linked every derived constructor to its
+        /// base constructor, linked static methods that merely share a name, linked members hidden
+        /// with 'new', and collapsed overloads because it compared no parameter types.
+        /// </summary>
+        private readonly List<(int BaseMember, int DerivedMember, int BaseType, int DerivedType, EdgeKind Kind)>
+            _pendingMemberEdges = new();
 
         /// <summary>
         /// A sample, not a log. Capped per kind rather than in total: unbound calls into the BCL
@@ -876,6 +1059,15 @@ public static partial class Indexer
         /// Files the passes are allowed to read. Null means all of them, which is a full index.
         /// </summary>
         public HashSet<string>? OnlyFiles { get; set; }
+
+        /// <summary>
+        /// The assembly and project of the (compilation, tree) pair currently being bound. Set at
+        /// the top of each unit's turn in pass 1 and pass 2: a synthetic node has no symbol to read
+        /// either from, and RecordExternal must compare against the assembly of the compilation
+        /// that owns this tree rather than any other compilation holding the same tree.
+        /// </summary>
+        private string _currentAssembly = "";
+        private string _currentProject = "";
 
         /// <summary>
         /// Symbol key to the id it held before an incremental pass retired it. Empty on a full
@@ -964,7 +1156,14 @@ public static partial class Indexer
                 (line, endLine) = LineRange(l, file);
             }
 
-            return AddNode(key, FullName(sym), ShortName(sym), kind, file, line, endLine);
+            // The project is the one that declared the symbol, not the one nearest the file. They
+            // differ for a base type resolved through a CompilationReference, and for a linked file
+            // the two owners' nodes share a file but must carry different projects.
+            var assembly = sym.ContainingAssembly?.Name ?? "";
+            var project = comps.ProjectOfAssembly(assembly);
+            if (project.Length == 0 && assembly.Length == 0) project = projects.For(file);
+
+            return AddNode(key, FullName(sym), ShortName(sym), kind, file, line, endLine, project);
         }
 
         /// <summary>
@@ -1005,6 +1204,10 @@ public static partial class Indexer
         /// </summary>
         private int SyntheticNode(string key, string name, string shortName, string kind, SyntaxNode at)
         {
+            // Assembly-qualified like every symbol key. A top-level Program is synthesized per
+            // compilation, and without the prefix two projects that share a source tree would merge
+            // their entries into one node.
+            key = _currentAssembly + "|" + key;
             if (_idByKey.TryGetValue(key, out var existing)) return existing;
 
             var file = at.SyntaxTree.FilePath.Length > 0
@@ -1012,10 +1215,11 @@ public static partial class Indexer
                 : "";
             var (line, endLine) = LineRange(at.GetLocation(), file);
 
-            return AddNode(key, name, shortName, kind, file, line, endLine);
+            return AddNode(key, name, shortName, kind, file, line, endLine, _currentProject);
         }
 
-        private int AddNode(string key, string name, string shortName, string kind, string file, int line, int endLine)
+        private int AddNode(string key, string name, string shortName, string kind,
+                            string file, int line, int endLine, string project)
         {
             // A symbol that survived an edit gets its old id back, which is what keeps every edge
             // reaching it from an untouched file valid. Otherwise take the next free id -- never
@@ -1024,7 +1228,7 @@ public static partial class Indexer
             {
                 Id = Recycle.TryGetValue(key, out var reused) ? reused : g.NextNodeId++,
                 Key = key,
-                Project = projects.For(file),
+                Project = project,
                 Name = name,
                 Short = shortName,
                 Kind = kind,
@@ -1042,6 +1246,17 @@ public static partial class Indexer
         /// Uniquely identifies a symbol. Parameter types are fully qualified and method arity is
         /// included so overloads such as Handle(List&lt;int&gt;) and Handle(List&lt;string&gt;)
         /// never collapse into one node.
+        ///
+        /// The declaring assembly is part of the identity. One compilation per project means the
+        /// same fully-qualified name can be declared in two assemblies, and without the prefix they
+        /// merge into one node and one dispatch entry -- a silent false binding. ContainingAssembly
+        /// uses the compilation name it was created with, so a project whose real name had to be
+        /// disambiguated keys under the disambiguated name; the schema's separator is '|', which no
+        /// C# identifier, namespace or generic parameter list contains.
+        ///
+        /// A member's identity carries its owner's fully-qualified name before the member segment,
+        /// which is what lets a method node be traced back to its owner's key when pass 1 and pass 3
+        /// key their tables by owner rather than by short name.
         /// </summary>
         private static string Key(ISymbol s)
         {
@@ -1052,7 +1267,8 @@ public static partial class Indexer
             // on the phantom, leaving the real declaration with no callers and blast-radius with
             // nothing to report. ReducedFrom collapses them back onto one symbol.
             if (s is IMethodSymbol { ReducedFrom: { } original }) s = original;
-            
+
+            var assembly = s.ContainingAssembly?.Name ?? "";
             var container = s.ContainingType?.ToDisplayString(KeyFormat)
                             ?? s.ContainingNamespace?.ToDisplayString() ?? "";
 
@@ -1069,7 +1285,44 @@ public static partial class Indexer
                 self = s.ToDisplayString(KeyFormat);
             }
 
-            return container + "::" + self + "|" + s.Kind;
+            // A type's container is its namespace, so its own fully-qualified name is the whole
+            // middle segment. A member's container is its owner type, which is the owner-qualified
+            // middle segment. Both leave kind last, and '|' separates the two shapes.
+            var identity = s.ContainingType is null ? self : container + "|" + self;
+            return assembly + "|" + identity + "|" + s.Kind;
+        }
+
+        /// <summary>
+        /// The owner prefix of a type key: assembly plus the type's fully-qualified name.
+        ///
+        /// A top-level type key is assembly|fqn|kind, so dropping the kind is enough; a nested type
+        /// key also carries its containing type, assembly|outerFqn|innerFqn|kind, so the wanted
+        /// segment is the last one before the kind, not simply everything before it. Both must
+        /// reduce to assembly|innerFqn, which is the prefix the type's own member keys carry.
+        /// </summary>
+        private static string TypeOwnerPrefix(string key)
+        {
+            var parts = key.Split('|');
+            return parts.Length < 2 ? key : parts[0] + "|" + parts[^2];
+        }
+
+        /// <summary>
+        /// The owner prefix of a member key, or false for a key that is not
+        /// assembly|ownerFqn|member|kind. A synthetic key such as <c>toplevel::</c> carries only
+        /// the assembly, so it has no owner and is skipped rather than mis-attributed.
+        /// </summary>
+        private static bool TryMemberOwnerPrefix(string key, out string prefix)
+        {
+            var last = key.LastIndexOf('|');
+            var secondLast = last > 0 ? key.LastIndexOf('|', last - 1) : -1;
+            if (secondLast <= 0)
+            {
+                prefix = "";
+                return false;
+            }
+
+            prefix = key[..secondLast];
+            return true;
         }
 
         /// <summary>
@@ -1121,13 +1374,13 @@ public static partial class Indexer
         /// A dependency named only as a parameter type is still a dependency the caller will ask
         /// about; List&lt;PrivateKeyFile&gt; must not hide it.
         /// </summary>
-        private void RecordExternalIn(ITypeSymbol? type, SyntaxNode at, int depth = 0)
+        private void RecordExternalIn(ITypeSymbol? type, SyntaxNode at, string owningAssembly, int depth = 0)
         {
             if (type == null || depth > 2) return;
 
             if (type is IArrayTypeSymbol array)
             {
-                RecordExternalIn(array.ElementType, at, depth + 1);
+                RecordExternalIn(array.ElementType, at, owningAssembly, depth + 1);
                 return;
             }
 
@@ -1144,27 +1397,32 @@ public static partial class Indexer
                 }
                 else
                 {
-                    RecordExternal(named, at);
+                    RecordExternal(named, at, owningAssembly);
                 }
             }
 
-            foreach (var argument in named.TypeArguments) RecordExternalIn(argument, at, depth + 1);
+            foreach (var argument in named.TypeArguments)
+                RecordExternalIn(argument, at, owningAssembly, depth + 1);
         }
 
-        private void RecordExternal(INamedTypeSymbol type, SyntaxNode at)
+        private void RecordExternal(INamedTypeSymbol type, SyntaxNode at, string owningAssembly)
         {
             // string, int, object: never what someone is looking for.
             if (type.SpecialType != SpecialType.None) return;
 
             var assembly = type.ContainingAssembly?.Name ?? "";
             if (assembly.Length == 0) return;
-            if (assembly == comp.AssemblyName) return;
+            // The comparison is against the assembly of the compilation this tree is bound from,
+            // so a type declared in a referenced project is not mistaken for one declared here.
+            if (assembly == owningAssembly) return;
             if (FrameworkAssemblyPrefixes.Any(p => assembly.StartsWith(p, StringComparison.Ordinal))) return;
 
             var name = type.OriginalDefinition.Name;
             if (name.Length == 0) return;
 
-            var existing = g.ExternalTypes.FirstOrDefault(x => x.Name == name);
+            // The assembly is part of the match. Two packages can each declare a type of the same
+            // simple name, and merging them by name made the site list name the wrong boundary.
+            var existing = g.ExternalTypes.FirstOrDefault(x => x.Name == name && x.Assembly == assembly);
             if (existing == null)
             {
                 if (g.ExternalTypes.Count >= 150) return;
@@ -1258,10 +1516,13 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 1: declarations");
 
-            foreach (var tree in comp.SyntaxTrees)
+            foreach (var unit in comps.BindOrder)
             {
+                var tree = unit.Tree;
                 if (Skip(tree)) continue;
-                var model = comp.GetSemanticModel(tree);
+                var model = unit.Model();
+                _currentAssembly = unit.Compilation.AssemblyName ?? "";
+                _currentProject = unit.Project;
 
                 // Enums and delegates derive from BaseTypeDeclarationSyntax / MemberDeclarationSyntax,
                 // not from TypeDeclarationSyntax, so a loop over TypeDeclarationSyntax alone leaves
@@ -1305,7 +1566,7 @@ public static partial class Indexer
                     foreach (var t in TypeTags(type, typeDecl)) AddTag(typeNode, t);
 
                     RegisterBaseTypes(type, typeId);
-                    _pendingHandlers.Add((type, typeDecl, typeId));
+                    _pendingHandlers.Add((type, typeDecl, typeId, model));
 
                     // Primary constructor parameters are declared on the type, not in a member.
                     if (typeDecl.ParameterList != null)
@@ -1315,7 +1576,7 @@ public static partial class Indexer
                             if (parameter.Type != null &&
                                 model.GetSymbolInfo(parameter.Type).Symbol is ITypeSymbol pt)
                             {
-                                RecordExternalIn(pt, parameter.Type);
+                                RecordExternalIn(pt, parameter.Type, _currentAssembly);
                             }
                         }
                     }
@@ -1330,8 +1591,9 @@ public static partial class Indexer
                                 Link(typeId, mId, EdgeKind.TypeUse, "member");
                                 var mNode = g.ById(mId)!;
                                 mNode.Signature = SignatureOf(ms);
-                                if (!ms.ReturnsVoid) RecordExternalIn(ms.ReturnType, md.ReturnType);
-                                foreach (var parameter in ms.Parameters) RecordExternalIn(parameter.Type, md);
+                                if (!ms.ReturnsVoid) RecordExternalIn(ms.ReturnType, md.ReturnType, _currentAssembly);
+                                foreach (var parameter in ms.Parameters)
+                                    RecordExternalIn(parameter.Type, md, _currentAssembly);
                                 foreach (var t in MethodTags(md)) AddTag(mNode, t);
                                 if (typeNode.Tags.Contains("controller")) AddTag(mNode, "action");
                                 if (mNode.Tags.Contains("test")) AddTag(typeNode, "test");
@@ -1339,14 +1601,15 @@ public static partial class Indexer
                             }
                             case ConstructorDeclarationSyntax cd when model.GetDeclaredSymbol(cd) is { } cs:
                                 Link(typeId, NodeFor(cs, "method", cd.GetLocation()), EdgeKind.TypeUse, "ctor");
-                                foreach (var parameter in cs.Parameters) RecordExternalIn(parameter.Type, cd);
+                                foreach (var parameter in cs.Parameters)
+                                    RecordExternalIn(parameter.Type, cd, _currentAssembly);
                                 break;
                             case PropertyDeclarationSyntax pd when model.GetDeclaredSymbol(pd) is { } ps:
                             {
                                 var pId = NodeFor(ps, "property", pd.GetLocation());
                                 Link(typeId, pId, EdgeKind.TypeUse, "member");
                                 g.ById(pId)!.Signature = Display(ps.Type);
-                                RecordExternalIn(ps.Type, pd.Type);
+                                RecordExternalIn(ps.Type, pd.Type, _currentAssembly);
 
                                 // DbSet<Order> is the only place a context and an entity are
                                 // named together. Without this edge, "what does this context
@@ -1379,13 +1642,17 @@ public static partial class Indexer
                                     var fId = NodeFor(fs, "field", variable.GetLocation());
                                     Link(typeId, fId, EdgeKind.TypeUse, "member");
                                     g.ById(fId)!.Signature = Display(fs.Type);
-                                    RecordExternalIn(fs.Type, fd.Declaration.Type);
+                                    RecordExternalIn(fs.Type, fd.Declaration.Type, _currentAssembly);
                                 }
 
                                 break;
                             }
                         }
                     }
+
+                    // Every member node for this type exists now, so the compiler's own
+                    // override/implementation relationships can be turned into edges.
+                    CaptureMemberEdges(type, typeId);
                 }
             }
 
@@ -1401,9 +1668,9 @@ public static partial class Indexer
             }
 
             var methodsByOwner = MethodsByOwner();
-            foreach (var (type, decl, id) in _pendingHandlers)
+            foreach (var (type, decl, id, handlerModel) in _pendingHandlers)
             {
-                RegisterMessageHandler(type, decl, id, methodsByOwner);
+                RegisterMessageHandler(type, decl, id, handlerModel, methodsByOwner);
             }
 
             Dbg.Log($"pass 1: {g.Nodes.Count} nodes, {_handlersByRequest.Count} message type(s) mapped, " +
@@ -1439,6 +1706,132 @@ public static partial class Indexer
                 _implementorsByBase[baseId] = list = new List<int>();
             if (!list.Contains(implId)) list.Add(implId);
         }
+
+        /// <summary>
+        /// The member-level edges of inheritance, read from the compiler while the model is alive.
+        ///
+        /// An override is <c>OverriddenMethod</c>/<c>OverriddenProperty</c>/<c>OverriddenEvent</c>,
+        /// followed up the chain until it reaches a declaration in source (an intermediate override
+        /// in a referenced project that is itself out of scope has no node). That relationship is
+        /// exactly the set the compiler considers an override, so constructors (no overridden
+        /// member), static members and methods hidden with <c>new</c> produce nothing -- the old
+        /// name match drew all three as if they were overrides.
+        ///
+        /// An interface implementation is <c>FindImplementationForInterfaceMember</c>, which covers
+        /// implicit and explicit implementations and an implementation inherited from a base class.
+        /// The base member node is keyed by its open definition, because a member reached through a
+        /// constructed interface carries the type arguments and would key differently from the
+        /// declaration.
+        /// </summary>
+        private void CaptureMemberEdges(INamedTypeSymbol type, int typeId)
+        {
+            foreach (var member in type.GetMembers())
+            {
+                // An accessor is reached through its property or event; emitting it here as well
+                // would draw the same override twice and mint a get_/set_ method node pass 1 never
+                // declared. A compiler-synthesized member -- a record's Clone, Equals, PrintMembers,
+                // EqualityContract -- is not source anyone wrote; the graph models what is declared.
+                if (IsAccessor(member) || member.IsImplicitlyDeclared) continue;
+
+                ISymbol? overridden = member switch
+                {
+                    IMethodSymbol m when !m.IsStatic && m.MethodKind is not (MethodKind.Constructor or MethodKind.StaticConstructor)
+                        => NearestInSource(m.OverriddenMethod, x => x.OverriddenMethod),
+                    IPropertySymbol p when !p.IsStatic => NearestInSource(p.OverriddenProperty, x => x.OverriddenProperty),
+                    IEventSymbol e when !e.IsStatic => NearestInSource(e.OverriddenEvent, x => x.OverriddenEvent),
+                    _ => null
+                };
+
+                if (overridden is null) continue;
+
+                // The override is reached through the declared type, but an override of Base<int>
+                // carries the constructed base. The node was declared on the open type, so both
+                // the member and its owner are reduced to their original definitions or the
+                // lookup would create a second Base<int> node beside Base<T>.
+                var baseMember = overridden.OriginalDefinition;
+                var baseOwner = baseMember.ContainingType?.OriginalDefinition;
+                if (baseOwner is null) continue;
+
+                var derivedKind = KindOf(member);
+                var baseKind = KindOf(baseMember);
+                if (derivedKind is null || baseKind is null) continue;
+
+                var baseTypeId = NodeFor(baseOwner, TypeKindOf(baseOwner));
+                _pendingMemberEdges.Add((
+                    NodeFor(baseMember, baseKind),
+                    NodeFor(member, derivedKind),
+                    baseTypeId,
+                    typeId,
+                    EdgeKind.Override));
+            }
+
+            foreach (var iface in type.AllInterfaces)
+            {
+                if (!iface.OriginalDefinition.Locations.Any(l => l.IsInSource)) continue;
+
+                var ifaceId = NodeFor(iface.OriginalDefinition, "interface");
+                foreach (var member in iface.GetMembers())
+                {
+                    if (member.IsStatic || IsAccessor(member) || member.IsImplicitlyDeclared) continue;
+                    var baseKind = KindOf(member);
+                    if (baseKind is null) continue;
+
+                    var found = type.FindImplementationForInterfaceMember(member);
+                    if (found is null || !found.Locations.Any(l => l.IsInSource)) continue;
+                    if (SymbolEqualityComparer.Default.Equals(found, member)) continue;
+
+                    // The implementation reached through a constructed interface can be a member of
+                    // a constructed base, SqlCommandRepositoryBase<UserBooking, DbContext>.AddAsync.
+                    // The graph declares the open member, so reduce before keying.
+                    var implementation = found.OriginalDefinition;
+                    var implKind = KindOf(implementation);
+                    if (implKind is null) continue;
+
+                    _pendingMemberEdges.Add((
+                        NodeFor(member.OriginalDefinition, baseKind),
+                        NodeFor(implementation, implKind),
+                        ifaceId,
+                        typeId,
+                        EdgeKind.Interface));
+                }
+            }
+        }
+
+        /// <summary>
+        /// The nearest ancestor in the override chain whose declaring type is compiled from source,
+        /// or null. An ancestor declared in metadata (a base class in a package) has no member node
+        /// to point at, so the chain is followed past it to one that does.
+        /// </summary>
+        private static TSymbol? NearestInSource<TSymbol>(TSymbol? first, Func<TSymbol, TSymbol?> next)
+            where TSymbol : class, ISymbol
+        {
+            for (var current = first; current is not null; current = next(current))
+            {
+                if (current.IsImplicitlyDeclared) continue;
+                if (current.ContainingType is { } owner && owner.Locations.Any(l => l.IsInSource))
+                    return current;
+            }
+
+            return null;
+        }
+
+        private static string? KindOf(ISymbol member) => member switch
+        {
+            IMethodSymbol => "method",
+            IPropertySymbol => "property",
+            IEventSymbol => "event",
+            _ => null
+        };
+
+        /// <summary>
+        /// True for a property or event accessor. Roslyn lists them among a type's members, but the
+        /// graph models the property or event, not its get_/set_/add_/remove_ methods.
+        /// </summary>
+        private static bool IsAccessor(ISymbol member) =>
+            member is IMethodSymbol { AssociatedSymbol: IPropertySymbol or IEventSymbol };
+
+        private static string TypeKindOf(INamedTypeSymbol type) =>
+            type.TypeKind == TypeKind.Interface ? "interface" : "type";
 
         private static void AddTag(Node n, string tag)
         {
@@ -1603,18 +1996,35 @@ public static partial class Indexer
         private static string Simplify(INamedTypeSymbol s) =>
             s.IsGenericType ? $"{s.Name}<{string.Join(",", s.TypeArguments.Select(a => a.Name))}>" : s.Name;
 
+        /// <summary>
+        /// Method nodes by the assembly-qualified key of the type that owns them.
+        ///
+        /// Keyed by owner key, not owner short name. Two projects can each declare Demo.IMediator
+        /// or Demo.OrderHandler, and keying on the short name merged their methods into one bucket,
+        /// so a handler entry point could be resolved to the other project's method. The owner key
+        /// is derived from the member's own key, whose middle segment is the owner's fully-qualified
+        /// name; a synthetic key has no owner and is skipped.
+        /// </summary>
         private Dictionary<string, List<Node>> MethodsByOwner()
         {
+            var ownerKeyByPrefix = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var n in g.Nodes)
+            {
+                if (n.Kind is not ("type" or "interface" or "enum" or "delegate")) continue;
+                ownerKeyByPrefix[TypeOwnerPrefix(n.Key)] = n.Key;
+            }
+
             var map = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
             foreach (var n in g.Nodes)
             {
                 if (n.Kind != "method") continue;
-                var dot = n.Short.LastIndexOf('.');
-                if (dot <= 0) continue;
-                var owner = n.Short[..dot];
-                if (!map.TryGetValue(owner, out var list)) map[owner] = list = new List<Node>();
+                if (!TryMemberOwnerPrefix(n.Key, out var prefix)) continue;
+                if (!ownerKeyByPrefix.TryGetValue(prefix, out var ownerKey)) continue;
+
+                if (!map.TryGetValue(ownerKey, out var list)) map[ownerKey] = list = new List<Node>();
                 list.Add(n);
             }
+
             return map;
         }
 
@@ -1628,6 +2038,7 @@ public static partial class Indexer
             INamedTypeSymbol type,
             TypeDeclarationSyntax decl,
             int typeId,
+            SemanticModel model,
             Dictionary<string, List<Node>> methodsByOwner)
         {
             var requests = new HashSet<string>(StringComparer.Ordinal);
@@ -1646,7 +2057,6 @@ public static partial class Indexer
             // using-imported request type keeps its real identity instead of collapsing to a name.
             if (decl.BaseList != null)
             {
-                var model = comp.GetSemanticModel(decl.SyntaxTree);
                 foreach (var baseType in decl.BaseList.Types)
                 {
                     if (baseType.Type is not GenericNameSyntax gen) continue;
@@ -1668,8 +2078,8 @@ public static partial class Indexer
 
             if (requests.Count == 0) return;
 
-            var typeShort = g.ById(typeId)!.Short;
-            var entry = methodsByOwner.GetValueOrDefault(typeShort)?
+            var typeKey = g.ById(typeId)!.Key;
+            var entry = methodsByOwner.GetValueOrDefault(typeKey)?
                 .FirstOrDefault(n => n.Short.EndsWith(".Handle", StringComparison.Ordinal)
                                      || n.Short.EndsWith(".HandleAsync", StringComparison.Ordinal)
                                      || n.Short.EndsWith(".Consume", StringComparison.Ordinal));
@@ -1690,15 +2100,30 @@ public static partial class Indexer
 
         /// <summary>
         /// Identity of a request type. Uses the original definition so CreateOrder and
-        /// CreateOrder&lt;T&gt; closed over something do not diverge.
+        /// CreateOrder&lt;T&gt; closed over something do not diverge. Assembly-qualified for the
+        /// same reason <see cref="Key"/> is: two projects that declare the same request name must
+        /// not share a dispatch entry, and a handler in one project must still match a request
+        /// declared in another.
         /// </summary>
         private static string RequestKey(INamedTypeSymbol type) =>
+            (type.OriginalDefinition.ContainingAssembly?.Name ?? "") + "|" +
             type.OriginalDefinition.ToDisplayString(KeyFormat);
 
         private static string ShortOfRequestKey(string key)
         {
             if (key.StartsWith('~')) return key[1..];
+
             var trimmed = key.Split('<')[0];
+
+            // Drop the assembly qualifier and any global:: prefix before taking the last dot
+            // segment. An assembly name contains dots, so splitting on '.' alone would return the
+            // tail of the assembly rather than the request name.
+            var bar = trimmed.LastIndexOf('|');
+            if (bar >= 0) trimmed = trimmed[(bar + 1)..];
+
+            var colons = trimmed.LastIndexOf("::", StringComparison.Ordinal);
+            if (colons >= 0) trimmed = trimmed[(colons + 2)..];
+
             var dot = trimmed.LastIndexOf('.');
             return dot < 0 ? trimmed : trimmed[(dot + 1)..];
         }
@@ -1709,10 +2134,13 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 2: call edges");
 
-            foreach (var tree in comp.SyntaxTrees)
+            foreach (var unit in comps.BindOrder)
             {
+                var tree = unit.Tree;
                 if (Skip(tree)) continue;
-                var model = comp.GetSemanticModel(tree);
+                var model = unit.Model();
+                _currentAssembly = unit.Compilation.AssemblyName ?? "";
+                _currentProject = unit.Project;
                 var root = tree.GetRoot();
 
                 // Top-level statements have no containing method declaration. Without this branch
@@ -1809,8 +2237,12 @@ public static partial class Indexer
                 }
                 else if (info.Symbol == null && info.CandidateSymbols.Length > 1)
                 {
-                    // An edge is still drawn, to the first candidate. That is a coin toss between
-                    // overloads, so say where it happened rather than let it pass as a fact.
+                    // Counted as unresolved, not merely recorded. The edge below still points at
+                    // the first candidate, but that is a coin toss between overloads: the call did
+                    // not bind to a symbol, and leaving it out of UnresolvedCallSites let an
+                    // ambiguous site sit in the denominator as if it had resolved. On a real
+                    // solution 17 such sites coexisted with a reported 100.0%.
+                    UnresolvedCallSites++;
                     RecordUnresolved("call", inv, inv.ToString(), "ambiguous-overload");
                 }
 
@@ -1864,7 +2296,7 @@ public static partial class Indexer
                     continue;
                 }
 
-                RecordExternal(t, oc.Type);
+                RecordExternal(t, oc.Type, _currentAssembly);
             }
 
             foreach (var declaration in body.DescendantNodes().OfType<VariableDeclarationSyntax>())
@@ -1872,7 +2304,7 @@ public static partial class Indexer
                 if (model.GetSymbolInfo(declaration.Type).Symbol is INamedTypeSymbol vt &&
                     !vt.Locations.Any(l => l.IsInSource))
                 {
-                    RecordExternal(vt, declaration.Type);
+                    RecordExternal(vt, declaration.Type, _currentAssembly);
                 }
             }
         }
@@ -2629,22 +3061,17 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 3: interface and override edges");
 
-            // One lookup instead of a linear scan per member per implementor.
-            var methodByShort = new Dictionary<string, Node>(StringComparer.Ordinal);
-            var methodsByOwner = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
-
-            foreach (var n in g.Nodes)
+            // Member-level override and interface edges were read from the compiler in pass 1.
+            // They are emitted here only because the di-bound note is decided by pass 2's
+            // container registrations, which do not exist yet when the models are alive.
+            foreach (var (baseMember, derivedMember, baseType, derivedType, kind) in _pendingMemberEdges)
             {
-                if (n.Kind != "method") continue;
-                methodByShort.TryAdd(n.Short, n);
-
-                var dot = n.Short.LastIndexOf('.');
-                if (dot <= 0) continue;
-                var owner = n.Short[..dot];
-                if (!methodsByOwner.TryGetValue(owner, out var list)) methodsByOwner[owner] = list = new List<Node>();
-                list.Add(n);
+                var note = _diBoundPairs.Contains((baseType, derivedType)) ? "di-bound" : null;
+                Link(baseMember, derivedMember, kind, note);
             }
 
+            // One type-level edge per (base, implementor) pair, so "what implements this" is
+            // answerable even for a type whose members produced no member edge of their own.
             foreach (var (baseId, implementors) in _implementorsByBase)
             {
                 var baseNode = g.ById(baseId);
@@ -2652,23 +3079,12 @@ public static partial class Indexer
 
                 // Interfaces dispatch; base classes are overridden. Both answer "what actually runs".
                 var edgeKind = baseNode.Kind == "interface" ? EdgeKind.Interface : EdgeKind.Override;
-                var members = methodsByOwner.GetValueOrDefault(baseNode.Short) ?? [];
 
                 foreach (var implId in implementors)
                 {
-                    var implNode = g.ById(implId);
-                    if (implNode == null) continue;
+                    if (g.ById(implId) == null) continue;
 
-                    var preferred = _diBoundPairs.Contains((baseId, implId));
-                    var note = preferred ? "di-bound" : null;
-
-                    foreach (var m in members)
-                    {
-                        var memberName = m.Short[(baseNode.Short.Length + 1)..];
-                        if (!methodByShort.TryGetValue(implNode.Short + "." + memberName, out var target)) continue;
-                        Link(m.Id, target.Id, edgeKind, note);
-                    }
-
+                    var note = _diBoundPairs.Contains((baseId, implId)) ? "di-bound" : null;
                     Link(baseId, implId, edgeKind, note);
                 }
             }

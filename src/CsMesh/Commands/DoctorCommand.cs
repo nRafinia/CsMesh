@@ -92,6 +92,28 @@ public static class DoctorCommand
                 e.Line("  include them with: csmesh index --all");
             }
 
+            // Source the ownership rules left out is named rather than dropped in silence. Both are
+            // printed only when non-zero so the common case stays quiet.
+            if (graph.ExcludedLooseFiles > 0)
+            {
+                e.Line($"loose files     {graph.ExcludedLooseFiles} .cs file(s) outside every project are not indexed");
+            }
+
+            if (graph.UnevaluableCompileItems > 0)
+            {
+                e.Line($"unevaluable     {graph.UnevaluableCompileItems} compile item(s) name an MSBuild property not evaluated");
+            }
+
+            if (graph.UnevaluableInternalsVisibleTo > 0)
+            {
+                e.Line($"ivt             {graph.UnevaluableInternalsVisibleTo} InternalsVisibleTo item(s) name an MSBuild property not evaluated");
+            }
+
+            if (graph.UnevaluableUsings > 0)
+            {
+                e.Line($"usings          {graph.UnevaluableUsings} Using item(s) name an MSBuild property not evaluated");
+            }
+
             e.Line($"global usings   {graph.GlobalUsingSources} set(s) compiled in"
                               + (graph.GlobalUsingSources == 0
                                   ? "  -- none; the System namespace is missing and nothing will bind"
@@ -278,6 +300,19 @@ public static class DoctorCommand
             // said "nothing to see". 99.9% is ugly and true; 100.0% is reserved for exactly full.
             var permille = (int)(1000L * bound / graph.TotalCallSites);
             e.Line($"  calls resolved  {permille / 10.0:0.0}%  ({bound}/{graph.TotalCallSites})");
+
+            // The two causes are different jobs: a missing candidate is usually a missing
+            // reference, while an ambiguous overload means two in-scope symbols fit and the
+            // compiler refused to choose. Both are unresolved now; naming them separately is what
+            // keeps a reference problem from being mistaken for an overload problem.
+            var noCandidate = graph.UnresolvedByReason.GetValueOrDefault("call/no-candidate-symbol");
+            var ambiguous = graph.UnresolvedByReason.GetValueOrDefault("call/ambiguous-overload");
+            if (noCandidate + ambiguous > 0)
+            {
+                e.Line($"  calls unresolved {noCandidate + ambiguous}  " +
+                       $"({noCandidate} no candidate, {ambiguous} ambiguous overload)");
+            }
+
             // Only name the build when the reference set actually looks unbuilt. Telling someone
             // to run dotnet build on a solution whose bin/ already holds 223 assemblies is a
             // wrong diagnosis stated confidently, which is worse than no diagnosis.
@@ -292,15 +327,42 @@ public static class DoctorCommand
         if (graph.Diagnostics.Count > 0)
         {
             e.Line("  compiler said");
-            foreach (var note in graph.Diagnostics.Take(5))
-            {
-                e.Line($"    {note.Id} x{note.Count,-6} {note.Message}");
-            }
 
-            if (graph.Diagnostics.Any(d => d.Id == "CS0433"))
+            // Grouped by project: one project's missing reference and another's bad using are
+            // different problems, and a flat list lets the first project crowd the rest out. Each
+            // project shows its five largest groups.
+            var byProject = graph.Diagnostics
+                .GroupBy(d => d.Project, StringComparer.Ordinal)
+                .OrderByDescending(g => g.Max(x => x.Count))
+                .ThenBy(g => g.Key, StringComparer.Ordinal)
+                .ToList();
+
+            foreach (var project in byProject)
             {
-                e.Line("    CS0433 means a type arrived from two assemblies. bin/ probably holds a");
-                e.Line("    compiled copy of the source being indexed; that breaks resolution.");
+                if (project.Key.Length > 0) e.Line($"    {project.Key}");
+
+                var shown = 0;
+                foreach (var note in project.OrderByDescending(x => x.Count))
+                {
+                    if (shown++ >= 5) break;
+                    e.Line($"    {note.Id} x{note.Count,-6} {note.Message}");
+                }
+
+                if (project.Any(d => d.Id == "CS0433"))
+                {
+                    e.Line("    CS0433 means a type arrived from two assemblies. bin/ probably holds a");
+                    e.Line("    compiled copy of the source being indexed; that breaks resolution.");
+                }
+            }
+        }
+
+        if (graph.ProjectCycles.Count > 0)
+        {
+            e.Line($"  cycle broken    {graph.ProjectCycles.Count} ProjectReference cycle edge(s);");
+            e.Line("                  the compilation for each broken edge does not exist:");
+            foreach (var cycle in graph.ProjectCycles.Take(8))
+            {
+                e.Line($"    {cycle}");
             }
         }
 

@@ -36,6 +36,11 @@ public static class QueryCommand
         // one project should not pay for the other seven.
         var under = opt.Value("under");
 
+        // Assembly-qualified keys make a name that repeats across projects return exit 3 instead of
+        // a silently wrong single answer, so the caller needs a way to pick one. --project names
+        // the project a candidate belongs to; the exit-3 listing prints the same value.
+        var projectFilter = opt.Value("project");
+
         var depth = opt.Int("depth", kind switch
         {
             "blast" => 3,
@@ -123,13 +128,13 @@ public static class QueryCommand
                 return Exit.Usage;
             }
 
-            var origin = Single(graph, opt.Positional[0], writer, result, json, dirtySet, out var originExit);
+            var origin = Single(graph, opt.Positional[0], projectFilter, writer, result, json, dirtySet, out var originExit);
             if (origin == null) return originExit;
 
             Models.Node? destination = null;
             if (opt.Positional.Count > 1)
             {
-                destination = Single(graph, opt.Positional[1], writer, result, json, dirtySet, out var destinationExit);
+                destination = Single(graph, opt.Positional[1], projectFilter, writer, result, json, dirtySet, out var destinationExit);
                 if (destination == null) return destinationExit;
                 result.Query = $"{opt.Positional[0]} -> {opt.Positional[1]}";
             }
@@ -183,10 +188,10 @@ public static class QueryCommand
 
             result.Query = $"{opt.Positional[0]} -> {opt.Positional[1]}";
 
-            var origin = Single(graph, opt.Positional[0], writer, result, json, dirtySet, out var originExit);
+            var origin = Single(graph, opt.Positional[0], projectFilter, writer, result, json, dirtySet, out var originExit);
             if (origin == null) return originExit;
 
-            var destination = Single(graph, opt.Positional[1], writer, result, json, dirtySet, out var destinationExit);
+            var destination = Single(graph, opt.Positional[1], projectFilter, writer, result, json, dirtySet, out var destinationExit);
             if (destination == null) return destinationExit;
 
             exitCode = Queries.Path(graph, origin, destination, depth, writer, dirtySet);
@@ -210,6 +215,13 @@ public static class QueryCommand
                 : candidates;
 
             if (wanted.Count == 0) wanted = candidates;
+
+            if (ApplyProject(wanted, projectFilter) is not { } scoped)
+            {
+                return NoProjectMatch(query, projectFilter!, writer, result, json);
+            }
+
+            wanted = scoped;
             if (wanted.Count > 1) return Ambiguous(query, wanted, writer, result, json, dirtySet);
 
             var node = wanted[0];
@@ -272,6 +284,7 @@ public static class QueryCommand
     private static Models.Node? Single(
         Models.Graph graph,
         string query,
+        string? projectFilter,
         BudgetWriter writer,
         QueryResult result,
         bool json,
@@ -285,14 +298,53 @@ public static class QueryCommand
             return null;
         }
 
-        if (candidates.Count > 1)
+        if (ApplyProject(candidates, projectFilter) is not { } scoped)
         {
-            exitCode = Ambiguous(query, candidates, writer, result, json, dirty);
+            exitCode = NoProjectMatch(query, projectFilter!, writer, result, json);
+            return null;
+        }
+
+        if (scoped.Count > 1)
+        {
+            exitCode = Ambiguous(query, scoped, writer, result, json, dirty);
             return null;
         }
 
         exitCode = Exit.Ok;
-        return candidates[0];
+        return scoped[0];
+    }
+
+    /// <summary>
+    /// The candidates in one project, or null when the filter was given and nothing matched. A
+    /// filter is matched against the project's root-relative path exactly or as a trailing segment,
+    /// so "Api" and "src/Api" both select one project. Null is distinct from "no filter" so a
+    /// mistyped project reports a miss rather than silently answering from every project.
+    /// </summary>
+    private static List<Models.Node>? ApplyProject(List<Models.Node> candidates, string? filter)
+    {
+        if (string.IsNullOrWhiteSpace(filter)) return candidates;
+
+        var matched = candidates.Where(c => ProjectMatches(c.Project, filter)).ToList();
+        return matched.Count > 0 ? matched : null;
+    }
+
+    private static bool ProjectMatches(string project, string filter)
+    {
+        var normalized = filter.Replace('\\', '/').Trim('/');
+        if (normalized.Length == 0) return true;
+
+        return project.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
+               project.EndsWith("/" + normalized, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int NoProjectMatch(
+        string query, string project, BudgetWriter writer, QueryResult result, bool json)
+    {
+        writer.Force($"no match for '{query}' in project '{project}'.");
+
+        if (json) return EmitJson(result, writer, Exit.NotFound, null, keepRows: true);
+        writer.Flush();
+        return Exit.NotFound;
     }
 
     private static int NotFound(
@@ -424,7 +476,11 @@ public static class QueryCommand
         foreach (var candidate in candidates.Take(12))
         {
             // Budget-guarded: a bare member name in a large solution can match hundreds of symbols.
-            if (!writer.Add($"  {candidate.Name}  ({candidate.Kind})  {candidate.File}:{candidate.Line}")) break;
+            // The project leads the location so a repeated name -- every linked type, every
+            // top-level Program -- can be told apart and pasted into --project.
+            var project = candidate.Project.Length > 0 ? $"{candidate.Project}  " : "";
+            if (!writer.Add($"  {candidate.Name}  ({candidate.Kind})  {project}{candidate.File}:{candidate.Line}"))
+                break;
 
             result.Rows.Add(new QueryRow
             {
@@ -432,13 +488,14 @@ public static class QueryCommand
                 Kind = candidate.Kind,
                 Relation = "candidate",
                 Note = candidate.Name,
+                Project = candidate.Project.Length > 0 ? candidate.Project : null,
                 File = candidate.File.Length > 0 ? candidate.File : null,
                 Line = candidate.Line,
                 Stale = candidate.File.Length > 0 && dirty.Contains(candidate.File)
             });
         }
 
-        writer.Force("re-run with a qualified Type.Member name.");
+        writer.Force("pick one with --project <name> (shown above), or re-run with a qualified Type.Member name.");
 
         if (json) return EmitJson(result, writer, Exit.Ambiguous, null, keepRows: true);
 

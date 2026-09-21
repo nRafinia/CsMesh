@@ -9,6 +9,7 @@ namespace CsMesh.Tests;
 /// a flat 600 -- so every command whose default is not 600 logged a cap it was never held to. One
 /// value, resolved once, used by both.
 /// </summary>
+[Collection("telemetry-state")]
 public sealed class TelemetryBudgetTests
 {
     [Fact]

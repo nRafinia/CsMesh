@@ -4,15 +4,15 @@
 
 ## nodes
 # key | kind | name | file
-Demo::global::Demo.IBus|NamedType | interface | Demo.IBus | Bus.cs
-Demo::global::Demo.IHandleMessages<T>|NamedType | interface | Demo.IHandleMessages<T> | Bus.cs
-Demo::global::Demo.OrderPlacedConsumer|NamedType | type | Demo.OrderPlacedConsumer | Bus.cs
-Demo::global::Demo.OrderPlaced|NamedType | type | Demo.OrderPlaced | Bus.cs
-Demo::global::Demo.Publisher|NamedType | type | Demo.Publisher | Bus.cs
-global::Demo.IBus::Publish`1(T)|Method | method | Demo.IBus.Publish | Bus.cs
-global::Demo.OrderPlacedConsumer::Handle`0(global::Demo.OrderPlaced)|Method | method | Demo.OrderPlacedConsumer.Handle | Bus.cs
-global::Demo.Publisher::Go`0(global::Demo.OrderPlaced)|Method | method | Demo.Publisher.Go | Bus.cs
-global::Demo.Publisher::_bus|Field | field | Demo.Publisher._bus | Bus.cs
+Fixture|global::Demo.IBus|NamedType | interface | Demo.IBus | Bus.cs
+Fixture|global::Demo.IBus|Publish`1(T)|Method | method | Demo.IBus.Publish | Bus.cs
+Fixture|global::Demo.IHandleMessages<T>|NamedType | interface | Demo.IHandleMessages<T> | Bus.cs
+Fixture|global::Demo.OrderPlacedConsumer|Handle`0(global::Demo.OrderPlaced)|Method | method | Demo.OrderPlacedConsumer.Handle | Bus.cs
+Fixture|global::Demo.OrderPlacedConsumer|NamedType | type | Demo.OrderPlacedConsumer | Bus.cs
+Fixture|global::Demo.OrderPlaced|NamedType | type | Demo.OrderPlaced | Bus.cs
+Fixture|global::Demo.Publisher|Go`0(global::Demo.OrderPlaced)|Method | method | Demo.Publisher.Go | Bus.cs
+Fixture|global::Demo.Publisher|NamedType | type | Demo.Publisher | Bus.cs
+Fixture|global::Demo.Publisher|_bus|Field | field | Demo.Publisher._bus | Bus.cs
 
 ## edges
 # from | kind | to | confidence | source | site | note

@@ -70,10 +70,18 @@ public sealed class Node
     public string Signature { get; set; } = string.Empty;
 
     /// <summary>
-    /// The .csproj this symbol belongs to, without extension. Empty when no project file was
-    /// found above the source file. This is data, not policy: a blast radius that crosses four
-    /// projects is a different size of change from one that stays inside a single assembly, and
-    /// the caller cannot tell from a list of type names.
+    /// The project that compiled this symbol: the project directory relative to the repository
+    /// root, with forward slashes. Empty only when the repository has no csproj at all.
+    ///
+    /// It names the owning compilation, not the .csproj nearest the file. Those differ for a base
+    /// type resolved through a CompilationReference and for a linked file compiled into several
+    /// assemblies, where the two owners' nodes share a file but must be distinguishable. The
+    /// relative path is unique per project where a file name is not -- eight fixture csprojs can
+    /// all be named Fixture.
+    ///
+    /// This is data, not policy: a blast radius that crosses four projects is a different size of
+    /// change from one that stays inside a single assembly, and the caller cannot tell from a list
+    /// of type names.
     /// </summary>
     public string Project { get; set; } = string.Empty;
 

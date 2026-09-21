@@ -4,13 +4,13 @@
 
 ## nodes
 # key | kind | name | file
-Demo::global::Demo.Caller|NamedType | type | Demo.Caller | Bus.cs
-Demo::global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
-Demo::global::Demo.IRequestHandler<T>|NamedType | interface | Demo.IRequestHandler<T> | Bus.cs
-Demo::global::Demo.OrphanCommand|NamedType | type | Demo.OrphanCommand | Bus.cs
-global::Demo.Caller::Go`0()|Method | method | Demo.Caller.Go | Bus.cs
-global::Demo.Caller::_mediator|Field | field | Demo.Caller._mediator | Bus.cs
-global::Demo.IMediator::Send`1(T)|Method | method | Demo.IMediator.Send | Bus.cs
+Fixture|global::Demo.Caller|Go`0()|Method | method | Demo.Caller.Go | Bus.cs
+Fixture|global::Demo.Caller|NamedType | type | Demo.Caller | Bus.cs
+Fixture|global::Demo.Caller|_mediator|Field | field | Demo.Caller._mediator | Bus.cs
+Fixture|global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
+Fixture|global::Demo.IMediator|Send`1(T)|Method | method | Demo.IMediator.Send | Bus.cs
+Fixture|global::Demo.IRequestHandler<T>|NamedType | interface | Demo.IRequestHandler<T> | Bus.cs
+Fixture|global::Demo.OrphanCommand|NamedType | type | Demo.OrphanCommand | Bus.cs
 
 ## edges
 # from | kind | to | confidence | source | site | note

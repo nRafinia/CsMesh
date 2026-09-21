@@ -37,8 +37,11 @@ public sealed class ProjectOutputShadowingTests : IDisposable
         File.WriteAllText(Path.Combine(root, "Data", "Data.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
 
+        // App calls Data's extension method, so in a real build it references Data. The single
+        // compilation never needed that edge written down; the per-project split does.
         File.WriteAllText(Path.Combine(root, "App", "App.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>"
+            + "<ItemGroup><ProjectReference Include=\"..\\Data\\Data.csproj\" /></ItemGroup></Project>");
 
         File.WriteAllText(Path.Combine(root, "Data", "Extensions.cs"),
             """

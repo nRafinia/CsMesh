@@ -203,7 +203,7 @@ public static class SkillText
         | 0 | complete answer | use it |
         | 1 | nothing found | `csmesh silence <symbol>` before anything else |
         | 2 | answer exists but exceeds the budget | in order: the depth the message names, then `--under <path>`, then `--depth 1` for direct edges only. Do **not** just raise `--budget` to a huge number, and do **not** run `silence` here -- a *narrowed* query that then exits 1 is when `silence` applies |
-        | 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
+        | 3 | ambiguous | the name repeats across projects, or is a bare member name: re-run with `--project <path>` taken from the candidate list, or with `Type.Member` |
         | 4 | no index; one written by an older csmesh; or (review) an index that predates HEAD | run `csmesh index` |
         | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
         | 64 | bad command line, including `review --accept` when the index predates HEAD | run `csmesh <cmd> --help` |
@@ -221,7 +221,9 @@ public static class SkillText
           and `diff`, 900 for `context`, 500 for `path`.
         - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
           question is cheaper than paying for the whole tree.
-        - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3.
+        - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3. When
+          the name really does repeat across projects, exit 3 prints each candidate with its project:
+          re-run with `--project <path>` taken from that list.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use that rather
           than guessing a smaller number.
         - Chain two questions into one shell call:
@@ -294,6 +296,8 @@ public static class SkillText
         - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
           whether the symbol was mistyped, lives in a package, was never bound because the solution was not
           built, or is reached only through a container scan. Only one of those is fixed by searching here.
+        - **Exit 3**: the name matches symbols in more than one project. The candidate list prints each
+          one's project; re-run with `--project <path>` taken from it, or with a qualified `Type.Member`.
         - **Thinner than expected**: `csmesh unresolved` reports where the indexer failed and why.
         - **`[STALE]` rows**: re-run with `--heal`. The changed files are rebound before the answer.
 
@@ -321,7 +325,8 @@ public static class SkillText
           Use `csmesh where <member-name>` first to discover the correct qualified name.
         - Always pass `--budget`: 700 `trace`, 600 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 500 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
-        - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
+        - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3. When the name
+          repeats across projects, exit 3 lists each candidate with its project: use `--project <path>`.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
         - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
           the code you are about to change.
@@ -397,6 +402,8 @@ public static class SkillText
         - **Exit 1**: do not fall back to grep. Run `csmesh silence <symbol>` (or `<from> <to>`). It says
           whether the symbol was mistyped, lives in a package, was never bound because the solution was not
           built, or is reached only through a container scan. Only one of those is fixed by searching here.
+        - **Exit 3**: the name matches symbols in more than one project. The candidate list prints each
+          one's project; re-run with `--project <path>` taken from it, or with a qualified `Type.Member`.
         - **Thinner than expected**: `csmesh unresolved` reports where the indexer failed and why.
         - **`[STALE]` rows**: re-run with `--heal`. The changed files are rebound before the answer.
 
@@ -424,7 +431,8 @@ public static class SkillText
           Use `csmesh where <member-name>` first to discover the correct qualified name.
         - Always pass `--budget`: 700 `trace`, 600 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 500 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
-        - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3.
+        - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3. When the name
+          repeats across projects, exit 3 lists each candidate with its project: use `--project <path>`.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
         - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
           the code you are about to change.
