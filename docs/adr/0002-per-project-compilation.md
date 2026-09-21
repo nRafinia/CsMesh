@@ -1,6 +1,6 @@
 # ADR 0002: One compilation per in-scope project
 
-- **Status:** accepted for implementation on `feature/per-project-compilation`
+- **Status:** accepted
 - **Date:** 2026-09-20
 - **Supersedes:** the single whole-solution compilation in `Indexer.Build`
 
@@ -260,3 +260,51 @@ without bumping the snapshot format.
 - Global usings are no longer a cross-project leak, which is a behavior change users will notice as
   previously binding names becoming unbound — and the synthesis and TFM work make that change agree
   with the build.
+
+## As built
+
+What the branch actually did, where it differs from or sharpens the proposal above.
+
+- **Name-matching for member edges was removed, not kept.** The proposal did not decide how base and
+  derived members, or interface members and their implementations, would be linked once the split
+  existed. A first cut matched them by member name in an owner-keyed table (a post-pass over the
+  graph, where no semantic model is alive). That drew a derived constructor to its base constructor,
+  drew static methods that merely share a name, drew members hidden with `new`, and ignored
+  parameter types, so two overloads of one interface member both pointed at whichever implementation
+  was declared first. The relationship is now read from the compiler while the model is alive —
+  `OverriddenMethod`/`OverriddenProperty`/`OverriddenEvent`, followed up the chain to a declaration
+  in source, and `FindImplementationForInterfaceMember` — with accessors and compiler-synthesized
+  members (record `Clone`/`Equals`/`PrintMembers`) skipped and constructed generic bases reduced to
+  their open definition. No case that the symbols cannot cover was found, so there was nothing to
+  keep behind a provenance marker, and the name matching was deleted.
+- **`--project`.** Assembly-qualified keys make a name declared in more than one project exit 3
+  instead of silently binding one. The exit-3 output lists each candidate with its project, and
+  `--project <path>` selects one; the same option is on the MCP tool schema. Exit-code meanings are
+  unchanged.
+- **The call-resolution metric counts an ambiguous overload as unresolved.** `calls resolved` is
+  `TotalCallSites - UnresolvedCallSites`, and an ambiguous call (candidates, no symbol) is now
+  subtracted. `doctor` names the two causes separately: no candidate and ambiguous overload.
+- **`InternalsVisibleTo` items are synthesized.** With one compilation per project, a friend
+  relationship no longer exists implicitly. `<InternalsVisibleTo>` and the `AssemblyAttribute` form
+  are read from each csproj and emitted as an assembly attribute into that project's compilation,
+  with a friend name translated to the disambiguated compilation name when two projects share a real
+  name.
+- **`<Using>` items are reconstructed.** A project with `ImplicitUsings` but no generated
+  `GlobalUsings.g.cs` gets the set the SDK would have written — the base namespaces, plus the Web
+  SDK's — including its own `<Using>` items. A repository with no csproj keeps the historic
+  one-size-fits-all set.
+- **Compile-item ownership.** The nearest csproj is only the default owner. `ProjectScope` also
+  reads `<Compile Include>` (with `Link`), `<Compile Remove>`, `EnableDefaultCompileItems`, and
+  imported `.projitems`; a file's owners are the nearest project's default glob unless removed, plus
+  every in-scope project that explicitly includes it. `$(MSBuildThisFileDirectory)` is the one
+  property evaluated; any other property leaves the item counted as unevaluable rather than guessed.
+- **Loose-file rule.** A `.cs` file with no owning in-scope project is excluded when the repository
+  has projects and counted as `ExcludedLooseFiles`; when the repository has no project at all it is
+  kept. This supersedes §2's "loose-file exclusion is not implemented" — the compile-item model
+  above is what made it safe to exclude.
+- **P1 not needed.** The follow-up §2 held open — parse `<Compile Include>`/`Link` and `.projitems`,
+  or never exclude a referenced loose file — is satisfied by the compile-item ownership model, so no
+  separate pass was required.
+- **Format v13 and the baseline stamp.** Keys are assembly-qualified; `.csmesh/accepted.txt` records
+  the graph format, and a mismatch makes `review` exit 4 with the `--accept` remedy rather than
+  re-report the whole history.
