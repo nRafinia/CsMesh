@@ -272,7 +272,7 @@ footer .right{margin-left:auto}
 
   <div class="wrap">
     <h1>Trace what a C# codebase actually runs.</h1>
-    <p class="lede">Text search stops at the interface. csmesh compiles your solution with Roslyn into a frozen symbol graph and prints the resolved path — <b>which implementation the container injects, which handler a <code>Send()</code> reaches, which endpoints break if you touch a property</b> — with a fixed cap on how much comes back, and a confidence score on every edge it draws.</p>
+    <p class="lede">Text search stops at the interface. csmesh compiles your solution's projects with Roslyn into a frozen symbol graph and prints the resolved path — <b>which implementation the container injects, which handler a <code>Send()</code> reaches, which endpoints break if you touch a property</b> — with a fixed cap on how much comes back, and a confidence score on every edge it draws.</p>
     <div class="hero-actions">
       <div class="cmdbox dark">
         <code>curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | sh</code>
@@ -635,7 +635,7 @@ const commands = [
   "calls: IPaymentGateway.Authorize, IOrderStore.Save, IAuditLogger.LogAsync",
   "called by: OrdersController.Create, OrderProcessingWorker.ExecuteAsync"]},
  {label:"index", line:"csmesh index", exit:"exit 0",
-  desc:"Parses the whole solution with Roslyn and writes the frozen graph to .csmesh/graph.json. Incremental by default; re-parses only modified files.",
+  desc:"Parses the solution's in-scope projects with Roslyn, each as its own compilation, and writes the frozen graph to .csmesh/graph.json. Incremental by default; re-parses only modified files.",
   out:["indexed 412 files (3 modified parsed incrementally) -> 1604 nodes, 3011 edges in 0.4s"]},
  {label:"doctor", line:"csmesh doctor", exit:"exit 0",
   desc:"Reports index age and drift, the edge mix it managed to resolve, which assistants are wired up, and who has actually been calling the tool.",

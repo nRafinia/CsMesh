@@ -217,7 +217,7 @@ csmesh silence IStore         # why a symbol has no callers: unbound sites, out-
 csmesh doctor                 # index health, reference count, stale generated sources, version drift
 ```
 
-The graph is a semantic reconstruction of what the code most likely does at runtime, built from Roslyn plus project structure plus known framework conventions. On a compilation with unresolved references it still answers — and `doctor` tells you how much of it stands on solid ground.
+The graph is a semantic reconstruction of what the code most likely does at runtime, built from Roslyn plus project structure plus known framework conventions. Each in-scope project is compiled on its own, so a project whose references did not all resolve still answers — and `doctor` tells you how much of it stands on solid ground.
 
 ## 📦 Installation
 
@@ -399,7 +399,7 @@ csmesh find "POST /orders"
 Builds or refreshes the Roslyn symbol graph stored in `.csmesh/graph.json`. Incremental by default: only the files that changed since the last index are re-bound, and their symbols keep their existing identity so every edge into them survives the edit. Falls back to a full pass when an edit touches something that binds across files — an interface declaration, a handler, a container registration. The `.csmesh/` directory is added to `.git/info/exclude` when it is created, so it never shows up as untracked in a work repository.
 ```bash
 csmesh index
-csmesh index --full          # force a whole-solution rebuild
+csmesh index --full          # force a full re-index of every in-scope project
 csmesh index --all           # include projects no solution file builds
 csmesh index --repo ./src
 ```
