@@ -91,6 +91,20 @@ public sealed class SkillTextTests
     }
 
     /// <summary>
+    /// Exit 3 is no longer only "you typed a bare member name": assembly-qualified keys make a name
+    /// that repeats across projects ambiguous, and the candidate list prints each project so
+    /// --project can pick one. An agent that reads only the rules must be told both.
+    /// </summary>
+    [Fact]
+    public void The_exit_3_remedy_names_the_project_filter_and_the_candidate_list()
+    {
+        Assert.Contains("--project", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("--project", SkillText.Rules, StringComparison.Ordinal);
+        Assert.Contains("candidate list", SkillText.Markdown, StringComparison.Ordinal);
+        Assert.Contains("candidate list", SkillText.Rules, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Exit 2 is a size problem, not an absence: the remedy is the depth the message names, then
     /// --under, then --depth 1, and silence belongs to a narrowed query that then exits 1.
     /// </summary>

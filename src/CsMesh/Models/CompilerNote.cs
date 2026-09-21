@@ -12,4 +12,10 @@ public sealed class CompilerNote
 
     /// <summary>One representative message, truncated.</summary>
     public string Message { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The project this diagnostic is about, relative to the repository root. Empty for a graph
+    /// built from a repository with no projects, where there is only one compilation to name.
+    /// </summary>
+    public string Project { get; set; } = string.Empty;
 }

@@ -4,15 +4,15 @@
 
 ## nodes
 # key | kind | name | file
-Demo::global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
-Demo::global::Demo.IRequestHandler<T>|NamedType | interface | Demo.IRequestHandler<T> | Bus.cs
-Demo::global::Demo.ShipOrderHandler|NamedType | type | Demo.ShipOrderHandler | Bus.cs
-Demo::global::Demo.ShipOrder|NamedType | type | Demo.ShipOrder | Bus.cs
-Demo::global::Demo.Shipper|NamedType | type | Demo.Shipper | Bus.cs
-global::Demo.IMediator::SendAsync`1(T)|Method | method | Demo.IMediator.SendAsync | Bus.cs
-global::Demo.ShipOrderHandler::Handle`0(global::Demo.ShipOrder)|Method | method | Demo.ShipOrderHandler.Handle | Bus.cs
-global::Demo.Shipper::Go`0()|Method | method | Demo.Shipper.Go | Bus.cs
-global::Demo.Shipper::_mediator|Field | field | Demo.Shipper._mediator | Bus.cs
+Fixture|global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
+Fixture|global::Demo.IMediator|SendAsync`1(T)|Method | method | Demo.IMediator.SendAsync | Bus.cs
+Fixture|global::Demo.IRequestHandler<T>|NamedType | interface | Demo.IRequestHandler<T> | Bus.cs
+Fixture|global::Demo.ShipOrderHandler|Handle`0(global::Demo.ShipOrder)|Method | method | Demo.ShipOrderHandler.Handle | Bus.cs
+Fixture|global::Demo.ShipOrderHandler|NamedType | type | Demo.ShipOrderHandler | Bus.cs
+Fixture|global::Demo.ShipOrder|NamedType | type | Demo.ShipOrder | Bus.cs
+Fixture|global::Demo.Shipper|Go`0()|Method | method | Demo.Shipper.Go | Bus.cs
+Fixture|global::Demo.Shipper|NamedType | type | Demo.Shipper | Bus.cs
+Fixture|global::Demo.Shipper|_mediator|Field | field | Demo.Shipper._mediator | Bus.cs
 
 ## edges
 # from | kind | to | confidence | source | site | note

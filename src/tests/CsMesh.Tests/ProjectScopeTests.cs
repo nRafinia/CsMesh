@@ -205,15 +205,17 @@ public sealed class ProjectScopeTests : IDisposable
     // ------------------------------------------------------------------ safety
 
     [Fact]
-    public void A_loose_file_under_no_project_is_kept()
+    public void A_loose_file_is_excluded_once_the_repository_has_a_project()
     {
         Write("Scratch.cs", "public class Loose { }");
         Write("App.slnx", "<Solution><Project Path=\"src/Live/Live.csproj\" /></Solution>");
 
         var scope = ProjectScope.Discover(_root);
 
-        // There is nothing to judge it by, and dropping source in silence is the worse failure.
-        Assert.True(scope.Includes(Path_("Scratch.cs")));
+        // No csproj above it means no assembly to compile it into. The count is reported by doctor
+        // rather than the file being dropped in silence.
+        Assert.False(scope.Includes(Path_("Scratch.cs")));
+        Assert.True(scope.HasProjects);
     }
 
     [Fact]

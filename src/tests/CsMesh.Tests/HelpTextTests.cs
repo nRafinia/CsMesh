@@ -9,6 +9,7 @@ namespace CsMesh.Tests;
 /// "deliberately one screen"; at the 850-token default a large enough solution exhausts the budget
 /// and says so, which makes that promise false exactly where an agent would lean on it.
 /// </summary>
+[Collection("telemetry-state")]
 public sealed class HelpTextTests
 {
     [Fact]

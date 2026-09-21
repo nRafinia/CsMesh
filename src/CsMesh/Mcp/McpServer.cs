@@ -309,7 +309,10 @@ public static class McpServer
                 + "a .cs file. Use ordinary text search for those.\n\n"
                 + "Answers end with a suggested next step written as a shell command, e.g. "
                 + "'next: csmesh entrypoints orders'. Each maps to the tool of the same name, so call "
-                + "'entrypoints' with filter='orders' rather than reaching for a terminal."
+                + "'entrypoints' with filter='orders' rather than reaching for a terminal.\n\n"
+                + "When a name is declared in more than one project, the answer exits 3 and lists each "
+                + "candidate with its project. Re-run the tool with 'project' set to one of them rather "
+                + "than guessing."
         };
     }
 

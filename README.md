@@ -217,7 +217,7 @@ csmesh silence IStore         # why a symbol has no callers: unbound sites, out-
 csmesh doctor                 # index health, reference count, stale generated sources, version drift
 ```
 
-The graph is a semantic reconstruction of what the code most likely does at runtime, built from Roslyn plus project structure plus known framework conventions. On a compilation with unresolved references it still answers — and `doctor` tells you how much of it stands on solid ground.
+The graph is a semantic reconstruction of what the code most likely does at runtime, built from Roslyn plus project structure plus known framework conventions. Each in-scope project is compiled on its own, so a project whose references did not all resolve still answers — and `doctor` tells you how much of it stands on solid ground.
 
 ## 📦 Installation
 
@@ -365,6 +365,7 @@ csmesh entrypoints orders
 |:---|:---|
 | `--repo <PATH>` | Target repository root (default: nearest `.sln`, `.slnx`, or `.git` above cwd) |
 | `--under <PATH>` | Restrict the answer to a subtree, e.g. `--under src/Api`. Narrow before raising the budget. |
+| `--project <PATH>` | Pick one project when a name repeats across assemblies, e.g. `--project src/Api`. Exit `3` lists each candidate's project. |
 | `--budget <N>` | Hard token limit for stdout. Exits code `2` on overflow. Defaults per command below. |
 | `--depth <N>` | Traversal depth limit (`trace` 6, `blast-radius` 3, `context` 3, `path` 12, `diff` 3) |
 | `--heal` | Re-bind changed files before answering, instead of marking rows `[STALE]` |
@@ -398,7 +399,7 @@ csmesh find "POST /orders"
 Builds or refreshes the Roslyn symbol graph stored in `.csmesh/graph.json`. Incremental by default: only the files that changed since the last index are re-bound, and their symbols keep their existing identity so every edge into them survives the edit. Falls back to a full pass when an edit touches something that binds across files — an interface declaration, a handler, a container registration. The `.csmesh/` directory is added to `.git/info/exclude` when it is created, so it never shows up as untracked in a work repository.
 ```bash
 csmesh index
-csmesh index --full          # force a whole-solution rebuild
+csmesh index --full          # force a full re-index of every in-scope project
 csmesh index --all           # include projects no solution file builds
 csmesh index --repo ./src
 ```
@@ -585,7 +586,7 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 | `0` | **Success** | Complete answer returned within budget. | Parse output directly. |
 | `1` | **Not Found** | Symbol does not exist in repository. | Check spelling or verify namespace. |
 | `2` | **Over Budget** | Answer exists but exceeds `--budget`. | Re-run with narrower `--depth` or query a specific callee. |
-| `3` | **Ambiguous** | Multiple symbols match query. | Re-run with qualified `Type.Member` instead of bare member name. |
+| `3` | **Ambiguous** | Multiple symbols match query, including the same name declared in more than one project. | Re-run with qualified `Type.Member`, or with `--project <path>` taken from the candidate list. |
 | `4` | **No Index** | No usable graph: not generated, or (for `review`) the index predates HEAD. | Execute `csmesh index` and retry. |
 | `5` | **Changed** (`review` only) | Unaccepted structural change vs. the base revision. | Review the finding, then `csmesh review --accept` if it's fine to keep. |
 | `64`| **Usage Error** | Invalid flags, syntax, or arguments, including `review --accept` while the index predates HEAD. | Run `csmesh <cmd> --help`. |

@@ -4,17 +4,17 @@
 
 ## nodes
 # key | kind | name | file
-Demo::global::Demo.AuditOnShipped|NamedType | type | Demo.AuditOnShipped | Bus.cs
-Demo::global::Demo.EmailOnShipped|NamedType | type | Demo.EmailOnShipped | Bus.cs
-Demo::global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
-Demo::global::Demo.INotificationHandler<T>|NamedType | interface | Demo.INotificationHandler<T> | Bus.cs
-Demo::global::Demo.OrderShipped|NamedType | type | Demo.OrderShipped | Bus.cs
-Demo::global::Demo.Publisher|NamedType | type | Demo.Publisher | Bus.cs
-global::Demo.AuditOnShipped::Handle`0(global::Demo.OrderShipped)|Method | method | Demo.AuditOnShipped.Handle | Bus.cs
-global::Demo.EmailOnShipped::Handle`0(global::Demo.OrderShipped)|Method | method | Demo.EmailOnShipped.Handle | Bus.cs
-global::Demo.IMediator::Publish`1(T)|Method | method | Demo.IMediator.Publish | Bus.cs
-global::Demo.Publisher::Go`0(global::Demo.OrderShipped)|Method | method | Demo.Publisher.Go | Bus.cs
-global::Demo.Publisher::_mediator|Field | field | Demo.Publisher._mediator | Bus.cs
+Fixture|global::Demo.AuditOnShipped|Handle`0(global::Demo.OrderShipped)|Method | method | Demo.AuditOnShipped.Handle | Bus.cs
+Fixture|global::Demo.AuditOnShipped|NamedType | type | Demo.AuditOnShipped | Bus.cs
+Fixture|global::Demo.EmailOnShipped|Handle`0(global::Demo.OrderShipped)|Method | method | Demo.EmailOnShipped.Handle | Bus.cs
+Fixture|global::Demo.EmailOnShipped|NamedType | type | Demo.EmailOnShipped | Bus.cs
+Fixture|global::Demo.IMediator|NamedType | interface | Demo.IMediator | Bus.cs
+Fixture|global::Demo.IMediator|Publish`1(T)|Method | method | Demo.IMediator.Publish | Bus.cs
+Fixture|global::Demo.INotificationHandler<T>|NamedType | interface | Demo.INotificationHandler<T> | Bus.cs
+Fixture|global::Demo.OrderShipped|NamedType | type | Demo.OrderShipped | Bus.cs
+Fixture|global::Demo.Publisher|Go`0(global::Demo.OrderShipped)|Method | method | Demo.Publisher.Go | Bus.cs
+Fixture|global::Demo.Publisher|NamedType | type | Demo.Publisher | Bus.cs
+Fixture|global::Demo.Publisher|_mediator|Field | field | Demo.Publisher._mediator | Bus.cs
 
 ## edges
 # from | kind | to | confidence | source | site | note

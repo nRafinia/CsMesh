@@ -1,3 +1,4 @@
+using CsMesh.Models;
 using CsMesh.Storage;
 
 namespace CsMesh.Common;
@@ -9,14 +10,33 @@ namespace CsMesh.Common;
 /// survives edits that have nothing to do with the finding. The rest of the line is prose for
 /// whoever reviews the file in a pull request -- a baseline nobody can read gets accepted
 /// wholesale, which defeats the point of having one.
+///
+/// The file records the graph format its hashes were derived under. Every finding id hashes the
+/// two Node.Keys of an edge, and a format bump that changes keys -- as v13's assembly-qualified
+/// keys do -- changes every hash. Without the stamp the whole history would re-surface as
+/// unaccepted the first time a repository upgraded, and a gate would fail on its own upgrade. The
+/// stamp lets 'review' refuse the comparison (exit 4) and say the remedy is '--accept'.
 /// </summary>
 public static class BaselineFile
 {
+    /// <summary>Marks the graph format the stored finding ids were derived under.</summary>
+    public const string FormatPrefix = "# format ";
+
     public static string PathFor(string root) => Path.Combine(root, ".csmesh", "accepted.txt");
 
+    /// <summary>Whether a baseline exists at all, separate from whether it is current.</summary>
+    public static bool Exists(string root) => File.Exists(PathFor(root));
+
     /// <summary>The set of accepted finding ids. Blank lines and '#' comments are ignored.</summary>
-    public static HashSet<string> Load(string root)
+    public static HashSet<string> Load(string root) => Load(root, out _);
+
+    /// <summary>
+    /// The accepted ids and the graph format they were written under. A file with no format line
+    /// predates the stamp and reports 0, which never equals a current format.
+    /// </summary>
+    public static HashSet<string> Load(string root, out int formatVersion)
     {
+        formatVersion = 0;
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var path = PathFor(root);
         if (!File.Exists(path)) return ids;
@@ -24,7 +44,16 @@ public static class BaselineFile
         foreach (var line in File.ReadLines(path))
         {
             var trimmed = line.Trim();
-            if (trimmed.Length == 0 || trimmed[0] == '#') continue;
+            if (trimmed.Length == 0) continue;
+
+            if (trimmed.StartsWith(FormatPrefix, StringComparison.Ordinal))
+            {
+                if (int.TryParse(trimmed[FormatPrefix.Length..].Trim(), out var parsed))
+                    formatVersion = parsed;
+                continue;
+            }
+
+            if (trimmed[0] == '#') continue;
 
             var space = trimmed.IndexOf(' ');
             ids.Add(space < 0 ? trimmed : trimmed[..space]);
@@ -51,6 +80,7 @@ public static class BaselineFile
         var lines = new List<string>
         {
             "# csmesh review baseline -- one accepted finding per line.",
+            $"{FormatPrefix}{Graph.CurrentFormatVersion}",
             "# the hash is what 'review' matches on; the rest is here for a human reading the diff.",
             "# regenerate with: csmesh review --accept",
             ""
