@@ -1029,6 +1029,20 @@ public static partial class Indexer
         private readonly List<(INamedTypeSymbol Type, TypeDeclarationSyntax Decl, int Id, SemanticModel Model)> _pendingHandlers = new();
 
         /// <summary>
+        /// Members that override or implement a member declared in source, captured while the
+        /// semantic models are still alive in pass 1 and emitted in pass 3 once the DI pairs are
+        /// known (the di-bound note depends on pass 2).
+        ///
+        /// The relationship is read from the compiler -- OverriddenMethod/Property/Event and
+        /// FindImplementationForInterfaceMember -- not matched by member name. Name matching cannot
+        /// tell an override from a same-named neighbour: it linked every derived constructor to its
+        /// base constructor, linked static methods that merely share a name, linked members hidden
+        /// with 'new', and collapsed overloads because it compared no parameter types.
+        /// </summary>
+        private readonly List<(int BaseMember, int DerivedMember, int BaseType, int DerivedType, EdgeKind Kind)>
+            _pendingMemberEdges = new();
+
+        /// <summary>
         /// A sample, not a log. Capped per kind rather than in total: unbound calls into the BCL
         /// run into the hundreds and would otherwise crowd out the handful of DI and dispatch
         /// failures, which are the ones worth acting on.
@@ -1279,14 +1293,17 @@ public static partial class Indexer
         }
 
         /// <summary>
-        /// The owner prefix of a type key: assembly plus its fully-qualified name, with the kind
-        /// segment dropped. This is exactly the prefix a member key carries before its member
-        /// segment, which is how a member node is traced back to its owner's key.
+        /// The owner prefix of a type key: assembly plus the type's fully-qualified name.
+        ///
+        /// A top-level type key is assembly|fqn|kind, so dropping the kind is enough; a nested type
+        /// key also carries its containing type, assembly|outerFqn|innerFqn|kind, so the wanted
+        /// segment is the last one before the kind, not simply everything before it. Both must
+        /// reduce to assembly|innerFqn, which is the prefix the type's own member keys carry.
         /// </summary>
         private static string TypeOwnerPrefix(string key)
         {
-            var last = key.LastIndexOf('|');
-            return last <= 0 ? key : key[..last];
+            var parts = key.Split('|');
+            return parts.Length < 2 ? key : parts[0] + "|" + parts[^2];
         }
 
         /// <summary>
@@ -1632,6 +1649,10 @@ public static partial class Indexer
                             }
                         }
                     }
+
+                    // Every member node for this type exists now, so the compiler's own
+                    // override/implementation relationships can be turned into edges.
+                    CaptureMemberEdges(type, typeId);
                 }
             }
 
@@ -1685,6 +1706,132 @@ public static partial class Indexer
                 _implementorsByBase[baseId] = list = new List<int>();
             if (!list.Contains(implId)) list.Add(implId);
         }
+
+        /// <summary>
+        /// The member-level edges of inheritance, read from the compiler while the model is alive.
+        ///
+        /// An override is <c>OverriddenMethod</c>/<c>OverriddenProperty</c>/<c>OverriddenEvent</c>,
+        /// followed up the chain until it reaches a declaration in source (an intermediate override
+        /// in a referenced project that is itself out of scope has no node). That relationship is
+        /// exactly the set the compiler considers an override, so constructors (no overridden
+        /// member), static members and methods hidden with <c>new</c> produce nothing -- the old
+        /// name match drew all three as if they were overrides.
+        ///
+        /// An interface implementation is <c>FindImplementationForInterfaceMember</c>, which covers
+        /// implicit and explicit implementations and an implementation inherited from a base class.
+        /// The base member node is keyed by its open definition, because a member reached through a
+        /// constructed interface carries the type arguments and would key differently from the
+        /// declaration.
+        /// </summary>
+        private void CaptureMemberEdges(INamedTypeSymbol type, int typeId)
+        {
+            foreach (var member in type.GetMembers())
+            {
+                // An accessor is reached through its property or event; emitting it here as well
+                // would draw the same override twice and mint a get_/set_ method node pass 1 never
+                // declared. A compiler-synthesized member -- a record's Clone, Equals, PrintMembers,
+                // EqualityContract -- is not source anyone wrote; the graph models what is declared.
+                if (IsAccessor(member) || member.IsImplicitlyDeclared) continue;
+
+                ISymbol? overridden = member switch
+                {
+                    IMethodSymbol m when !m.IsStatic && m.MethodKind is not (MethodKind.Constructor or MethodKind.StaticConstructor)
+                        => NearestInSource(m.OverriddenMethod, x => x.OverriddenMethod),
+                    IPropertySymbol p when !p.IsStatic => NearestInSource(p.OverriddenProperty, x => x.OverriddenProperty),
+                    IEventSymbol e when !e.IsStatic => NearestInSource(e.OverriddenEvent, x => x.OverriddenEvent),
+                    _ => null
+                };
+
+                if (overridden is null) continue;
+
+                // The override is reached through the declared type, but an override of Base<int>
+                // carries the constructed base. The node was declared on the open type, so both
+                // the member and its owner are reduced to their original definitions or the
+                // lookup would create a second Base<int> node beside Base<T>.
+                var baseMember = overridden.OriginalDefinition;
+                var baseOwner = baseMember.ContainingType?.OriginalDefinition;
+                if (baseOwner is null) continue;
+
+                var derivedKind = KindOf(member);
+                var baseKind = KindOf(baseMember);
+                if (derivedKind is null || baseKind is null) continue;
+
+                var baseTypeId = NodeFor(baseOwner, TypeKindOf(baseOwner));
+                _pendingMemberEdges.Add((
+                    NodeFor(baseMember, baseKind),
+                    NodeFor(member, derivedKind),
+                    baseTypeId,
+                    typeId,
+                    EdgeKind.Override));
+            }
+
+            foreach (var iface in type.AllInterfaces)
+            {
+                if (!iface.OriginalDefinition.Locations.Any(l => l.IsInSource)) continue;
+
+                var ifaceId = NodeFor(iface.OriginalDefinition, "interface");
+                foreach (var member in iface.GetMembers())
+                {
+                    if (member.IsStatic || IsAccessor(member) || member.IsImplicitlyDeclared) continue;
+                    var baseKind = KindOf(member);
+                    if (baseKind is null) continue;
+
+                    var found = type.FindImplementationForInterfaceMember(member);
+                    if (found is null || !found.Locations.Any(l => l.IsInSource)) continue;
+                    if (SymbolEqualityComparer.Default.Equals(found, member)) continue;
+
+                    // The implementation reached through a constructed interface can be a member of
+                    // a constructed base, SqlCommandRepositoryBase<UserBooking, DbContext>.AddAsync.
+                    // The graph declares the open member, so reduce before keying.
+                    var implementation = found.OriginalDefinition;
+                    var implKind = KindOf(implementation);
+                    if (implKind is null) continue;
+
+                    _pendingMemberEdges.Add((
+                        NodeFor(member.OriginalDefinition, baseKind),
+                        NodeFor(implementation, implKind),
+                        ifaceId,
+                        typeId,
+                        EdgeKind.Interface));
+                }
+            }
+        }
+
+        /// <summary>
+        /// The nearest ancestor in the override chain whose declaring type is compiled from source,
+        /// or null. An ancestor declared in metadata (a base class in a package) has no member node
+        /// to point at, so the chain is followed past it to one that does.
+        /// </summary>
+        private static TSymbol? NearestInSource<TSymbol>(TSymbol? first, Func<TSymbol, TSymbol?> next)
+            where TSymbol : class, ISymbol
+        {
+            for (var current = first; current is not null; current = next(current))
+            {
+                if (current.IsImplicitlyDeclared) continue;
+                if (current.ContainingType is { } owner && owner.Locations.Any(l => l.IsInSource))
+                    return current;
+            }
+
+            return null;
+        }
+
+        private static string? KindOf(ISymbol member) => member switch
+        {
+            IMethodSymbol => "method",
+            IPropertySymbol => "property",
+            IEventSymbol => "event",
+            _ => null
+        };
+
+        /// <summary>
+        /// True for a property or event accessor. Roslyn lists them among a type's members, but the
+        /// graph models the property or event, not its get_/set_/add_/remove_ methods.
+        /// </summary>
+        private static bool IsAccessor(ISymbol member) =>
+            member is IMethodSymbol { AssociatedSymbol: IPropertySymbol or IEventSymbol };
+
+        private static string TypeKindOf(INamedTypeSymbol type) =>
+            type.TypeKind == TypeKind.Interface ? "interface" : "type";
 
         private static void AddTag(Node n, string tag)
         {
@@ -2914,39 +3061,17 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 3: interface and override edges");
 
-            // Members are looked up by the assembly-qualified key of the type that owns them, not
-            // by short name. Two projects can each declare Demo.IThing and Demo.Thing; keyed by
-            // short name the base's members and the implementor's members merged across projects,
-            // and an interface edge could target the other assembly's method. The owner key is
-            // derived from each member's own key, whose middle segment is the owner's fully
-            // qualified name.
-            var ownerKeyByPrefix = new Dictionary<string, string>(StringComparer.Ordinal);
-            var methodsByOwner = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
-            var methodsByOwnerAndName = new Dictionary<string, Node>(StringComparer.Ordinal);
-
-            foreach (var n in g.Nodes)
+            // Member-level override and interface edges were read from the compiler in pass 1.
+            // They are emitted here only because the di-bound note is decided by pass 2's
+            // container registrations, which do not exist yet when the models are alive.
+            foreach (var (baseMember, derivedMember, baseType, derivedType, kind) in _pendingMemberEdges)
             {
-                if (n.Kind is "type" or "interface" or "enum" or "delegate")
-                {
-                    ownerKeyByPrefix[TypeOwnerPrefix(n.Key)] = n.Key;
-                }
+                var note = _diBoundPairs.Contains((baseType, derivedType)) ? "di-bound" : null;
+                Link(baseMember, derivedMember, kind, note);
             }
 
-            foreach (var n in g.Nodes)
-            {
-                if (n.Kind != "method") continue;
-                if (!TryMemberOwnerPrefix(n.Key, out var prefix)) continue;
-                if (!ownerKeyByPrefix.TryGetValue(prefix, out var ownerKey)) continue;
-
-                if (!methodsByOwner.TryGetValue(ownerKey, out var list))
-                    methodsByOwner[ownerKey] = list = new List<Node>();
-                list.Add(n);
-
-                var dot = n.Short.LastIndexOf('.');
-                var memberName = dot < 0 ? n.Short : n.Short[(dot + 1)..];
-                methodsByOwnerAndName.TryAdd(OwnerMemberKey(ownerKey, memberName), n);
-            }
-
+            // One type-level edge per (base, implementor) pair, so "what implements this" is
+            // answerable even for a type whose members produced no member edge of their own.
             foreach (var (baseId, implementors) in _implementorsByBase)
             {
                 var baseNode = g.ById(baseId);
@@ -2954,35 +3079,15 @@ public static partial class Indexer
 
                 // Interfaces dispatch; base classes are overridden. Both answer "what actually runs".
                 var edgeKind = baseNode.Kind == "interface" ? EdgeKind.Interface : EdgeKind.Override;
-                var members = methodsByOwner.GetValueOrDefault(baseNode.Key) ?? [];
 
                 foreach (var implId in implementors)
                 {
-                    var implNode = g.ById(implId);
-                    if (implNode == null) continue;
+                    if (g.ById(implId) == null) continue;
 
-                    var preferred = _diBoundPairs.Contains((baseId, implId));
-                    var note = preferred ? "di-bound" : null;
-
-                    foreach (var m in members)
-                    {
-                        var dot = m.Short.LastIndexOf('.');
-                        var memberName = dot < 0 ? m.Short : m.Short[(dot + 1)..];
-                        if (!methodsByOwnerAndName.TryGetValue(OwnerMemberKey(implNode.Key, memberName), out var target))
-                            continue;
-                        Link(m.Id, target.Id, edgeKind, note);
-                    }
-
+                    var note = _diBoundPairs.Contains((baseId, implId)) ? "di-bound" : null;
                     Link(baseId, implId, edgeKind, note);
                 }
             }
         }
-
-        /// <summary>
-        /// A member lookup key inside one owner: owner key plus member name, separated by a
-        /// character no key contains.
-        /// </summary>
-        private static string OwnerMemberKey(string ownerKey, string memberName) =>
-            ownerKey + "\u0001" + memberName;
     }
 }
