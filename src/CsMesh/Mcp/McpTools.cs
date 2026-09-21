@@ -165,6 +165,14 @@ public static class McpTools
                         Type = "string",
                         Description = "Restrict to a subtree, e.g. src/Payments. The cheapest way to cut a large answer."
                     };
+
+                    // A name that repeats across projects now returns exit 3 with the candidates
+                    // listed, so the tool needs the same selector the CLI offers.
+                    schema.Properties["project"] = new JsonSchemaProperty
+                    {
+                        Type = "string",
+                        Description = "Pick one project when a name repeats across assemblies, e.g. src/Payments. Shown in ambiguous output."
+                    };
                 }
             }
 
@@ -252,6 +260,7 @@ public static class McpTools
         }
 
         if (Text(arguments, "under") is { Length: > 0 } under) argv.AddRange(["--under", under]);
+        if (Text(arguments, "project") is { Length: > 0 } project) argv.AddRange(["--project", project]);
         if (Boolean(arguments, "full")) argv.Add("--full");
 
         var opt = new Options([.. argv]);

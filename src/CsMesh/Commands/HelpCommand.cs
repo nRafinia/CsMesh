@@ -219,6 +219,7 @@ public static class HelpCommand
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --depth <N>        Maximum call chain depth (default: 6)
+            --project <PATH>   Pick one project when a name repeats across assemblies
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -240,6 +241,7 @@ public static class HelpCommand
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
+            --project <PATH>   Pick one project when a name repeats across assemblies
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -262,6 +264,7 @@ public static class HelpCommand
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
             --depth <N>        Maximum reverse traversal depth (default: 3)
+            --project <PATH>   Pick one project when a name repeats across assemblies
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -307,6 +310,7 @@ public static class HelpCommand
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 900, exits code 2 on overflow)
             --depth <N>        Reverse traversal depth for impact and entrypoints (default: 3)
+            --project <PATH>   Pick one project when a name repeats across assemblies
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -336,6 +340,7 @@ public static class HelpCommand
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 500, exits code 2 on overflow)
             --depth <N>        Maximum hops to search (default: 12)
+            --project <PATH>   Pick one project when a name repeats across assemblies
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -498,8 +503,10 @@ public static class HelpCommand
 
         EXIT CODES:
             0   nothing unaccepted changed (or --accept just ran)
-            4   the base revision could not be indexed; no current index exists; or the current
-                index predates HEAD, so the comparison cannot be trusted: csmesh index
+            4   the base revision could not be indexed; no current index exists; the current
+                index predates HEAD, so the comparison cannot be trusted: csmesh index; or the
+                accepted baseline was written under an older graph format -- every finding id is
+                key-derived, so it cannot be compared: csmesh review --accept
             5   unaccepted structural change exists -- fail the build
             64  not a git repository; BASE does not resolve; or --accept was given while the
                 current index predates HEAD
@@ -588,6 +595,7 @@ public static class HelpCommand
         OPTIONS:
             --depth <N>        How far to walk before giving up (default: 12)
             --budget <N>       Maximum output tokens (default: 300, exits code 2 on overflow)
+            --project <PATH>   Pick one project when a name repeats across assemblies
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
             -h, --help         Print help information

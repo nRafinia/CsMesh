@@ -45,7 +45,7 @@ public sealed class QueryRow
     /// </summary>
     public string? Id { get; set; }
 
-    /// <summary>Owning project, without extension.</summary>
+    /// <summary>Owning project's root-relative directory, as on <see cref="Node.Project"/>.</summary>
     public string? Project { get; set; }
 
     public List<string>? Tags { get; set; }

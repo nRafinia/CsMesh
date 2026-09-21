@@ -1,6 +1,7 @@
 using CsMesh.Analysis;
 using CsMesh.Commands;
 using CsMesh.Common;
+using CsMesh.Models;
 using CsMesh.Storage;
 using Xunit;
 
@@ -399,6 +400,33 @@ public sealed class ReviewCommandTests : IDisposable
         var exit = Review(baseSha);
 
         Assert.Equal(Exit.NoIndex, exit);
+    }
+
+    /// <summary>
+    /// Every finding id hashes the two Node.Keys of an edge, and a format bump that changes keys
+    /// changes every hash. A baseline written under the old format must be refused rather than
+    /// re-report its whole history -- exit 4, not 5, and --accept is the remedy, not a usage error.
+    /// </summary>
+    [Fact]
+    public void A_baseline_written_under_an_older_format_is_refused_and_accept_rewrites_it()
+    {
+        var baseSha = SeedBase();
+        ReindexCurrent();
+
+        var acceptedPath = BaselineFile.PathFor(_root);
+        Directory.CreateDirectory(Path.GetDirectoryName(acceptedPath)!);
+        File.WriteAllText(acceptedPath, "# format 12\n# stale baseline\n\nDEADBEEF  an old finding\n");
+
+        var err = ReviewErr(out var exit, baseSha);
+
+        Assert.Equal(Exit.NoIndex, exit);
+        Assert.Contains("baseline predates format v", err, StringComparison.Ordinal);
+        Assert.Contains("csmesh review --accept", err, StringComparison.Ordinal);
+
+        Assert.Equal(Exit.Ok, Review(baseSha, "--accept"));
+
+        BaselineFile.Load(_root, out var rewritten);
+        Assert.Equal(Graph.CurrentFormatVersion, rewritten);
     }
 
     // ------------------------------------------------------------------ commit gap

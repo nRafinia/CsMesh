@@ -22,6 +22,20 @@ public static partial class Indexer
     internal readonly record struct OwnedTree(SyntaxTree Tree, IReadOnlyList<string> Owners);
 
     /// <summary>
+    /// One tree bound from one compilation, with the project that compilation belongs to.
+    ///
+    /// A file the build compiles into several assemblies is one tree in each of their compilations,
+    /// and it is bound once per compilation: that is what the build produces. Assembly-qualified
+    /// keys make the two bindings two nodes rather than one merged under the first owner.
+    /// <see cref="Project"/> is the binding's owner, which is why a linked file's two nodes carry
+    /// different project paths and can be told apart in exit 3.
+    /// </summary>
+    internal readonly record struct BindUnit(CSharpCompilation Compilation, SyntaxTree Tree, string Project)
+    {
+        public SemanticModel Model() => Compilation.GetSemanticModel(Tree);
+    }
+
+    /// <summary>
     /// The compilations built for one index, the tree each is bound from, and the reference cycles
     /// broken to create them in order.
     /// </summary>
@@ -30,14 +44,11 @@ public static partial class Indexer
         public List<CSharpCompilation> Compilations { get; } = [];
 
         /// <summary>
-        /// Every tree to bind, in the order the builder walks them: grouped by the project they are
-        /// bound from, and inside a project in the order the trees were collected. A tree owned by
-        /// several projects appears once, under the first owner in topological order.
+        /// Every (compilation, tree) pair to bind, in the order the builder walks them: grouped by
+        /// the project they are bound from, and inside a project in the order the trees were
+        /// collected. A tree owned by several projects appears once per owner.
         /// </summary>
-        public List<SyntaxTree> BindOrder { get; } = [];
-
-        /// <summary>The compilation a tree is bound from, which owns its semantic model.</summary>
-        public Dictionary<SyntaxTree, CSharpCompilation> CompilationOf { get; } = new();
+        public List<BindUnit> BindOrder { get; } = [];
 
         /// <summary>Reference cycles broken to order the projects, as "dependent -&gt; dependency".</summary>
         public List<string> Cycles { get; } = [];
@@ -48,11 +59,24 @@ public static partial class Indexer
         /// <summary>InternalsVisibleTo items naming a property this parser does not evaluate.</summary>
         public int UnevaluableInternalsVisibleTo { get; set; }
 
-        public SemanticModel ModelOf(SyntaxTree tree) => CompilationOf[tree].GetSemanticModel(tree);
+        /// <summary>The project label the symbols of one assembly belong to, or empty.</summary>
+        public string ProjectOfAssembly(string assemblyName) =>
+            _projectByAssembly.GetValueOrDefault(assemblyName, "");
 
-        /// <summary>The assembly name of the compilation a tree belongs to, or empty.</summary>
-        public string AssemblyNameOf(SyntaxTree tree) =>
-            CompilationOf.TryGetValue(tree, out var compilation) ? compilation.AssemblyName ?? "" : "";
+        private readonly Dictionary<string, string> _projectByAssembly = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Records the label for one compilation's assembly, so a node created from a symbol can be
+        /// stamped with the project that declared it rather than the project nearest its file.
+        ///
+        /// Those differ for a linked file, and they differ for a base type resolved through a
+        /// CompilationReference: the implementing project's pass stamps the abstraction's node, and
+        /// the file-nearest project would name the implementor instead.
+        /// </summary>
+        public void MapProject(CSharpCompilation compilation, string project)
+        {
+            if ((compilation.AssemblyName ?? "").Length > 0) _projectByAssembly[compilation.AssemblyName!] = project;
+        }
     }
 
     /// <summary>One in-scope project and the trees its compilation holds.</summary>
@@ -113,11 +137,11 @@ public static partial class Indexer
 
             set.Compilations.Add(single);
             set.Named.Add(("", single));
+            set.MapProject(single, "");
 
             foreach (var tree in trees)
             {
-                set.BindOrder.Add(tree.Tree);
-                set.CompilationOf[tree.Tree] = single;
+                set.BindOrder.Add(new BindUnit(single, tree.Tree, ""));
             }
 
             return set;
@@ -151,10 +175,9 @@ public static partial class Indexer
             .Select((directory, index) => (directory, index))
             .ToDictionary(x => x.directory, x => x.index, StringComparer.OrdinalIgnoreCase);
 
-        // A tree goes into every owner's compilation, but is bound once, from the first owner in
-        // topological order. Binding it twice would declare the same symbols twice and, with keys
-        // that do not yet carry the assembly, merge two projects' ideas of one name. Until commit E
-        // makes the key assembly-aware, one binding is also the only correct reading.
+        // A tree goes into every owner's compilation. A multiply-owned tree -- a linked file the
+        // build compiles into each assembly -- is bound once per owner, not once overall: that is
+        // what the build produces, and the assembly-qualified key gives each binding its own node.
         foreach (var entry in trees)
         {
             var owners = entry.Owners
@@ -191,16 +214,29 @@ public static partial class Indexer
             set.Compilations.Add(compilation);
             set.Named.Add((Relative(root, directory), compilation));
 
+            var project = ProjectLabel(root, directory);
+            set.MapProject(compilation, project);
+
             foreach (var tree in unit.Trees)
             {
-                if (set.CompilationOf.ContainsKey(tree)) continue;
-                set.BindOrder.Add(tree);
-                set.CompilationOf[tree] = compilation;
+                set.BindOrder.Add(new BindUnit(compilation, tree, project));
             }
         }
 
         return set;
     }
+
+    /// <summary>
+    /// The label a node's <c>Project</c> carries: the project directory relative to the root, with
+    /// forward slashes so it is stable on either platform.
+    ///
+    /// It used to be the csproj file name without extension, which stopped being an identity the
+    /// moment two projects shared a name -- eight nested fixture csprojs all named Fixture -- and,
+    /// for a linked file, named the file's own directory rather than the project that compiled it.
+    /// The relative path is unique per project and distinguishes the two bindings of one linked file.
+    /// </summary>
+    private static string ProjectLabel(string root, string directory) =>
+        Path.GetRelativePath(root, directory).Replace('\\', '/');
 
     /// <summary>
     /// Gives every in-scope project the assembly name its csproj produces, without the output file

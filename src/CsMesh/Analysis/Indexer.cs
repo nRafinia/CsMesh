@@ -1026,7 +1026,7 @@ public static partial class Indexer
         private readonly HashSet<(int Service, int Implementation)> _diBoundPairs = new();
 
         private readonly HashSet<(int, int, EdgeKind)> _dedupe = new();
-        private readonly List<(INamedTypeSymbol Type, TypeDeclarationSyntax Decl, int Id)> _pendingHandlers = new();
+        private readonly List<(INamedTypeSymbol Type, TypeDeclarationSyntax Decl, int Id, SemanticModel Model)> _pendingHandlers = new();
 
         /// <summary>
         /// A sample, not a log. Capped per kind rather than in total: unbound calls into the BCL
@@ -1045,6 +1045,15 @@ public static partial class Indexer
         /// Files the passes are allowed to read. Null means all of them, which is a full index.
         /// </summary>
         public HashSet<string>? OnlyFiles { get; set; }
+
+        /// <summary>
+        /// The assembly and project of the (compilation, tree) pair currently being bound. Set at
+        /// the top of each unit's turn in pass 1 and pass 2: a synthetic node has no symbol to read
+        /// either from, and RecordExternal must compare against the assembly of the compilation
+        /// that owns this tree rather than any other compilation holding the same tree.
+        /// </summary>
+        private string _currentAssembly = "";
+        private string _currentProject = "";
 
         /// <summary>
         /// Symbol key to the id it held before an incremental pass retired it. Empty on a full
@@ -1133,7 +1142,14 @@ public static partial class Indexer
                 (line, endLine) = LineRange(l, file);
             }
 
-            return AddNode(key, FullName(sym), ShortName(sym), kind, file, line, endLine);
+            // The project is the one that declared the symbol, not the one nearest the file. They
+            // differ for a base type resolved through a CompilationReference, and for a linked file
+            // the two owners' nodes share a file but must carry different projects.
+            var assembly = sym.ContainingAssembly?.Name ?? "";
+            var project = comps.ProjectOfAssembly(assembly);
+            if (project.Length == 0 && assembly.Length == 0) project = projects.For(file);
+
+            return AddNode(key, FullName(sym), ShortName(sym), kind, file, line, endLine, project);
         }
 
         /// <summary>
@@ -1174,6 +1190,10 @@ public static partial class Indexer
         /// </summary>
         private int SyntheticNode(string key, string name, string shortName, string kind, SyntaxNode at)
         {
+            // Assembly-qualified like every symbol key. A top-level Program is synthesized per
+            // compilation, and without the prefix two projects that share a source tree would merge
+            // their entries into one node.
+            key = _currentAssembly + "|" + key;
             if (_idByKey.TryGetValue(key, out var existing)) return existing;
 
             var file = at.SyntaxTree.FilePath.Length > 0
@@ -1181,10 +1201,11 @@ public static partial class Indexer
                 : "";
             var (line, endLine) = LineRange(at.GetLocation(), file);
 
-            return AddNode(key, name, shortName, kind, file, line, endLine);
+            return AddNode(key, name, shortName, kind, file, line, endLine, _currentProject);
         }
 
-        private int AddNode(string key, string name, string shortName, string kind, string file, int line, int endLine)
+        private int AddNode(string key, string name, string shortName, string kind,
+                            string file, int line, int endLine, string project)
         {
             // A symbol that survived an edit gets its old id back, which is what keeps every edge
             // reaching it from an untouched file valid. Otherwise take the next free id -- never
@@ -1193,7 +1214,7 @@ public static partial class Indexer
             {
                 Id = Recycle.TryGetValue(key, out var reused) ? reused : g.NextNodeId++,
                 Key = key,
-                Project = projects.For(file),
+                Project = project,
                 Name = name,
                 Short = shortName,
                 Kind = kind,
@@ -1211,6 +1232,17 @@ public static partial class Indexer
         /// Uniquely identifies a symbol. Parameter types are fully qualified and method arity is
         /// included so overloads such as Handle(List&lt;int&gt;) and Handle(List&lt;string&gt;)
         /// never collapse into one node.
+        ///
+        /// The declaring assembly is part of the identity. One compilation per project means the
+        /// same fully-qualified name can be declared in two assemblies, and without the prefix they
+        /// merge into one node and one dispatch entry -- a silent false binding. ContainingAssembly
+        /// uses the compilation name it was created with, so a project whose real name had to be
+        /// disambiguated keys under the disambiguated name; the schema's separator is '|', which no
+        /// C# identifier, namespace or generic parameter list contains.
+        ///
+        /// A member's identity carries its owner's fully-qualified name before the member segment,
+        /// which is what lets a method node be traced back to its owner's key when pass 1 and pass 3
+        /// key their tables by owner rather than by short name.
         /// </summary>
         private static string Key(ISymbol s)
         {
@@ -1221,7 +1253,8 @@ public static partial class Indexer
             // on the phantom, leaving the real declaration with no callers and blast-radius with
             // nothing to report. ReducedFrom collapses them back onto one symbol.
             if (s is IMethodSymbol { ReducedFrom: { } original }) s = original;
-            
+
+            var assembly = s.ContainingAssembly?.Name ?? "";
             var container = s.ContainingType?.ToDisplayString(KeyFormat)
                             ?? s.ContainingNamespace?.ToDisplayString() ?? "";
 
@@ -1238,7 +1271,41 @@ public static partial class Indexer
                 self = s.ToDisplayString(KeyFormat);
             }
 
-            return container + "::" + self + "|" + s.Kind;
+            // A type's container is its namespace, so its own fully-qualified name is the whole
+            // middle segment. A member's container is its owner type, which is the owner-qualified
+            // middle segment. Both leave kind last, and '|' separates the two shapes.
+            var identity = s.ContainingType is null ? self : container + "|" + self;
+            return assembly + "|" + identity + "|" + s.Kind;
+        }
+
+        /// <summary>
+        /// The owner prefix of a type key: assembly plus its fully-qualified name, with the kind
+        /// segment dropped. This is exactly the prefix a member key carries before its member
+        /// segment, which is how a member node is traced back to its owner's key.
+        /// </summary>
+        private static string TypeOwnerPrefix(string key)
+        {
+            var last = key.LastIndexOf('|');
+            return last <= 0 ? key : key[..last];
+        }
+
+        /// <summary>
+        /// The owner prefix of a member key, or false for a key that is not
+        /// assembly|ownerFqn|member|kind. A synthetic key such as <c>toplevel::</c> carries only
+        /// the assembly, so it has no owner and is skipped rather than mis-attributed.
+        /// </summary>
+        private static bool TryMemberOwnerPrefix(string key, out string prefix)
+        {
+            var last = key.LastIndexOf('|');
+            var secondLast = last > 0 ? key.LastIndexOf('|', last - 1) : -1;
+            if (secondLast <= 0)
+            {
+                prefix = "";
+                return false;
+            }
+
+            prefix = key[..secondLast];
+            return true;
         }
 
         /// <summary>
@@ -1290,13 +1357,13 @@ public static partial class Indexer
         /// A dependency named only as a parameter type is still a dependency the caller will ask
         /// about; List&lt;PrivateKeyFile&gt; must not hide it.
         /// </summary>
-        private void RecordExternalIn(ITypeSymbol? type, SyntaxNode at, int depth = 0)
+        private void RecordExternalIn(ITypeSymbol? type, SyntaxNode at, string owningAssembly, int depth = 0)
         {
             if (type == null || depth > 2) return;
 
             if (type is IArrayTypeSymbol array)
             {
-                RecordExternalIn(array.ElementType, at, depth + 1);
+                RecordExternalIn(array.ElementType, at, owningAssembly, depth + 1);
                 return;
             }
 
@@ -1313,29 +1380,32 @@ public static partial class Indexer
                 }
                 else
                 {
-                    RecordExternal(named, at);
+                    RecordExternal(named, at, owningAssembly);
                 }
             }
 
-            foreach (var argument in named.TypeArguments) RecordExternalIn(argument, at, depth + 1);
+            foreach (var argument in named.TypeArguments)
+                RecordExternalIn(argument, at, owningAssembly, depth + 1);
         }
 
-        private void RecordExternal(INamedTypeSymbol type, SyntaxNode at)
+        private void RecordExternal(INamedTypeSymbol type, SyntaxNode at, string owningAssembly)
         {
             // string, int, object: never what someone is looking for.
             if (type.SpecialType != SpecialType.None) return;
 
             var assembly = type.ContainingAssembly?.Name ?? "";
             if (assembly.Length == 0) return;
-            // The comparison is against the assembly of the compilation that owns this tree, so a
-            // type declared in a referenced project is not mistaken for one declared here.
-            if (assembly == comps.AssemblyNameOf(at.SyntaxTree)) return;
+            // The comparison is against the assembly of the compilation this tree is bound from,
+            // so a type declared in a referenced project is not mistaken for one declared here.
+            if (assembly == owningAssembly) return;
             if (FrameworkAssemblyPrefixes.Any(p => assembly.StartsWith(p, StringComparison.Ordinal))) return;
 
             var name = type.OriginalDefinition.Name;
             if (name.Length == 0) return;
 
-            var existing = g.ExternalTypes.FirstOrDefault(x => x.Name == name);
+            // The assembly is part of the match. Two packages can each declare a type of the same
+            // simple name, and merging them by name made the site list name the wrong boundary.
+            var existing = g.ExternalTypes.FirstOrDefault(x => x.Name == name && x.Assembly == assembly);
             if (existing == null)
             {
                 if (g.ExternalTypes.Count >= 150) return;
@@ -1429,10 +1499,13 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 1: declarations");
 
-            foreach (var tree in comps.BindOrder)
+            foreach (var unit in comps.BindOrder)
             {
+                var tree = unit.Tree;
                 if (Skip(tree)) continue;
-                var model = comps.ModelOf(tree);
+                var model = unit.Model();
+                _currentAssembly = unit.Compilation.AssemblyName ?? "";
+                _currentProject = unit.Project;
 
                 // Enums and delegates derive from BaseTypeDeclarationSyntax / MemberDeclarationSyntax,
                 // not from TypeDeclarationSyntax, so a loop over TypeDeclarationSyntax alone leaves
@@ -1476,7 +1549,7 @@ public static partial class Indexer
                     foreach (var t in TypeTags(type, typeDecl)) AddTag(typeNode, t);
 
                     RegisterBaseTypes(type, typeId);
-                    _pendingHandlers.Add((type, typeDecl, typeId));
+                    _pendingHandlers.Add((type, typeDecl, typeId, model));
 
                     // Primary constructor parameters are declared on the type, not in a member.
                     if (typeDecl.ParameterList != null)
@@ -1486,7 +1559,7 @@ public static partial class Indexer
                             if (parameter.Type != null &&
                                 model.GetSymbolInfo(parameter.Type).Symbol is ITypeSymbol pt)
                             {
-                                RecordExternalIn(pt, parameter.Type);
+                                RecordExternalIn(pt, parameter.Type, _currentAssembly);
                             }
                         }
                     }
@@ -1501,8 +1574,9 @@ public static partial class Indexer
                                 Link(typeId, mId, EdgeKind.TypeUse, "member");
                                 var mNode = g.ById(mId)!;
                                 mNode.Signature = SignatureOf(ms);
-                                if (!ms.ReturnsVoid) RecordExternalIn(ms.ReturnType, md.ReturnType);
-                                foreach (var parameter in ms.Parameters) RecordExternalIn(parameter.Type, md);
+                                if (!ms.ReturnsVoid) RecordExternalIn(ms.ReturnType, md.ReturnType, _currentAssembly);
+                                foreach (var parameter in ms.Parameters)
+                                    RecordExternalIn(parameter.Type, md, _currentAssembly);
                                 foreach (var t in MethodTags(md)) AddTag(mNode, t);
                                 if (typeNode.Tags.Contains("controller")) AddTag(mNode, "action");
                                 if (mNode.Tags.Contains("test")) AddTag(typeNode, "test");
@@ -1510,14 +1584,15 @@ public static partial class Indexer
                             }
                             case ConstructorDeclarationSyntax cd when model.GetDeclaredSymbol(cd) is { } cs:
                                 Link(typeId, NodeFor(cs, "method", cd.GetLocation()), EdgeKind.TypeUse, "ctor");
-                                foreach (var parameter in cs.Parameters) RecordExternalIn(parameter.Type, cd);
+                                foreach (var parameter in cs.Parameters)
+                                    RecordExternalIn(parameter.Type, cd, _currentAssembly);
                                 break;
                             case PropertyDeclarationSyntax pd when model.GetDeclaredSymbol(pd) is { } ps:
                             {
                                 var pId = NodeFor(ps, "property", pd.GetLocation());
                                 Link(typeId, pId, EdgeKind.TypeUse, "member");
                                 g.ById(pId)!.Signature = Display(ps.Type);
-                                RecordExternalIn(ps.Type, pd.Type);
+                                RecordExternalIn(ps.Type, pd.Type, _currentAssembly);
 
                                 // DbSet<Order> is the only place a context and an entity are
                                 // named together. Without this edge, "what does this context
@@ -1550,7 +1625,7 @@ public static partial class Indexer
                                     var fId = NodeFor(fs, "field", variable.GetLocation());
                                     Link(typeId, fId, EdgeKind.TypeUse, "member");
                                     g.ById(fId)!.Signature = Display(fs.Type);
-                                    RecordExternalIn(fs.Type, fd.Declaration.Type);
+                                    RecordExternalIn(fs.Type, fd.Declaration.Type, _currentAssembly);
                                 }
 
                                 break;
@@ -1572,9 +1647,9 @@ public static partial class Indexer
             }
 
             var methodsByOwner = MethodsByOwner();
-            foreach (var (type, decl, id) in _pendingHandlers)
+            foreach (var (type, decl, id, handlerModel) in _pendingHandlers)
             {
-                RegisterMessageHandler(type, decl, id, methodsByOwner);
+                RegisterMessageHandler(type, decl, id, handlerModel, methodsByOwner);
             }
 
             Dbg.Log($"pass 1: {g.Nodes.Count} nodes, {_handlersByRequest.Count} message type(s) mapped, " +
@@ -1774,18 +1849,35 @@ public static partial class Indexer
         private static string Simplify(INamedTypeSymbol s) =>
             s.IsGenericType ? $"{s.Name}<{string.Join(",", s.TypeArguments.Select(a => a.Name))}>" : s.Name;
 
+        /// <summary>
+        /// Method nodes by the assembly-qualified key of the type that owns them.
+        ///
+        /// Keyed by owner key, not owner short name. Two projects can each declare Demo.IMediator
+        /// or Demo.OrderHandler, and keying on the short name merged their methods into one bucket,
+        /// so a handler entry point could be resolved to the other project's method. The owner key
+        /// is derived from the member's own key, whose middle segment is the owner's fully-qualified
+        /// name; a synthetic key has no owner and is skipped.
+        /// </summary>
         private Dictionary<string, List<Node>> MethodsByOwner()
         {
+            var ownerKeyByPrefix = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var n in g.Nodes)
+            {
+                if (n.Kind is not ("type" or "interface" or "enum" or "delegate")) continue;
+                ownerKeyByPrefix[TypeOwnerPrefix(n.Key)] = n.Key;
+            }
+
             var map = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
             foreach (var n in g.Nodes)
             {
                 if (n.Kind != "method") continue;
-                var dot = n.Short.LastIndexOf('.');
-                if (dot <= 0) continue;
-                var owner = n.Short[..dot];
-                if (!map.TryGetValue(owner, out var list)) map[owner] = list = new List<Node>();
+                if (!TryMemberOwnerPrefix(n.Key, out var prefix)) continue;
+                if (!ownerKeyByPrefix.TryGetValue(prefix, out var ownerKey)) continue;
+
+                if (!map.TryGetValue(ownerKey, out var list)) map[ownerKey] = list = new List<Node>();
                 list.Add(n);
             }
+
             return map;
         }
 
@@ -1799,6 +1891,7 @@ public static partial class Indexer
             INamedTypeSymbol type,
             TypeDeclarationSyntax decl,
             int typeId,
+            SemanticModel model,
             Dictionary<string, List<Node>> methodsByOwner)
         {
             var requests = new HashSet<string>(StringComparer.Ordinal);
@@ -1817,7 +1910,6 @@ public static partial class Indexer
             // using-imported request type keeps its real identity instead of collapsing to a name.
             if (decl.BaseList != null)
             {
-                var model = comps.ModelOf(decl.SyntaxTree);
                 foreach (var baseType in decl.BaseList.Types)
                 {
                     if (baseType.Type is not GenericNameSyntax gen) continue;
@@ -1839,8 +1931,8 @@ public static partial class Indexer
 
             if (requests.Count == 0) return;
 
-            var typeShort = g.ById(typeId)!.Short;
-            var entry = methodsByOwner.GetValueOrDefault(typeShort)?
+            var typeKey = g.ById(typeId)!.Key;
+            var entry = methodsByOwner.GetValueOrDefault(typeKey)?
                 .FirstOrDefault(n => n.Short.EndsWith(".Handle", StringComparison.Ordinal)
                                      || n.Short.EndsWith(".HandleAsync", StringComparison.Ordinal)
                                      || n.Short.EndsWith(".Consume", StringComparison.Ordinal));
@@ -1861,15 +1953,30 @@ public static partial class Indexer
 
         /// <summary>
         /// Identity of a request type. Uses the original definition so CreateOrder and
-        /// CreateOrder&lt;T&gt; closed over something do not diverge.
+        /// CreateOrder&lt;T&gt; closed over something do not diverge. Assembly-qualified for the
+        /// same reason <see cref="Key"/> is: two projects that declare the same request name must
+        /// not share a dispatch entry, and a handler in one project must still match a request
+        /// declared in another.
         /// </summary>
         private static string RequestKey(INamedTypeSymbol type) =>
+            (type.OriginalDefinition.ContainingAssembly?.Name ?? "") + "|" +
             type.OriginalDefinition.ToDisplayString(KeyFormat);
 
         private static string ShortOfRequestKey(string key)
         {
             if (key.StartsWith('~')) return key[1..];
+
             var trimmed = key.Split('<')[0];
+
+            // Drop the assembly qualifier and any global:: prefix before taking the last dot
+            // segment. An assembly name contains dots, so splitting on '.' alone would return the
+            // tail of the assembly rather than the request name.
+            var bar = trimmed.LastIndexOf('|');
+            if (bar >= 0) trimmed = trimmed[(bar + 1)..];
+
+            var colons = trimmed.LastIndexOf("::", StringComparison.Ordinal);
+            if (colons >= 0) trimmed = trimmed[(colons + 2)..];
+
             var dot = trimmed.LastIndexOf('.');
             return dot < 0 ? trimmed : trimmed[(dot + 1)..];
         }
@@ -1880,10 +1987,13 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 2: call edges");
 
-            foreach (var tree in comps.BindOrder)
+            foreach (var unit in comps.BindOrder)
             {
+                var tree = unit.Tree;
                 if (Skip(tree)) continue;
-                var model = comps.ModelOf(tree);
+                var model = unit.Model();
+                _currentAssembly = unit.Compilation.AssemblyName ?? "";
+                _currentProject = unit.Project;
                 var root = tree.GetRoot();
 
                 // Top-level statements have no containing method declaration. Without this branch
@@ -2039,7 +2149,7 @@ public static partial class Indexer
                     continue;
                 }
 
-                RecordExternal(t, oc.Type);
+                RecordExternal(t, oc.Type, _currentAssembly);
             }
 
             foreach (var declaration in body.DescendantNodes().OfType<VariableDeclarationSyntax>())
@@ -2047,7 +2157,7 @@ public static partial class Indexer
                 if (model.GetSymbolInfo(declaration.Type).Symbol is INamedTypeSymbol vt &&
                     !vt.Locations.Any(l => l.IsInSource))
                 {
-                    RecordExternal(vt, declaration.Type);
+                    RecordExternal(vt, declaration.Type, _currentAssembly);
                 }
             }
         }
@@ -2804,20 +2914,37 @@ public static partial class Indexer
         {
             progress?.Invoke("pass 3: interface and override edges");
 
-            // One lookup instead of a linear scan per member per implementor.
-            var methodByShort = new Dictionary<string, Node>(StringComparer.Ordinal);
+            // Members are looked up by the assembly-qualified key of the type that owns them, not
+            // by short name. Two projects can each declare Demo.IThing and Demo.Thing; keyed by
+            // short name the base's members and the implementor's members merged across projects,
+            // and an interface edge could target the other assembly's method. The owner key is
+            // derived from each member's own key, whose middle segment is the owner's fully
+            // qualified name.
+            var ownerKeyByPrefix = new Dictionary<string, string>(StringComparer.Ordinal);
             var methodsByOwner = new Dictionary<string, List<Node>>(StringComparer.Ordinal);
+            var methodsByOwnerAndName = new Dictionary<string, Node>(StringComparer.Ordinal);
+
+            foreach (var n in g.Nodes)
+            {
+                if (n.Kind is "type" or "interface" or "enum" or "delegate")
+                {
+                    ownerKeyByPrefix[TypeOwnerPrefix(n.Key)] = n.Key;
+                }
+            }
 
             foreach (var n in g.Nodes)
             {
                 if (n.Kind != "method") continue;
-                methodByShort.TryAdd(n.Short, n);
+                if (!TryMemberOwnerPrefix(n.Key, out var prefix)) continue;
+                if (!ownerKeyByPrefix.TryGetValue(prefix, out var ownerKey)) continue;
+
+                if (!methodsByOwner.TryGetValue(ownerKey, out var list))
+                    methodsByOwner[ownerKey] = list = new List<Node>();
+                list.Add(n);
 
                 var dot = n.Short.LastIndexOf('.');
-                if (dot <= 0) continue;
-                var owner = n.Short[..dot];
-                if (!methodsByOwner.TryGetValue(owner, out var list)) methodsByOwner[owner] = list = new List<Node>();
-                list.Add(n);
+                var memberName = dot < 0 ? n.Short : n.Short[(dot + 1)..];
+                methodsByOwnerAndName.TryAdd(OwnerMemberKey(ownerKey, memberName), n);
             }
 
             foreach (var (baseId, implementors) in _implementorsByBase)
@@ -2827,7 +2954,7 @@ public static partial class Indexer
 
                 // Interfaces dispatch; base classes are overridden. Both answer "what actually runs".
                 var edgeKind = baseNode.Kind == "interface" ? EdgeKind.Interface : EdgeKind.Override;
-                var members = methodsByOwner.GetValueOrDefault(baseNode.Short) ?? [];
+                var members = methodsByOwner.GetValueOrDefault(baseNode.Key) ?? [];
 
                 foreach (var implId in implementors)
                 {
@@ -2839,8 +2966,10 @@ public static partial class Indexer
 
                     foreach (var m in members)
                     {
-                        var memberName = m.Short[(baseNode.Short.Length + 1)..];
-                        if (!methodByShort.TryGetValue(implNode.Short + "." + memberName, out var target)) continue;
+                        var dot = m.Short.LastIndexOf('.');
+                        var memberName = dot < 0 ? m.Short : m.Short[(dot + 1)..];
+                        if (!methodsByOwnerAndName.TryGetValue(OwnerMemberKey(implNode.Key, memberName), out var target))
+                            continue;
                         Link(m.Id, target.Id, edgeKind, note);
                     }
 
@@ -2848,5 +2977,12 @@ public static partial class Indexer
                 }
             }
         }
+
+        /// <summary>
+        /// A member lookup key inside one owner: owner key plus member name, separated by a
+        /// character no key contains.
+        /// </summary>
+        private static string OwnerMemberKey(string ownerKey, string memberName) =>
+            ownerKey + "\u0001" + memberName;
     }
 }

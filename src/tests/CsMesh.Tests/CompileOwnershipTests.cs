@@ -134,11 +134,13 @@ public sealed class CompileOwnershipTests : IDisposable
 
     /// <summary>
     /// A linked file can belong to several projects at once; that is what compiling shared source
-    /// into each assembly means. The single compilation still parses it once, and the split will
-    /// place it in every owner.
+    /// into each assembly means. The build produces two assemblies, so the graph produces two
+    /// nodes: one per owner, with distinct assembly-qualified keys and distinct project stamps.
+    /// Binding it once from the first owner, as the pre-E split did, merged away the second
+    /// assembly and made the two indistinguishable in exit 3.
     /// </summary>
     [Fact]
-    public void A_file_included_by_two_projects_has_both_owners_and_one_node()
+    public void A_file_included_by_two_projects_has_both_owners_and_one_node_per_owner()
     {
         Write("P1/P1.csproj", LibraryProject("<ItemGroup><Compile Include=\"..\\Shared\\S.cs\" /></ItemGroup>"));
         Write("P2/P2.csproj", LibraryProject("<ItemGroup><Compile Include=\"..\\Shared\\S.cs\" /></ItemGroup>"));
@@ -150,7 +152,11 @@ public sealed class CompileOwnershipTests : IDisposable
         Assert.Equal(2, owners.Count);
 
         var graph = Indexer.Build(_root);
-        Assert.Single(graph.Nodes, n => n.Name == "Shared.S");
+        var nodes = graph.Nodes.Where(n => n.Name == "Shared.S").ToList();
+
+        Assert.Equal(2, nodes.Count);
+        Assert.Equal(2, nodes.Select(n => n.Key).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(2, nodes.Select(n => n.Project).Distinct(StringComparer.Ordinal).Count());
     }
 
     [Fact]
