@@ -1980,8 +1980,12 @@ public static partial class Indexer
                 }
                 else if (info.Symbol == null && info.CandidateSymbols.Length > 1)
                 {
-                    // An edge is still drawn, to the first candidate. That is a coin toss between
-                    // overloads, so say where it happened rather than let it pass as a fact.
+                    // Counted as unresolved, not merely recorded. The edge below still points at
+                    // the first candidate, but that is a coin toss between overloads: the call did
+                    // not bind to a symbol, and leaving it out of UnresolvedCallSites let an
+                    // ambiguous site sit in the denominator as if it had resolved. On a real
+                    // solution 17 such sites coexisted with a reported 100.0%.
+                    UnresolvedCallSites++;
                     RecordUnresolved("call", inv, inv.ToString(), "ambiguous-overload");
                 }
 

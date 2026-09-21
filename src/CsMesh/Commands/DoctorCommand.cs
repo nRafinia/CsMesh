@@ -300,6 +300,19 @@ public static class DoctorCommand
             // said "nothing to see". 99.9% is ugly and true; 100.0% is reserved for exactly full.
             var permille = (int)(1000L * bound / graph.TotalCallSites);
             e.Line($"  calls resolved  {permille / 10.0:0.0}%  ({bound}/{graph.TotalCallSites})");
+
+            // The two causes are different jobs: a missing candidate is usually a missing
+            // reference, while an ambiguous overload means two in-scope symbols fit and the
+            // compiler refused to choose. Both are unresolved now; naming them separately is what
+            // keeps a reference problem from being mistaken for an overload problem.
+            var noCandidate = graph.UnresolvedByReason.GetValueOrDefault("call/no-candidate-symbol");
+            var ambiguous = graph.UnresolvedByReason.GetValueOrDefault("call/ambiguous-overload");
+            if (noCandidate + ambiguous > 0)
+            {
+                e.Line($"  calls unresolved {noCandidate + ambiguous}  " +
+                       $"({noCandidate} no candidate, {ambiguous} ambiguous overload)");
+            }
+
             // Only name the build when the reference set actually looks unbuilt. Telling someone
             // to run dotnet build on a solution whose bin/ already holds 223 assemblies is a
             // wrong diagnosis stated confidently, which is worse than no diagnosis.
