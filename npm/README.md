@@ -106,7 +106,7 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
 
 ## 📊 Empirical Benchmarks
 
-To quantify the real-world performance gains, `csmesh` was benchmarked against the standard AI agent workflow (**Ripgrep / `rg` + sequential file reads**) across a real-world enterprise .NET backend codebase (**29 projects, 1,942 symbols, 5,143 edges**).
+To quantify the real-world performance gains, `csmesh` was benchmarked against the standard AI agent workflow (**Ripgrep / `rg` + sequential file reads**) across a private 29-project .NET solution (**1,945 symbols, 5,164 edges**, measured 2026-09-21 on csmesh 0.6.0).
 
 The evaluation measured four critical dimensions:
 1. **Query & Execution Latency**: Raw tool execution time and total agent turnaround time.
@@ -118,15 +118,17 @@ The evaluation measured four critical dimensions:
 
 ### Scenario-by-Scenario Benchmark Summary
 
-| Workflow Scenario | With `csmesh` (Single Command) | Without `csmesh` (`rg` + File Reads) | Speed & Turn Efficiency | Token & Context Savings |
-|:---|:---|:---|:---|:---|
-| **1. DI Implementation & Binding**<br>`csmesh impl IOrderRepository` | **244 ms**<br>*(1 command / 1 turn)* | **~3 agent round-trips**<br>*(grep interface + grep DI registration + open config/file)* | **~15x faster** agent turnaround | **~90% reduction**<br>*(~100 tokens vs. ~1,500 tokens)* |
-| **2. Deep Call Chain Trace**<br>`csmesh trace OrderEndpoints.CreateOrderAsync` | **156 ms**<br>*(1 command to specified depth)* | **5 to 7 iterative turns**<br>*(manually hopping across controllers, interfaces & handlers)* | **~30x faster** end-to-end task time | **~85% reduction**<br>*(~450 tokens vs. ~4,000 tokens)* |
-| **3. Change Impact & Blast Radius**<br>`csmesh blast-radius OrderRepository.UpdateAsync` | **161 ms**<br>*(reverse graph separating test vs. prod callers)* | **4 to 6 manual turns**<br>*(grep for method name with dozens of false positives)* | Eliminates error-prone manual caller matching | **~80% reduction**<br>*(filters out comments, docs, & unrelated homonyms)* |
-| **4. Multi-Hop Path Finding**<br>`csmesh path Endpoint -> Repository` | **157 ms**<br>*(deterministic 4-hop path across DI & services)* | **Impossible with grep**<br>*(requires multi-file inference, guessing, and trial-and-error)* | Solves in 1 deterministic step | **~95% reduction**<br>*(no intermediate exploratory reads)* |
-| **5. Endpoint & Worker Discovery**<br>`csmesh entrypoints` | **143 ms**<br>*(both HTTP routes & background HostedServices)* | **Multiple grep commands + manual parsing**<br>*(high risk of missing background workers and consumers)* | 100% automated structural coverage | Structured, clean, noise-free output |
-| **6. Type Structure & Signature**<br>`csmesh context OrderRecord` | **166 ms**<br>*(fields, nullability, signatures without reading disk)* | `rg` to locate file path + `view_file` to read entire source | 3x fewer steps | **~70% reduction**<br>*(symbol members only, no boilerplate)* |
-| **7. Full Architecture Mapping**<br>`csmesh map` | **174 ms**<br>*(29 projects, dependency flow & entrypoint clusters)* | Read `.slnx` + inspect 29 `.csproj` project files manually | Hundreds of times faster | **~95% reduction** |
+| Workflow Scenario | Command | Median (min–max) | csmesh tokens | Baseline | Reduction |
+|:---|:---|---:|---:|:---|---:|
+| **1. DI Implementation & Binding** | `csmesh impl IOrderRepository` | 27.6 ms (26.9–43.2) | 97 | ~1,500 tokens via grep + read | ~94% |
+| **2. Deep Call Chain Trace** | `csmesh trace OrderEndpoints.CreateOrderAsync --depth 2` | 27.8 ms (26.6–29.9) | 288 | ~4,000 tokens via 5–7 turns | ~93% |
+| **3. Change Impact & Blast Radius** | `csmesh blast-radius OrderService.UpdateAsync` | 27.4 ms (26.7–29.6) | 105 | 4–6 turns over 24+ noisy grep hits (no token baseline) | n/a |
+| **4. Multi-Hop Path Finding** | `csmesh path OrderEndpoints.CreateOrderAsync OrderWriter` | 29.7 ms (27.4–45.4) | 115 | impossible with grep (no token baseline) | n/a |
+| **5. Endpoint & Worker Discovery** | `csmesh entrypoints` | 24.8 ms (23.5–32.3) | 738 | repeated greps + manual parsing (no token baseline) | n/a |
+| **6. Type Structure & Signature** | `csmesh context OrderRecord` | 27.7 ms (26.5–30.5) | 478 | locate and read the whole file (no token baseline) | n/a |
+| **7. Full Architecture Mapping** | `csmesh map` | 28.8 ms (27.5–41.6) | 766 | read `.slnx` + 29 `.csproj` files (no token baseline) | n/a |
+
+Symbol names above are placeholders; the numbers were measured on the real codebase with symbols of the same shape. Median of 20 warm runs (graph pre-indexed and held in the OS file cache) on a NativeAOT win-x64 build of csmesh 0.6.0, 2026-09-21, on a 13th Gen Intel Core i7-13620H (10 cores / 16 threads, 48 GB RAM, NVMe SSD). Token counts use csmesh's own estimator at roughly four characters per token.
 
 ---
 
@@ -166,15 +168,15 @@ The evaluation measured four critical dimensions:
 
 ### Core Takeaways
 
-1. **Semantic Intelligence vs. Lexical Speed:** While `ripgrep` searches text in 30–50 ms, its output is **lexical, not semantic**. `csmesh` answers in **140–250 ms**, but returns definitive, actionable architectural conclusions rather than raw strings.
+1. **Semantic Intelligence vs. Lexical Speed:** While `ripgrep` searches text in 30–50 ms, its output is **lexical, not semantic**. `csmesh` answers in **~25–30 ms** (median of 20 warm runs, measured 2026-09-21 on csmesh 0.6.0), but returns definitive, actionable architectural conclusions rather than raw strings.
 2. **Eliminating the Agent Turn Latency Bottleneck:** In AI agent interactions, the dominant latency cost is LLM inference and reasoning per turn (often 5–15 seconds per round-trip). By collapsing 4 to 8 file-hunting turns into **1 single shell command**, `csmesh` cuts total agent task completion time by **over 80%**.
-3. **Context Window Hygiene:** Replacing full source file dumps with compact graph edges saves **80% to 95% of token spend**, preserving the model's context window for actual implementation rather than navigation.
+3. **Context Window Hygiene:** Replacing full source file dumps with compact graph edges saves **~93–94% of token spend** in the two measured scenarios that have a token baseline (DI binding and call-chain trace), preserving the model's context window for actual implementation rather than navigation. The other scenarios were measured as csmesh token counts only, against qualitative baselines.
 
 ---
 
 ## ✨ Key Features
 
-- **🚀 Native AOT & .NET 10 Ready:** Instantaneous sub-millisecond execution, zero JIT warm-up, and zero-allocation queries via `System.Collections.Frozen`.
+- **🚀 Native AOT & .NET 10 Ready:** No JIT warm-up, no runtime to install, and lookup tables frozen once at load (`System.Collections.Frozen`) so a query walks the graph instead of rebuilding indexes. Median query on the measured 29-project solution: ~28 ms (median of 20 warm runs, csmesh 0.6.0, 2026-09-21).
 - **🎨 Blazor & Razor Component Intelligence:** Indexes Blazor components, `@code` methods, component parameters, and Razor Pages / MVC views. Automatically discovers `@page "/..."` routes as HTTP entrypoints and accurately maps line numbers back to `.razor` and `.cshtml` source files via Roslyn `#line` directives.
 - **🛡️ Token-Budget Enforcement (`--budget N`):** Hard limits on output tokens. Prevents agent context exhaustion by exiting with actionable tips when a query is too broad.
 - **💉 DI & IoC Container Intelligence:** Reads service registrations in every form they take — two-argument, `typeof` pairs, keyed, factory lambdas, and alias registrations such as `sp => sp.GetRequiredService<Concrete>()` — and ranks the class the container actually returns ahead of the ones nobody registered.
