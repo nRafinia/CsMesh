@@ -213,6 +213,34 @@ public sealed class OverrideAndInterfaceEdgeTests : IDisposable
         Assert.True(HasMemberEdge(graph, EdgeKind.Interface, "Demo.ICurrent.Name", "Demo.Scope.Impl.Name"));
     }
 
+    /// <summary>
+    /// A default interface member is the interface's own member. A class that relies on it must
+    /// produce no member edge -- in particular no edge from the member to itself -- while a class
+    /// that overrides the default links to the class's own member.
+    /// </summary>
+    [Fact]
+    public void A_default_interface_member_produces_no_edge_to_itself_but_an_override_does()
+    {
+        Write("P/P.csproj", Lib());
+        Write("P/Types.cs", """
+            namespace Demo
+            {
+                public interface IThing { void M() { } }
+                public class Defaulted : IThing { }
+                public class Overriding : IThing { public void M() { } }
+            }
+            """);
+
+        var graph = Indexed(_root);
+
+        Assert.DoesNotContain(graph.Edges, e => e.From == e.To && e.Kind == EdgeKind.Interface);
+
+        Assert.True(HasMemberEdge(graph, EdgeKind.Interface, "Demo.IThing.M", "Demo.Overriding.M"));
+        Assert.DoesNotContain(graph.Edges, e => e.Kind == EdgeKind.Interface
+            && graph.ById(e.From)?.Name == "Demo.IThing.M"
+            && (graph.ById(e.To)?.Name.StartsWith("Demo.Defaulted", StringComparison.Ordinal) ?? false));
+    }
+
     [Fact]
     public void Overloaded_interface_members_link_to_their_own_implementation()
     {
