@@ -219,7 +219,9 @@ public static class McpTools
         "path" => "Fully qualified or short name of the starting symbol.",
         "review" => "Optional git revision to compare against. Omit for the merge base with the "
                      + "default branch.",
-        _ => "Fully qualified or short name, e.g. OrderService.SaveAsync."
+        _ => "Fully qualified or short name, e.g. OrderService.SaveAsync. When a name repeats "
+             + "across projects the answer exits 3 and lists each candidate's project; re-run "
+             + "with 'project' set to one of them."
     };
 
     /// <summary>

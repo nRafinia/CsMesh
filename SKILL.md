@@ -188,7 +188,7 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 | 0 | complete answer | use it |
 | 1 | nothing found | `csmesh silence <symbol>` before anything else |
 | 2 | answer exists but exceeds the budget | in order: the depth the message names, then `--under <path>`, then `--depth 1` for direct edges only. Do **not** just raise `--budget` to a huge number, and do **not** run `silence` here -- a *narrowed* query that then exits 1 is when `silence` applies |
-| 3 | ambiguous | re-run with `Type.Member`, not a bare member name |
+| 3 | ambiguous | the name repeats across projects, or is a bare member name: re-run with `--project <path>` taken from the candidate list, or with `Type.Member` |
 | 4 | no index; one written by an older csmesh; or (review) an index that predates HEAD | run `csmesh index` |
 | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
 | 64 | bad command line, including `review --accept` when the index predates HEAD | run `csmesh <cmd> --help` |
@@ -206,7 +206,9 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
   and `diff`, 900 for `context`, 500 for `path`.
 - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
   question is cheaper than paying for the whole tree.
-- Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3.
+- Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3. When
+  the name really does repeat across projects, exit 3 prints each candidate with its project:
+  re-run with `--project <path>` taken from that list.
 - On overflow, `trace` names a depth that fits and prints the command to re-run. Use that rather
   than guessing a smaller number.
 - Chain two questions into one shell call:
