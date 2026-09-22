@@ -1,4 +1,5 @@
 using System.Text;
+using CsMesh.Common;
 
 namespace CsMesh.Storage;
 
@@ -30,6 +31,8 @@ internal static class GitExclude
     /// </summary>
     public static bool Ensure(string start, out string? path, out string? error)
     {
+        using var _ = Timings.Accumulate("git-exclude");
+
         path = null;
         error = null;
 
