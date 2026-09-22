@@ -119,10 +119,14 @@ jobs:
         run: |
           Compress-Archive -Path "publish-out/${{ matrix.binary_name }}" -DestinationPath "${{ matrix.archive_name }}"
 
-      # Pack the same RID as a .NET tool package. DebugType=none stops NativeAOT
-      # from emitting a native .pdb (Windows) or .dbg (Unix), so only the stripped
-      # executable ships in the nupkg. ToolPackageRuntimeIdentifiers in the csproj
-      # makes this package id CsMesh.<rid>.
+      # Pack the same RID as a .NET tool package. DebugType=none stops this build
+      # from producing managed or native symbols, and
+      # CopyOutputSymbolsToPublishDirectory=false stops the SDK's _CopyAotSymbols
+      # target from copying the symbol the earlier archive publish left in the
+      # shared native output directory (Microsoft.NETCore.Native.Publish.targets:
+      # 94-121, default true in Microsoft.NET.Publish.targets:527). Together they
+      # keep csmesh.pdb / csmesh.dbg / csmesh.dSYM out of the nupkg on every OS.
+      # ToolPackageRuntimeIdentifiers in the csproj makes this package id CsMesh.<rid>.
       - name: Pack RID-specific .NET tool package (${{ matrix.target }})
         run: >
           dotnet pack src/CsMesh/CsMesh.csproj
@@ -130,6 +134,7 @@ jobs:
           -r ${{ matrix.target }}
           -p:PublishAot=true
           -p:DebugType=none
+          -p:CopyOutputSymbolsToPublishDirectory=false
           -o nupkg-out
 
       - name: Upload binary artifact
@@ -175,6 +180,7 @@ jobs:
           -c Release
           -r any
           -p:DebugType=none
+          -p:CopyOutputSymbolsToPublishDirectory=false
           -o nupkg-out
 
       - name: Upload pointer and `any` packages

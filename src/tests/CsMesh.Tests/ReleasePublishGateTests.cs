@@ -56,6 +56,27 @@ public sealed class ReleasePublishGateTests
         }
     }
 
+    /// <summary>
+    /// A RID tool package must ship only the executable. The archive publish runs
+    /// first in the same job and leaves a native csmesh.pdb / csmesh.dbg /
+    /// csmesh.dSYM in the shared native output directory; the SDK's _CopyAotSymbols
+    /// target copies that stale symbol into the pack's publish directory (and then
+    /// into the nupkg) unless CopyOutputSymbolsToPublishDirectory is off. DebugType
+    /// alone does not stop it.
+    /// </summary>
+    [Fact]
+    public void The_rid_tool_pack_step_excludes_native_and_managed_symbols()
+    {
+        var lines = File.ReadAllLines(RepoFile(Path.Combine(".github", "workflows", "release.yml")));
+        var build = ParseJobs(lines).Single(job => job.Name == "build-aot");
+        var pack = build.Steps.Single(step =>
+            step.Name.StartsWith("Pack RID-specific .NET tool package", StringComparison.Ordinal));
+
+        var command = string.Join("\n", pack.Body);
+        Assert.Contains("-p:DebugType=none", command, StringComparison.Ordinal);
+        Assert.Contains("-p:CopyOutputSymbolsToPublishDirectory=false", command, StringComparison.Ordinal);
+    }
+
     private static bool IsPublishLine(string line) =>
         PublishMarkers.Any(marker => line.Contains(marker, StringComparison.Ordinal));
 
