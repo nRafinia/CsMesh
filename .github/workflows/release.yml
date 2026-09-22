@@ -1,15 +1,12 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag (leave empty to use version from CsMesh.csproj)'
-        required: false
-        default: ''
+        description: 'Release tag, e.g. v0.6.1 (must be v + the csproj <Version>)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -21,6 +18,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify tag_name and package versions
+        run: |
+          VERSION=$(grep '<Version>' src/CsMesh/CsMesh.csproj | head -n1 | sed -E 's/.*<Version>([^<]+)<\/Version>.*/\1/' | tr -d ' \r\n')
+          NPM_VERSION=$(grep '"version"' npm/package.json | head -n1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+
+          echo "csproj <Version>: ${VERSION}"
+          echo "npm/package.json version: ${NPM_VERSION}"
+          echo "dispatched tag_name: ${{ inputs.tag_name }}"
+
+          if [ "$NPM_VERSION" != "$VERSION" ]; then
+            echo "::error::npm/package.json version (${NPM_VERSION}) does not match csproj <Version> (${VERSION})."
+            exit 1
+          fi
+          if [ "${{ inputs.tag_name }}" != "v${VERSION}" ]; then
+            echo "::error::tag_name ('${{ inputs.tag_name }}') must be exactly v + csproj <Version> ('v${VERSION}')."
+            exit 1
+          fi
+          echo "tag_name and both versions agree: v${VERSION}"
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -42,15 +58,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # Native AOT cannot cross-compile, so every RID is built and packed on a
-      # runner of that architecture. Runner labels were verified against
-      # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
-      # on 2026-09-22:
-      #   osx-x64     -> macos-15-intel   (macOS 15 image ships Xcode 16.4 / Clang 17)
-      #   linux-arm64 -> ubuntu-24.04-arm (image ships Clang 16/17/18)
-      #   win-arm64   -> windows-11-arm   (image ships Visual Studio 2022 with VC.Tools.ARM64)
-      # osx-arm64, linux-x64 and win-x64 keep the labels they already used. Any
-      # label not listed here is unverified and stays out of the matrix.
       matrix:
         include:
           - os: windows-latest
@@ -108,14 +115,6 @@ jobs:
         run: |
           Compress-Archive -Path "publish-out/${{ matrix.binary_name }}" -DestinationPath "${{ matrix.archive_name }}"
 
-      # Pack the same RID as a .NET tool package. DebugType=none stops this build
-      # from producing managed or native symbols, and
-      # CopyOutputSymbolsToPublishDirectory=false stops the SDK's _CopyAotSymbols
-      # target from copying the symbol the earlier archive publish left in the
-      # shared native output directory (Microsoft.NETCore.Native.Publish.targets:
-      # 94-121, default true in Microsoft.NET.Publish.targets:527). Together they
-      # keep csmesh.pdb / csmesh.dbg / csmesh.dSYM out of the nupkg on every OS.
-      # ToolPackageRuntimeIdentifiers in the csproj makes this package id CsMesh.<rid>.
       - name: Pack RID-specific .NET tool package (${{ matrix.target }})
         run: >
           dotnet pack src/CsMesh/CsMesh.csproj
@@ -151,10 +150,6 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # PublishAot=true is what tells the SDK not to try to create the RID
-      # packages here (it cannot AOT cross-platform); it emits only the pointer
-      # package, whose DotnetToolSettings.xml lists every RID in the csproj's
-      # ToolPackageRuntimeIdentifiers, including `any`.
       - name: Pack pointer package
         run: >
           dotnet pack src/CsMesh/CsMesh.csproj
@@ -181,7 +176,7 @@ jobs:
   publish-nuget:
     name: Push Tool Packages to NuGet.org
     needs: [build-aot, pack-pointer]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download tool package artifacts
@@ -191,11 +186,8 @@ jobs:
           merge-multiple: true
           path: nupkg-out
 
-      # The pointer package names the RID packages, so every RID package (and the
-      # `any` fallback) must be on the feed before it is. Push those first and the
-      # pointer last, so a client can never resolve a pointer to a missing package.
       - name: Push RID packages, then the pointer last
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
@@ -224,7 +216,7 @@ jobs:
   publish-release:
     name: Create GitHub Release
     needs: [build-aot, pack-pointer]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.clean_version }}
@@ -255,14 +247,7 @@ jobs:
       - name: Determine Release Tag
         id: tag
         run: |
-          if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          elif [ -n "${{ inputs.tag_name }}" ]; then
-            TAG="${{ inputs.tag_name }}"
-          else
-            VERSION=$(grep '<Version>' src/CsMesh/CsMesh.csproj | head -n1 | sed -E 's/.*<Version>([^<]+)<\/Version>.*/\1/' | tr -d ' \r\n')
-            TAG="v${VERSION}"
-          fi
+          TAG="${{ inputs.tag_name }}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "Using release tag: ${TAG}"
 
@@ -274,10 +259,11 @@ jobs:
           echo "clean_version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Publish GitHub Release
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: ${{ steps.tag.outputs.tag }}
           files: release-assets/*
           generate_release_notes: true
@@ -285,7 +271,7 @@ jobs:
   publish-npm:
     name: Publish to npm
     needs: [publish-release]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -298,7 +284,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Sync version and publish
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
         working-directory: ./npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

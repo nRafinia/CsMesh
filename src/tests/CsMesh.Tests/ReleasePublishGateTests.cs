@@ -4,17 +4,19 @@ using Xunit;
 namespace CsMesh.Tests;
 
 /// <summary>
-/// Publishing writes outside the run: NuGet, npm and GitHub Releases. The release
-/// workflow must not do any of that unless the ref is a version tag, so that a branch
-/// push — including the temporary feature-branch dry run — can never publish.
+/// Publishing writes outside the run: NuGet, npm and GitHub Releases. Releases are
+/// started by hand only, so the workflow has no push trigger and nothing publishes
+/// unless the dispatch is on main with a non-empty tag_name.
 ///
 /// Every publishing job and step is gated on the same expression. This pins it: a
 /// publish command whose job or step lacks the gate fails, and a publish command in
-/// any job other than the three known publishers fails too.
+/// any job other than the three known publishers fails too. It also pins that there
+/// is no push trigger and that the tag/version check runs before the build jobs.
 /// </summary>
 public sealed class ReleasePublishGateTests
 {
-    private const string Gate = "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}";
+    private const string Gate =
+        "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}";
 
     /// <summary>Commands and actions that write outside the run.</summary>
     private static readonly string[] PublishMarkers =
@@ -32,7 +34,7 @@ public sealed class ReleasePublishGateTests
     private static readonly string[] PublishingJobs = { "publish-nuget", "publish-release", "publish-npm" };
 
     [Fact]
-    public void Every_publishing_job_and_step_is_gated_on_a_version_tag_ref()
+    public void Every_publishing_job_and_step_is_gated_on_a_valid_dispatch()
     {
         var lines = File.ReadAllLines(RepoFile(Path.Combine(".github", "workflows", "release.yml")));
         var jobs = ParseJobs(lines);
@@ -75,6 +77,51 @@ public sealed class ReleasePublishGateTests
         var command = string.Join("\n", pack.Body);
         Assert.Contains("-p:DebugType=none", command, StringComparison.Ordinal);
         Assert.Contains("-p:CopyOutputSymbolsToPublishDirectory=false", command, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_workflow_has_no_push_trigger()
+    {
+        var lines = File.ReadAllLines(RepoFile(Path.Combine(".github", "workflows", "release.yml")));
+
+        var onBlock = lines
+            .SkipWhile(line => line.TrimEnd() != "on:")
+            .Skip(1)
+            .TakeWhile(line => !line.StartsWith("permissions:", StringComparison.Ordinal)
+                               && !line.StartsWith("jobs:", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.DoesNotContain(onBlock, line => Regex.IsMatch(line, @"^  push:\s*$"));
+        Assert.Contains(onBlock, line => Regex.IsMatch(line, @"^  workflow_dispatch:\s*$"));
+    }
+
+    [Fact]
+    public void The_version_check_runs_before_the_build_jobs()
+    {
+        var lines = File.ReadAllLines(RepoFile(Path.Combine(".github", "workflows", "release.yml")));
+        var jobs = ParseJobs(lines);
+
+        var test = jobs.Single(job => job.Name == "test");
+        var testSteps = test.Steps.ToList();
+        var check = testSteps.FindIndex(step => step.Name == "Verify tag_name and package versions");
+        Assert.True(check >= 0, "The test job has no 'Verify tag_name and package versions' step.");
+
+        var build = testSteps.FindIndex(step => step.Name == "Build (Release)");
+        Assert.True(build < 0 || check < build, "The version check must run before the test job builds.");
+
+        foreach (var buildJob in new[] { "build-aot", "pack-pointer" })
+            Assert.Contains("test", Needs(jobs.Single(job => job.Name == buildJob)));
+    }
+
+    private static IReadOnlyList<string> Needs(Job job)
+    {
+        var line = job.Body.FirstOrDefault(l => Regex.IsMatch(l, @"^    needs:\s*"));
+        if (line == null) return Array.Empty<string>();
+
+        return line["    needs:".Length..]
+            .Trim()
+            .Trim('[', ']')
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
     private static bool IsPublishLine(string line) =>
