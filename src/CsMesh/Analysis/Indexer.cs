@@ -2363,23 +2363,10 @@ public static partial class Indexer
                     case IdentifierNameSyntax id when id.Parent is not MemberAccessExpressionSyntax:
                     {
                         var role = BareRole(id, model);
-                        if (role is not null && model.GetSymbolInfo(id).Symbol is { } bare && !InInitializer(id))
+                        if (role is not null && model.GetSymbolInfo(id).Symbol is { } bare)
                             EmitMemberRole(OwnerOf(id), bare, role.Value, id);
                         break;
                     }
-                }
-            }
-
-            // Object initializers and with-expressions are their own change; leave their property
-            // edges exactly as they were so the two commits stay separable.
-            foreach (var assign in body.DescendantNodes().OfType<AssignmentExpressionSyntax>())
-            {
-                if (assign.Left is IdentifierNameSyntax id &&
-                    InInitializer(assign) &&
-                    model.GetSymbolInfo(id).Symbol is IPropertySymbol prop &&
-                    prop.Locations.Any(l => l.IsInSource))
-                {
-                    Link(OwnerOf(assign), NodeFor(prop.OriginalDefinition, "property"), EdgeKind.Call, "prop");
                 }
             }
 
@@ -2455,12 +2442,6 @@ public static partial class Indexer
                     return null;
             }
         }
-
-        private static bool InInitializer(SyntaxNode node) =>
-            node.Ancestors().OfType<InitializerExpressionSyntax>().Any(init =>
-                init.Parent is ObjectCreationExpressionSyntax
-                    or ImplicitObjectCreationExpressionSyntax
-                    or WithExpressionSyntax);
 
         /// <summary>
         /// Records a member access with its role on the single deduped Call edge. A read on one
