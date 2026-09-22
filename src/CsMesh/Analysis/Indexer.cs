@@ -1106,6 +1106,14 @@ public static partial class Indexer
         private readonly HashSet<(int Service, int Implementation)> _diBoundPairs = new();
 
         private readonly HashSet<(int, int, EdgeKind)> _dedupe = new();
+
+        /// <summary>
+        /// The edge behind each deduped (from, to, kind), so a later member access can merge its
+        /// role and site into the same edge instead of adding a second one. Without it a property
+        /// read on one line and a write on another would be two edges, and "where is this written"
+        /// would report the read as a writer too.
+        /// </summary>
+        private readonly Dictionary<(int, int, EdgeKind), Edge> _edgeByKey = new();
         private readonly List<(INamedTypeSymbol Type, TypeDeclarationSyntax Decl, int Id, SemanticModel Model)> _pendingHandlers = new();
 
         /// <summary>
@@ -1564,7 +1572,7 @@ public static partial class Indexer
         {
             if (from == to) return;
             if (!_dedupe.Add((from, to, kind))) return;
-            g.Edges.Add(new Edge
+            var edge = new Edge
             {
                 From = from,
                 To = to,
@@ -1574,7 +1582,9 @@ public static partial class Indexer
                 Confidence = confidence >= 1.0 ? null : confidence,
                 Source = source,
                 Site = at == null ? null : SiteOf(at)
-            });
+            };
+            g.Edges.Add(edge);
+            _edgeByKey[(from, to, kind)] = edge;
         }
 
         /// <summary>Where an edge was declared, as a repo-relative file:line.</summary>
@@ -2336,28 +2346,36 @@ public static partial class Indexer
                 TryConventionRegistration(inv, model);
             }
 
-            foreach (var ma in body.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
+            // Member accesses and bare writes are walked in document order together, so the first
+            // write site in the file wins the edge's Site no matter which syntax form it takes.
+            foreach (var node in body.DescendantNodes())
             {
-                var symbol = model.GetSymbolInfo(ma).Symbol;
-
-                if (symbol is IPropertySymbol prop && prop.Locations.Any(l => l.IsInSource))
+                switch (node)
                 {
-                    Link(OwnerOf(ma), NodeFor(prop.OriginalDefinition, "property"), EdgeKind.Call, "prop");
-                    continue;
-                }
+                    case MemberAccessExpressionSyntax ma:
+                    {
+                        var sym = model.GetSymbolInfo(ma).Symbol;
+                        if (sym is IPropertySymbol or IFieldSymbol)
+                            EmitMemberRole(OwnerOf(ma), sym, MemberRole(ma), ma);
+                        break;
+                    }
 
-                // OrderStatus.Cancelled read in a switch arm. This is the edge that answers
-                // "if I add a member to this enum, which switches do I have to revisit".
-                if (symbol is IFieldSymbol field && field.Locations.Any(l => l.IsInSource))
-                {
-                    var kind = field.ContainingType?.TypeKind == TypeKind.Enum ? "enum-member" : "field";
-                    Link(OwnerOf(ma), NodeFor(field.OriginalDefinition, kind), EdgeKind.Call, kind);
+                    case IdentifierNameSyntax id when id.Parent is not MemberAccessExpressionSyntax:
+                    {
+                        var role = BareRole(id, model);
+                        if (role is not null && model.GetSymbolInfo(id).Symbol is { } bare && !InInitializer(id))
+                            EmitMemberRole(OwnerOf(id), bare, role.Value, id);
+                        break;
+                    }
                 }
             }
 
+            // Object initializers and with-expressions are their own change; leave their property
+            // edges exactly as they were so the two commits stay separable.
             foreach (var assign in body.DescendantNodes().OfType<AssignmentExpressionSyntax>())
             {
                 if (assign.Left is IdentifierNameSyntax id &&
+                    InInitializer(assign) &&
                     model.GetSymbolInfo(id).Symbol is IPropertySymbol prop &&
                     prop.Locations.Any(l => l.IsInSource))
                 {
@@ -2387,6 +2405,109 @@ public static partial class Indexer
                     RecordExternal(vt, declaration.Type, _currentAssembly);
                 }
             }
+        }
+
+        /// <summary>
+        /// The role a member access carries. An assignment reads like a write unless it is
+        /// compound, and ++/-- is both; everything else is a read. ref/out are classified in their
+        /// own change, so here they fall through to read.
+        /// </summary>
+        private static EdgeRole MemberRole(MemberAccessExpressionSyntax ma) => ma.Parent switch
+        {
+            AssignmentExpressionSyntax a when a.Left == ma =>
+                a.Kind() == SyntaxKind.SimpleAssignmentExpression
+                    ? EdgeRole.Write
+                    : EdgeRole.Read | EdgeRole.Write,
+            PostfixUnaryExpressionSyntax pu when pu.Operand == ma &&
+                pu.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression
+                => EdgeRole.Read | EdgeRole.Write,
+            PrefixUnaryExpressionSyntax pr when pr.Operand == ma &&
+                pr.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
+                => EdgeRole.Read | EdgeRole.Write,
+            _ => EdgeRole.Read
+        };
+
+        /// <summary>
+        /// The role a bare identifier target carries, or null when it is not a member write. Bare
+        /// means written without a receiver ("Count = 1", "Count++"). The old code recorded the
+        /// property form and dropped every field form, which is why constructor writes to readonly
+        /// fields never appeared in the graph.
+        /// </summary>
+        private static EdgeRole? BareRole(IdentifierNameSyntax id, SemanticModel model)
+        {
+            switch (id.Parent)
+            {
+                case AssignmentExpressionSyntax a when a.Left == id:
+                    if (model.GetSymbolInfo(id).Symbol is not (IPropertySymbol or IFieldSymbol)) return null;
+                    return a.Kind() == SyntaxKind.SimpleAssignmentExpression
+                        ? EdgeRole.Write
+                        : EdgeRole.Read | EdgeRole.Write;
+
+                case PostfixUnaryExpressionSyntax pu when pu.Operand == id &&
+                    pu.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression:
+                case PrefixUnaryExpressionSyntax pr when pr.Operand == id &&
+                    pr.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression:
+                    return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol
+                        ? EdgeRole.Read | EdgeRole.Write
+                        : null;
+
+                default:
+                    return null;
+            }
+        }
+
+        private static bool InInitializer(SyntaxNode node) =>
+            node.Ancestors().OfType<InitializerExpressionSyntax>().Any(init =>
+                init.Parent is ObjectCreationExpressionSyntax
+                    or ImplicitObjectCreationExpressionSyntax
+                    or WithExpressionSyntax);
+
+        /// <summary>
+        /// Records a member access with its role on the single deduped Call edge. A read on one
+        /// line and a write on another merge into Read|Write with the first write site, which keeps
+        /// read+write from inflating into two edges the caller would have to reconcile.
+        /// </summary>
+        private void EmitMemberRole(int owner, ISymbol sym, EdgeRole role, SyntaxNode at)
+        {
+            if (!sym.Locations.Any(l => l.IsInSource)) return;
+
+            var (kind, note) = sym switch
+            {
+                IPropertySymbol => ("property", "prop"),
+                IFieldSymbol f when f.ContainingType?.TypeKind == TypeKind.Enum => ("enum-member", "enum-member"),
+                IFieldSymbol => ("field", "field"),
+                _ => ("", "")
+            };
+            if (kind.Length == 0) return;
+
+            LinkMemberAccess(owner, NodeFor(sym.OriginalDefinition, kind), role, note, at);
+        }
+
+        private void LinkMemberAccess(int from, int to, EdgeRole role, string note, SyntaxNode at)
+        {
+            if (from == to) return;
+
+            var key = (from, to, EdgeKind.Call);
+            if (_edgeByKey.TryGetValue(key, out var edge))
+            {
+                edge.Role = (edge.Role ?? 0) | role;
+                if ((role & EdgeRole.Write) != 0 && edge.Site is null) edge.Site = SiteOf(at);
+                return;
+            }
+
+            if (!_dedupe.Add(key)) return;
+            edge = new Edge
+            {
+                From = from,
+                To = to,
+                Kind = EdgeKind.Call,
+                Note = note,
+                Role = role,
+                // The write location, not the read. A read-only edge keeps Site null.
+                Site = (role & EdgeRole.Write) != 0 ? SiteOf(at) : null
+            };
+            g.Edges.Add(edge);
+            _edgeByKey[key] = edge;
         }
 
         private static readonly Dictionary<string, string> MapVerbs = new(StringComparer.Ordinal)
