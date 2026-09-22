@@ -194,6 +194,18 @@ public static class McpTools
                 };
             }
 
+            // The tool forwards --writes; the filter itself lives in Queries.BlastRadius, so the
+            // MCP answer and the shell answer cannot drift apart.
+            if (tool.Kind == "blast")
+            {
+                schema.Properties["writes"] = new JsonSchemaProperty
+                {
+                    Type = "boolean",
+                    Description = "Return only the sites that write the symbol, not the sites that read it. "
+                                  + "One reverse interface hop is included and marked [via-interface]."
+                };
+            }
+
             schema.Properties["repo"] = new JsonSchemaProperty
             {
                 Type = "string",
@@ -264,6 +276,7 @@ public static class McpTools
         if (Text(arguments, "under") is { Length: > 0 } under) argv.AddRange(["--under", under]);
         if (Text(arguments, "project") is { Length: > 0 } project) argv.AddRange(["--project", project]);
         if (Boolean(arguments, "full")) argv.Add("--full");
+        if (Boolean(arguments, "writes")) argv.Add("--writes");
 
         var opt = new Options([.. argv]);
 

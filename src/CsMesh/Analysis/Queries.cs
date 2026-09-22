@@ -264,9 +264,15 @@ public static partial class Queries
     /// <summary>
     /// Performs a reverse traversal to discover all direct and indirect callers affected by a member change,
     /// surfacing reachable entrypoints (routes, message handlers, consumers, background services).
+    ///
+    /// With <paramref name="writes"/> it answers the narrower question "where is this written": only
+    /// sites whose member-access edge carries the Write bit, plus the writers reached through one
+    /// reverse interface hop (see <see cref="BlastRadiusWrites"/>).
     /// </summary>
-    public static int BlastRadius(Graph g, Node target, int depth, BudgetWriter w, HashSet<string> dirty)
+    public static int BlastRadius(Graph g, Node target, int depth, BudgetWriter w, HashSet<string> dirty,
+                                  bool writes = false)
     {
+        if (writes) return BlastRadiusWrites(g, target, w, dirty);
         // Confidence is carried along the path, not read off the last edge. A caller reached only
         // through a 0.70 dispatch is a 0.70 caller no matter how certain the remaining hops were,
         // and blast-radius is the worst place to overstate certainty: the person running it is
@@ -401,6 +407,55 @@ public static partial class Queries
 
     /// <summary>One node reached during a reverse walk, with the weakest edge on the way to it.</summary>
     private readonly record struct Reach(Node Node, int Level, double Score, string? Source);
+
+    /// <summary>
+    /// The --writes form: the sites that write the target, not the sites that read it. A write
+    /// through an interface-typed reference resolves to the interface member, not to this
+    /// implementation's node, so one reverse Interface hop pulls those writers in and marks them
+    /// via-interface. Without that hop a caller writing through the interface would be missing
+    /// from the answer even though it is exactly the writer the caller is looking for.
+    ///
+    /// Deliberately one hop and one level: a write-only walk that kept going would collect the
+    /// callers of the writers, which is the ordinary blast radius and not what --writes asks for.
+    /// </summary>
+    private static int BlastRadiusWrites(Graph g, Node target, BudgetWriter w, HashSet<string> dirty)
+    {
+        var seen = new HashSet<int> { target.Id };
+        var writers = new List<(Node Node, bool ViaInterface)>();
+
+        void Add(Node owner, bool via)
+        {
+            if (seen.Add(owner.Id)) writers.Add((owner, via));
+        }
+
+        foreach (var e in g.In(target.Id))
+            if (e.Kind == EdgeKind.Call && HasWrite(e) && g.ById(e.From) is { } owner)
+                Add(owner, via: false);
+
+        foreach (var e in g.In(target.Id).Where(x => x.Kind == EdgeKind.Interface))
+            if (g.ById(e.From) is { } iface)
+                foreach (var we in g.In(iface.Id))
+                    if (we.Kind == EdgeKind.Call && HasWrite(we) && g.ById(we.From) is { } owner)
+                        Add(owner, via: true);
+
+        w.Force($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}", Row(target, 0, "root", null, dirty));
+        w.Force($"written by {writers.Count} site(s)");
+
+        foreach (var (node, via) in writers
+            .OrderBy(x => IsTest(x.Node) ? 1 : 0)
+            .ThenBy(x => x.Node.Short, StringComparer.Ordinal))
+        {
+            var marker = via ? "  [via-interface]" : "";
+            var row = Row(node, 1, "writer", via ? "via-interface" : null, dirty);
+            if (!w.Add($"  {node.Short}{marker}{Loc(node)}{StaleTag(node, dirty)}", row))
+                return Overflow(w, writers.Count);
+        }
+
+        return Exit.Ok;
+    }
+
+    /// <summary>True when a member-access edge carries the Write bit.</summary>
+    private static bool HasWrite(Edge e) => e.Role is { } role && (role & EdgeRole.Write) != 0;
 
     internal static bool IsTest(Node n) => n.Tags.Contains("test");
 
