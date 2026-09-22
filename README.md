@@ -9,8 +9,8 @@ Built for AI coding agents and developers who are tired of multi-turn "file-hopp
 
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Native AOT](https://img.shields.io/badge/Native-AOT%20Ready-success?logo=speedtest&logoColor=white)](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)
-[![Token Reduction](https://img.shields.io/badge/Context%20Spend--85%25-brightgreen)](https://github.com/nRafinia/CsMesh)
-[![Latency](https://img.shields.io/badge/Query%20Latency-~100ms-blue)](https://github.com/nRafinia/CsMesh)
+[![Token Reduction](https://img.shields.io/badge/Context%20Spend--93%25-brightgreen)](https://github.com/nRafinia/CsMesh)
+[![Latency](https://img.shields.io/badge/Query%20Latency-~28ms%20NativeAOT-blue)](https://github.com/nRafinia/CsMesh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
@@ -135,8 +135,10 @@ Symbol names above are placeholders; the numbers were measured on the real codeb
 
 ### Deep-Dive Real-World Scenarios
 
+Times below are the same 2026-09-21 medians as the table above, measured on the **NativeAOT win-x64** channel; the framework-dependent `dotnet tool` channel pays JIT warm-up and is slower.
+
 #### 1. Interface Implementation & Runtime DI Resolution
-* **With `csmesh impl IOrderRepository --budget 300` (244 ms):**
+* **With `csmesh impl IOrderRepository --budget 300` (27.6 ms, NativeAOT win-x64):**
   Identifies all 3 concrete implementations in a single glance: tags `SqlOrderRepository` with `[di:scoped]` along with the exact file and line where it was bound in the IoC container, while clearly marking `SpyOrderRepository` and `InMemoryOrderRepository` as test doubles.
 * **Without `csmesh`:**
   - *Turn 1:* Run `rg ":\s*IOrderRepository\b"` to find inheriting classes (returns multiple classes, but cannot indicate which one is registered in production).
@@ -144,32 +146,32 @@ Symbol names above are placeholders; the numbers were measured on the real codeb
   - *Turn 3:* Open the DI module or test fixture to verify which instance actually executes at runtime.
 
 #### 2. Forward Call Chain Tracing Across Interface Boundaries
-* **With `csmesh trace OrderEndpoints.CreateOrderAsync --depth 2` (156 ms):**
+* **With `csmesh trace OrderEndpoints.CreateOrderAsync --depth 2` (27.8 ms, NativeAOT win-x64):**
   Follows execution seamlessly across decoupled interface abstractions. Traces `IAuthorizationService.AuthorizeAsync` directly to its concrete implementation `AuthorizationService.AuthorizeAsync`, continuing downstream to `AuditLogger.LogAsync` and `AppDbContext.SaveChangesAsync`.
 * **Without `csmesh`:**
   The agent must open the endpoint file (~100 lines), observe the interface call, search for the interface declaration, grep for implementations, open the implementation source, and repeat this cycle until reaching the persistence layer—burning 5 to 7 turns and 30+ seconds of reasoning time.
 
 #### 3. Blast Radius & Change Impact Analysis
-* **With `csmesh blast-radius OrderRepository.UpdateAsync --budget 800` (161 ms):**
+* **With `csmesh blast-radius OrderRepository.UpdateAsync --budget 800` (27.4 ms, NativeAOT win-x64):**
   Computes the reverse transitive dependency graph: reveals that modifying `UpdateAsync` impacts 18 internal members, 1 public HTTP route (`OrderEndpoints.CreateOrderAsync`), and 14 tests across 4 separate projects—clearly categorizing test callers vs. production entrypoints.
 * **Without `csmesh`:**
   Running `rg "\bUpdateAsync\b"` returns dozens of raw matching lines across interfaces, mocks, comments, and unrelated classes. Text search cannot determine which root endpoints ultimately depend on this method without exhaustive manual back-tracing.
 
 #### 4. Multi-Hop Path Finding
-* **With `csmesh path OrderEndpoints.CreateOrderAsync OrderRepository.UpdateAsync` (157 ms):**
+* **With `csmesh path OrderEndpoints.CreateOrderAsync OrderRepository.UpdateAsync` (29.7 ms, NativeAOT win-x64):**
   ```text
   OrderEndpoints.CreateOrderAsync
     -> OrderService.ProcessOrderAsync
       -> IOrderRepository.UpdateAsync
         -> SqlOrderRepository.UpdateAsync [impl, di-bound]
   ```
-  Resolves the exact 4-hop invocation path through services and DI container registrations in 157 ms—a task fundamentally beyond the capabilities of text search.
+  Resolves the exact 4-hop invocation path through services and DI container registrations in 29.7 ms—a task fundamentally beyond the capabilities of text search.
 
 ---
 
 ### Core Takeaways
 
-1. **Semantic Intelligence vs. Lexical Speed:** While `ripgrep` searches text in 30–50 ms, its output is **lexical, not semantic**. `csmesh` answers in **~25–30 ms** (median of 20 warm runs, measured 2026-09-21 on csmesh 0.6.0), but returns definitive, actionable architectural conclusions rather than raw strings.
+1. **Semantic Intelligence vs. Lexical Speed:** While `ripgrep` searches text in 30–50 ms, its output is **lexical, not semantic**. `csmesh` answers in **~25–30 ms** (median of 20 warm runs on the NativeAOT win-x64 channel, measured 2026-09-21 on csmesh 0.6.0), but returns definitive, actionable architectural conclusions rather than raw strings.
 2. **Eliminating the Agent Turn Latency Bottleneck:** In AI agent interactions, the dominant latency cost is LLM inference and reasoning per turn (often 5–15 seconds per round-trip). By collapsing 4 to 8 file-hunting turns into **1 single shell command**, `csmesh` cuts total agent task completion time by **over 80%**.
 3. **Context Window Hygiene:** Replacing full source file dumps with compact graph edges saves **~93–94% of token spend** in the two measured scenarios that have a token baseline (DI binding and call-chain trace), preserving the model's context window for actual implementation rather than navigation. The other scenarios were measured as csmesh token counts only, against qualitative baselines.
 
@@ -235,6 +237,8 @@ curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | s
 irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex
 ```
 
+The install scripts download the prebuilt Native AOT binary for your OS and architecture — `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-arm64`, `osx-x64` — and fall back to the .NET global tool when no asset matches.
+
 ---
 
 ### 1. As a Global .NET Tool
@@ -251,6 +255,8 @@ dotnet tool install --global --add-source ./src/CsMesh/bin/Release CsMesh
 dotnet tool update --global CsMesh
 ```
 
+From 0.6.1 the tool package is RID-specific: on `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-arm64` and `osx-x64`, `dotnet tool install` fetches the Native AOT binary. On any other platform it falls back to the framework-dependent build.
+
 ### 2. Via npm / npx
 ```bash
 Bash
@@ -260,6 +266,8 @@ npx @nrafinia/csmesh --help
 # Or install globally across Windows, macOS, and Linux
 npm install -g @nrafinia/csmesh
 ```
+
+`npx` and `npm install -g` download the prebuilt Native AOT binary for your platform (the six RIDs listed above) from the GitHub release, so no .NET runtime is needed.
 
 ### 3. As a Standalone Native AOT Binary (Zero Runtime Dependency)
 
@@ -276,7 +284,7 @@ dotnet publish src/CsMesh/CsMesh.csproj -c Release -r linux-x64 -p:PublishAot=tr
 dotnet publish src/CsMesh/CsMesh.csproj -c Release -r osx-arm64 -p:PublishAot=true
 ```
 
-The resulting binary in `bin/Release/net10.0/<rid>/publish/` has **sub-100ms startup** and runs on machines without .NET installed.
+The resulting binary in `bin/Release/net10.0/<rid>/publish/` runs on machines without .NET installed and, on the measured NativeAOT win-x64 channel, answers a warm query in ~28 ms median (csmesh 0.6.0, 2026-09-21).
 
 ---
 
