@@ -2,6 +2,13 @@ name: Release
 
 on:
   push:
+    # TEMPORARY (ci(tmp) commit): workflow_dispatch is only offered once the
+    # trigger exists on the default branch, so this branch push is what lets the
+    # dry run be exercised from feature/native-tool-packages. A branch push never
+    # publishes: every publishing job and step is gated on a v* tag ref. Remove
+    # the branches filter before merging.
+    branches:
+      - feature/native-tool-packages
     tags:
       - 'v*'
   workflow_dispatch:
@@ -179,7 +186,7 @@ jobs:
   publish-nuget:
     name: Push Tool Packages to NuGet.org
     needs: [build-aot, pack-pointer]
-    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download tool package artifacts
@@ -193,6 +200,7 @@ jobs:
       # `any` fallback) must be on the feed before it is. Push those first and the
       # pointer last, so a client can never resolve a pointer to a missing package.
       - name: Push RID packages, then the pointer last
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
@@ -221,7 +229,7 @@ jobs:
   publish-release:
     name: Create GitHub Release
     needs: [build-aot, pack-pointer]
-    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.clean_version }}
@@ -271,6 +279,7 @@ jobs:
           echo "clean_version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Publish GitHub Release
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
@@ -281,7 +290,7 @@ jobs:
   publish-npm:
     name: Publish to npm
     needs: [publish-release]
-    if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -294,6 +303,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Sync version and publish
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         working-directory: ./npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
