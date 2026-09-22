@@ -2,6 +2,13 @@ name: Release
 
 on:
   push:
+    # TEMPORARY (ci(tmp) commit): workflow_dispatch is only offered once the
+    # trigger exists on the default branch, so this branch push is what lets the
+    # dry run be exercised from feature/native-tool-packages. A branch push never
+    # publishes: every publishing job and step is gated on a v* tag ref. Remove
+    # the branches filter before merging.
+    branches:
+      - feature/native-tool-packages
     tags:
       - 'v*'
   workflow_dispatch:
@@ -10,6 +17,10 @@ on:
         description: 'Release tag (leave empty to use version from CsMesh.csproj)'
         required: false
         default: ''
+      dry_run:
+        description: 'Build and pack only; publish nothing to NuGet, npm or GitHub Releases'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -42,19 +53,40 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Native AOT cannot cross-compile, so every RID is built and packed on a
+      # runner of that architecture. Runner labels were verified against
+      # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+      # on 2026-09-22:
+      #   osx-x64     -> macos-15-intel   (macOS 15 image ships Xcode 16.4 / Clang 17)
+      #   linux-arm64 -> ubuntu-24.04-arm (image ships Clang 16/17/18)
+      #   win-arm64   -> windows-11-arm   (image ships Visual Studio 2022 with VC.Tools.ARM64)
+      # osx-arm64, linux-x64 and win-x64 keep the labels they already used. Any
+      # label not listed here is unverified and stays out of the matrix.
       matrix:
         include:
           - os: windows-latest
             target: win-x64
             archive_name: csmesh-win-x64.zip
             binary_name: csmesh.exe
+          - os: windows-11-arm
+            target: win-arm64
+            archive_name: csmesh-win-arm64.zip
+            binary_name: csmesh.exe
           - os: ubuntu-latest
             target: linux-x64
             archive_name: csmesh-linux-x64.tar.gz
             binary_name: csmesh
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            archive_name: csmesh-linux-arm64.tar.gz
+            binary_name: csmesh
           - os: macos-latest
             target: osx-arm64
             archive_name: csmesh-osx-arm64.tar.gz
+            binary_name: csmesh
+          - os: macos-15-intel
+            target: osx-x64
+            archive_name: csmesh-osx-x64.tar.gz
             binary_name: csmesh
 
     steps:
@@ -87,14 +119,38 @@ jobs:
         run: |
           Compress-Archive -Path "publish-out/${{ matrix.binary_name }}" -DestinationPath "${{ matrix.archive_name }}"
 
-      - name: Upload artifact
+      # Pack the same RID as a .NET tool package. DebugType=none stops this build
+      # from producing managed or native symbols, and
+      # CopyOutputSymbolsToPublishDirectory=false stops the SDK's _CopyAotSymbols
+      # target from copying the symbol the earlier archive publish left in the
+      # shared native output directory (Microsoft.NETCore.Native.Publish.targets:
+      # 94-121, default true in Microsoft.NET.Publish.targets:527). Together they
+      # keep csmesh.pdb / csmesh.dbg / csmesh.dSYM out of the nupkg on every OS.
+      # ToolPackageRuntimeIdentifiers in the csproj makes this package id CsMesh.<rid>.
+      - name: Pack RID-specific .NET tool package (${{ matrix.target }})
+        run: >
+          dotnet pack src/CsMesh/CsMesh.csproj
+          -c Release
+          -r ${{ matrix.target }}
+          -p:PublishAot=true
+          -p:DebugType=none
+          -p:CopyOutputSymbolsToPublishDirectory=false
+          -o nupkg-out
+
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.archive_name }}
+          name: binary-${{ matrix.target }}
           path: ${{ matrix.archive_name }}
 
-  pack-nuget:
-    name: Pack NuGet Package
+      - name: Upload tool package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg-${{ matrix.target }}
+          path: nupkg-out/*.nupkg
+
+  pack-pointer:
+    name: Pack Pointer Package
     needs: [test]
     runs-on: ubuntu-latest
     steps:
@@ -106,16 +162,51 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Pack .NET Tool
-        run: dotnet pack src/CsMesh/CsMesh.csproj -c Release -o nupkg-out
+      # PublishAot=true is what tells the SDK not to try to create the RID
+      # packages here (it cannot AOT cross-platform); it emits only the pointer
+      # package, whose DotnetToolSettings.xml lists every RID in the csproj's
+      # ToolPackageRuntimeIdentifiers, including `any`.
+      - name: Pack pointer package
+        run: >
+          dotnet pack src/CsMesh/CsMesh.csproj
+          -c Release
+          -p:PublishAot=true
+          -p:DebugType=none
+          -o nupkg-out
 
-      - name: Upload NuGet artifact
+      - name: Pack framework-dependent fallback (`any`)
+        run: >
+          dotnet pack src/CsMesh/CsMesh.csproj
+          -c Release
+          -r any
+          -p:DebugType=none
+          -p:CopyOutputSymbolsToPublishDirectory=false
+          -o nupkg-out
+
+      - name: Upload pointer and `any` packages
         uses: actions/upload-artifact@v4
         with:
-          name: nuget-package
+          name: nupkg-pointer
           path: nupkg-out/*.nupkg
 
-      - name: Push to NuGet.org
+  publish-nuget:
+    name: Push Tool Packages to NuGet.org
+    needs: [build-aot, pack-pointer]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tool package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nupkg-*
+          merge-multiple: true
+          path: nupkg-out
+
+      # The pointer package names the RID packages, so every RID package (and the
+      # `any` fallback) must be on the feed before it is. Push those first and the
+      # pointer last, so a client can never resolve a pointer to a missing package.
+      - name: Push RID packages, then the pointer last
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
@@ -123,11 +214,28 @@ jobs:
             echo "::error::Secret NUGET_API_KEY is missing! Please configure it in GitHub Settings -> Secrets and variables -> Actions."
             exit 1
           fi
-          dotnet nuget push nupkg-out/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          shopt -s nullglob
+          pointer=""
+          for f in nupkg-out/*.nupkg; do
+            base="$(basename "$f")"
+            if [[ "$base" =~ ^CsMesh\.[0-9]+\.[0-9]+\.[0-9]+([-.].*)?\.nupkg$ ]]; then
+              pointer="$f"
+            else
+              echo "Pushing $base"
+              dotnet nuget push "$f" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+            fi
+          done
+          if [ -z "$pointer" ]; then
+            echo "::error::Pointer package (CsMesh.<version>.nupkg) not found in the downloaded artifacts."
+            exit 1
+          fi
+          echo "Pushing pointer $(basename "$pointer") last"
+          dotnet nuget push "$pointer" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
   publish-release:
     name: Create GitHub Release
-    needs: [build-aot, pack-nuget]
+    needs: [build-aot, pack-pointer]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.clean_version }}
@@ -135,16 +243,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download binary artifacts
         uses: actions/download-artifact@v4
         with:
-          path: release-assets
+          pattern: binary-*
           merge-multiple: true
+          path: release-assets
 
       - name: Generate checksums
         run: |
           cd release-assets
-          sha256sum csmesh-win-x64.zip csmesh-linux-x64.tar.gz csmesh-osx-arm64.tar.gz > checksums.txt
+          sha256sum \
+            csmesh-win-x64.zip \
+            csmesh-win-arm64.zip \
+            csmesh-linux-x64.tar.gz \
+            csmesh-linux-arm64.tar.gz \
+            csmesh-osx-arm64.tar.gz \
+            csmesh-osx-x64.tar.gz \
+            > checksums.txt
           cat checksums.txt
 
       - name: Determine Release Tag
@@ -169,6 +285,7 @@ jobs:
           echo "clean_version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Publish GitHub Release
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
@@ -179,6 +296,7 @@ jobs:
   publish-npm:
     name: Publish to npm
     needs: [publish-release]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -191,6 +309,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Sync version and publish
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         working-directory: ./npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

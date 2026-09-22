@@ -287,11 +287,11 @@ footer .right{margin-left:auto}
     <div class="term reveal hero-term">
       <div class="term-bar">
         <span class="prompt">$ <em>csmesh trace PaymentController.Post --budget 600</em></span>
-        <span class="meta"><span class="ok">exit 0</span><span>118 tokens</span><span>96 ms</span></span>
+        <span class="meta"><span class="ok">exit 0</span><span>118 tokens</span><span>28 ms</span></span>
       </div>
       <div class="term-body"><pre id="hero-out"></pre></div>
     </div>
-    <p class="hero-cap">Colour is information here, not decoration: amber is the implementation the container registered, violet is a mediator dispatch, teal is an HTTP entrypoint.</p>
+    <p class="hero-cap">Colour is information here, not decoration: amber is the implementation the container registered, violet is a mediator dispatch, teal is an HTTP entrypoint. The 28 ms is a warm query on the measured NativeAOT win-x64 channel (csmesh 0.6.0, 2026-09-21).</p>
   </div>
 </div>
 
@@ -425,25 +425,26 @@ footer .right{margin-left:auto}
   <div class="wrap">
     <div class="head">
       <h2>Empirical benchmarks on a real-world backend</h2>
-      <p>Benchmarked across a real-world enterprise .NET codebase (29 projects, 1,942 symbols, 5,143 edges). Comparing standard AI agent exploration (Ripgrep + sequential file reads) against single-command <code>csmesh</code> queries.</p>
+      <p>Benchmarked across a private 29-project .NET solution (1,945 symbols, 5,164 edges; measured 2026-09-21 on csmesh 0.6.0). Comparing standard AI agent exploration (Ripgrep + sequential file reads) against single-command <code>csmesh</code> queries.</p>
     </div>
     <div class="figs">
-      <div><b>150<i>ms</i></b><span>median query</span><p>Delivers deterministic architectural facts in milliseconds, bypassing multi-hop model reasoning latency.</p></div>
-      <div><b>80–95<i>%</i></b><span>less context</span><p>Returns dense symbol graph edges instead of polluting the context window with thousands of raw source lines.</p></div>
+      <div><b>28<i>ms</i></b><span>median query</span><p>Median of 20 warm runs on a NativeAOT win-x64 build, csmesh 0.6.0, 2026-09-21 — bypasses multi-hop model reasoning latency.</p></div>
+      <div><b>~93<i>%</i></b><span>less context</span><p>Measured ~93–94% less context in the two scenarios with a token baseline; the rest return csmesh token counts against qualitative baselines, not percentages.</p></div>
       <div><b>1</b><span>shell command</span><p>Replaces 3 to 7 exploratory turns into a single invocation that cannot overflow the budget it was given.</p></div>
     </div>
     <table class="tbl">
-      <thead><tr><th style="width:28%">Workflow Scenario</th><th style="width:26%">grep &amp; sequential reads</th><th style="width:24%">csmesh (single command)</th><th>Turn &amp; Token Savings</th></tr></thead>
+      <thead><tr><th style="width:28%">Workflow Scenario</th><th style="width:26%">grep &amp; sequential reads</th><th style="width:26%">csmesh (single command)</th><th>Turn &amp; Token Savings</th></tr></thead>
       <tbody>
-        <tr><td>DI binding (e.g. IOrderRepository)</td><td class="old">~3 turns (~1,500 tokens)</td><td class="win">244 ms (1 command)</td><td>~15× faster turnaround, ~90% token reduction</td></tr>
-        <tr><td>Call chain trace (OrderEndpoints)</td><td class="old">5–7 turns (~4,000 tokens)</td><td class="win">156 ms (depth 2)</td><td>~30× faster task time, ~85% token reduction</td></tr>
-        <tr><td>Blast radius (OrderRepository)</td><td class="old">4–6 turns (24+ noisy hits)</td><td class="win">161 ms (reverse graph)</td><td>Callers, not text matches, ~80% token reduction</td></tr>
-        <tr><td>Path finding (Endpoint &rarr; Repo)</td><td class="old">Impossible with grep</td><td class="win">157 ms (4-hop route)</td><td>1 deterministic step, ~95% token reduction</td></tr>
-        <tr><td>Entrypoint &amp; worker discovery</td><td class="old">Multiple greps + manual parsing</td><td class="win">143 ms (csmesh entrypoints)</td><td>Every routing form it knows: attribute, minimal API, @page, hosted services, consumers</td></tr>
-        <tr><td>Type signature (OrderRecord)</td><td class="old">Path search + full file read</td><td class="win">166 ms (csmesh context)</td><td>3× fewer steps, ~70% token reduction</td></tr>
-        <tr><td>Architecture mapping (29 projects)</td><td class="old">Read .slnx + 29 .csproj files</td><td class="win">174 ms (csmesh map)</td><td>Hundreds of times faster, ~95% token reduction</td></tr>
+        <tr><td>DI binding (e.g. IOrderRepository)</td><td class="old">grep + read, ~1,500 tokens</td><td class="win"><code>csmesh impl IOrderRepository</code> — 27.6 ms median, 97 tokens</td><td>~94% token reduction</td></tr>
+        <tr><td>Call chain trace (OrderEndpoints.CreateOrderAsync, depth 2)</td><td class="old">5–7 turns, ~4,000 tokens</td><td class="win"><code>csmesh trace OrderEndpoints.CreateOrderAsync --depth 2</code> — 27.8 ms median, 288 tokens</td><td>~93% token reduction</td></tr>
+        <tr><td>Blast radius (OrderService.UpdateAsync)</td><td class="old">4–6 turns, 24+ noisy hits (no token baseline)</td><td class="win"><code>csmesh blast-radius OrderService.UpdateAsync</code> — 27.4 ms median, 105 tokens</td><td>Callers, not text matches; no percentage</td></tr>
+        <tr><td>Path finding (OrderEndpoints.CreateOrderAsync &rarr; OrderWriter)</td><td class="old">Impossible with grep (no token baseline)</td><td class="win"><code>csmesh path OrderEndpoints.CreateOrderAsync OrderWriter</code> — 29.7 ms median, 115 tokens</td><td>1 deterministic step; no percentage</td></tr>
+        <tr><td>Entrypoint &amp; worker discovery</td><td class="old">Multiple greps + manual parsing (no token baseline)</td><td class="win"><code>csmesh entrypoints</code> — 24.8 ms median, 738 tokens</td><td>Every routing form it knows; no percentage</td></tr>
+        <tr><td>Type signature (OrderRecord)</td><td class="old">Locate + read whole file (no token baseline)</td><td class="win"><code>csmesh context OrderRecord</code> — 27.7 ms median, 478 tokens</td><td>No percentage</td></tr>
+        <tr><td>Architecture mapping (29 projects)</td><td class="old">Read .slnx + 29 .csproj files (no token baseline)</td><td class="win"><code>csmesh map</code> — 28.8 ms median, 766 tokens</td><td>No percentage</td></tr>
       </tbody>
     </table>
+    <p class="note">Symbol names above are placeholders; the numbers were measured on the real codebase with symbols of the same shape. Median of 20 warm runs (graph pre-indexed and held in the OS file cache) on a NativeAOT win-x64 build of csmesh 0.6.0, 2026-09-21, on a 13th Gen Intel Core i7-13620H (10 cores / 16 threads, 48 GB RAM, NVMe SSD). Token counts use csmesh's own estimator at roughly four characters per token.</p>
   </div>
 </section>
 
@@ -499,7 +500,7 @@ footer .right{margin-left:auto}
   <div class="wrap">
     <div class="head">
       <h2>Install</h2>
-      <p>Two paths. The prebuilt Native AOT binary needs nothing installed and starts in under 100 ms; the global tool needs the .NET SDK and updates through NuGet.</p>
+      <p>Two paths. The prebuilt Native AOT binary needs nothing installed and, on the measured NativeAOT win-x64 channel, answers a warm query in ~28 ms median (csmesh 0.6.0, 2026-09-21). The global tool needs the .NET SDK, and from 0.6.1 it fetches the same native binary on win-x64, win-arm64, linux-x64, linux-arm64, osx-arm64 and osx-x64, falling back to the framework-dependent build elsewhere.</p>
     </div>
     <div class="install">
       <div>
@@ -516,13 +517,13 @@ footer .right{margin-left:auto}
           <code>irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex</code>
           <button data-copy="irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex">Copy</button>
         </div>
-        <p class="note">Falls back to <code>dotnet tool</code> automatically when no release asset matches your architecture.</p>
+        <p class="note">The scripts download the prebuilt Native AOT binary (win-x64, win-arm64, linux-x64, linux-arm64, osx-arm64, osx-x64) and fall back to <code>dotnet tool</code> automatically when no release asset matches your architecture.</p>
       </div>
       <div>
         <h3>.NET global tool</h3>
         <div class="cmdbox" style="margin-bottom:10px"><code>dotnet tool install --global CsMesh</code><button data-copy="dotnet tool install --global CsMesh">Copy</button></div>
         <div class="cmdbox"><code>dotnet tool update --global CsMesh</code><button data-copy="dotnet tool update --global CsMesh">Copy</button></div>
-        <p class="note">Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: build first (<code>dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true</code>) so package references and source-generated files are on disk, then run <code>csmesh index</code>. A cold checkout resolves less completely than a built one. Use <code>--heal</code> on any query or rerun <code>csmesh index</code> when files change.</p>
+        <p class="note">From 0.6.1 this is a RID-specific package: on win-x64, win-arm64, linux-x64, linux-arm64, osx-arm64 and osx-x64 it delivers the Native AOT binary; elsewhere it falls back to the framework-dependent build. Then, in any repository with a <code>.sln</code>, <code>.slnx</code> or <code>.csproj</code>: build first (<code>dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true</code>) so package references and source-generated files are on disk, then run <code>csmesh index</code>. A cold checkout resolves less completely than a built one. Use <code>--heal</code> on any query or rerun <code>csmesh index</code> when files change.</p>
       </div>
     </div>
   </div>

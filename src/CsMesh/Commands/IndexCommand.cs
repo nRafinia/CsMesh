@@ -22,7 +22,11 @@ public static class IndexCommand
         }
 
         var graph = Indexer.Build(root, message => Dbg.Log(message), opt.Flag("all"));
-        GraphStore.Save(graph);
+
+        using (Timings.Phase("save"))
+        {
+            GraphStore.Save(graph);
+        }
 
         report.Mode = "full";
         report.Nodes = graph.Nodes.Count;
@@ -135,7 +139,10 @@ public static class IndexCommand
         // last full index; rotating on every small patch would leave it comparing a graph to
         // itself and reporting that nothing structural moved -- which is the one answer it must
         // never give wrongly.
-        GraphStore.SaveInPlace(patched);
+        using (Timings.Phase("save"))
+        {
+            GraphStore.SaveInPlace(patched);
+        }
 
         var dn = patched.Nodes.Count - before.Nodes;
         var de = patched.Edges.Count - before.Edges;

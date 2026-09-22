@@ -9,8 +9,11 @@ const arch = process.arch;
 
 const targets = {
   'win32-x64': { file: 'csmesh-win-x64.zip', bin: 'csmesh.exe' },
+  'win32-arm64': { file: 'csmesh-win-arm64.zip', bin: 'csmesh.exe' },
   'linux-x64': { file: 'csmesh-linux-x64.tar.gz', bin: 'csmesh' },
-  'darwin-arm64': { file: 'csmesh-osx-arm64.tar.gz', bin: 'csmesh' }
+  'linux-arm64': { file: 'csmesh-linux-arm64.tar.gz', bin: 'csmesh' },
+  'darwin-arm64': { file: 'csmesh-osx-arm64.tar.gz', bin: 'csmesh' },
+  'darwin-x64': { file: 'csmesh-osx-x64.tar.gz', bin: 'csmesh' }
 };
 
 const key = `${platform}-${arch}`;
