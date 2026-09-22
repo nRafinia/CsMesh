@@ -2396,8 +2396,8 @@ public static partial class Indexer
 
         /// <summary>
         /// The role a member access carries. An assignment reads like a write unless it is
-        /// compound, and ++/-- is both; everything else is a read. ref/out are classified in their
-        /// own change, so here they fall through to read.
+        /// compound, and ++/-- is both; a ref argument is read and written, an out argument is
+        /// written only, and an in argument is a read. Everything else is a read.
         /// </summary>
         private static EdgeRole MemberRole(MemberAccessExpressionSyntax ma) => ma.Parent switch
         {
@@ -2411,6 +2411,12 @@ public static partial class Indexer
             PrefixUnaryExpressionSyntax pr when pr.Operand == ma &&
                 pr.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
                 => EdgeRole.Read | EdgeRole.Write,
+            // ref can read and write the target; out can only write it. Miss them and an out
+            // parameter that initializes a field looks like a read, so --writes loses the writer.
+            ArgumentSyntax arg when arg.Expression == ma && arg.RefKindKeyword.IsKind(SyntaxKind.RefKeyword)
+                => EdgeRole.Read | EdgeRole.Write,
+            ArgumentSyntax arg when arg.Expression == ma && arg.RefKindKeyword.IsKind(SyntaxKind.OutKeyword)
+                => EdgeRole.Write,
             _ => EdgeRole.Read
         };
 
@@ -2436,6 +2442,17 @@ public static partial class Indexer
                     pr.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression:
                     return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol
                         ? EdgeRole.Read | EdgeRole.Write
+                        : null;
+
+                // A ref argument reads and writes its target; an out argument writes it only.
+                case ArgumentSyntax a when a.Expression == id && a.RefKindKeyword.IsKind(SyntaxKind.RefKeyword):
+                    return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol
+                        ? EdgeRole.Read | EdgeRole.Write
+                        : null;
+
+                case ArgumentSyntax a when a.Expression == id && a.RefKindKeyword.IsKind(SyntaxKind.OutKeyword):
+                    return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol
+                        ? EdgeRole.Write
                         : null;
 
                 default:
