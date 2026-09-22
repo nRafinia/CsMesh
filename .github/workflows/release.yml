@@ -2,13 +2,6 @@ name: Release
 
 on:
   push:
-    # TEMPORARY (ci(tmp) commit): workflow_dispatch is only offered once the
-    # trigger exists on the default branch, so this branch push is what lets the
-    # dry run be exercised from feature/native-tool-packages. A branch push never
-    # publishes: every publishing job and step is gated on a v* tag ref. Remove
-    # the branches filter before merging.
-    branches:
-      - feature/native-tool-packages
     tags:
       - 'v*'
   workflow_dispatch:
@@ -17,10 +10,6 @@ on:
         description: 'Release tag (leave empty to use version from CsMesh.csproj)'
         required: false
         default: ''
-      dry_run:
-        description: 'Build and pack only; publish nothing to NuGet, npm or GitHub Releases'
-        type: boolean
-        default: true
 
 permissions:
   contents: write
