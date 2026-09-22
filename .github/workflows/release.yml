@@ -1,15 +1,15 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # Releases are started by hand only. There is no push trigger: a manual
+  # workflow_dispatch on main with a tag_name that matches the package versions
+  # is the single way to publish. Any other dispatch still builds and packs.
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release tag (leave empty to use version from CsMesh.csproj)'
-        required: false
-        default: ''
+        description: 'Release tag, e.g. v0.6.1 (must be v + the csproj <Version>)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -21,6 +21,27 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Fails the whole run before any build when the dispatched tag and the two
+      # version files disagree. Prints all three values either way.
+      - name: Verify tag_name and package versions
+        run: |
+          VERSION=$(grep '<Version>' src/CsMesh/CsMesh.csproj | head -n1 | sed -E 's/.*<Version>([^<]+)<\/Version>.*/\1/' | tr -d ' \r\n')
+          NPM_VERSION=$(grep '"version"' npm/package.json | head -n1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+
+          echo "csproj <Version>: ${VERSION}"
+          echo "npm/package.json version: ${NPM_VERSION}"
+          echo "dispatched tag_name: ${{ inputs.tag_name }}"
+
+          if [ "$NPM_VERSION" != "$VERSION" ]; then
+            echo "::error::npm/package.json version (${NPM_VERSION}) does not match csproj <Version> (${VERSION})."
+            exit 1
+          fi
+          if [ "${{ inputs.tag_name }}" != "v${VERSION}" ]; then
+            echo "::error::tag_name ('${{ inputs.tag_name }}') must be exactly v + csproj <Version> ('v${VERSION}')."
+            exit 1
+          fi
+          echo "tag_name and both versions agree: v${VERSION}"
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -181,7 +202,7 @@ jobs:
   publish-nuget:
     name: Push Tool Packages to NuGet.org
     needs: [build-aot, pack-pointer]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download tool package artifacts
@@ -195,7 +216,7 @@ jobs:
       # `any` fallback) must be on the feed before it is. Push those first and the
       # pointer last, so a client can never resolve a pointer to a missing package.
       - name: Push RID packages, then the pointer last
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
@@ -224,7 +245,7 @@ jobs:
   publish-release:
     name: Create GitHub Release
     needs: [build-aot, pack-pointer]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.clean_version }}
@@ -255,14 +276,7 @@ jobs:
       - name: Determine Release Tag
         id: tag
         run: |
-          if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          elif [ -n "${{ inputs.tag_name }}" ]; then
-            TAG="${{ inputs.tag_name }}"
-          else
-            VERSION=$(grep '<Version>' src/CsMesh/CsMesh.csproj | head -n1 | sed -E 's/.*<Version>([^<]+)<\/Version>.*/\1/' | tr -d ' \r\n')
-            TAG="v${VERSION}"
-          fi
+          TAG="${{ inputs.tag_name }}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "Using release tag: ${TAG}"
 
@@ -274,10 +288,13 @@ jobs:
           echo "clean_version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Publish GitHub Release
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
         uses: softprops/action-gh-release@v2
         with:
+          # The tag is the validated tag_name; because it does not exist yet, the
+          # action creates it at the commit this dispatch ran on (github.sha).
           tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: ${{ steps.tag.outputs.tag }}
           files: release-assets/*
           generate_release_notes: true
@@ -285,7 +302,7 @@ jobs:
   publish-npm:
     name: Publish to npm
     needs: [publish-release]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -298,7 +315,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Sync version and publish
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
         working-directory: ./npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
