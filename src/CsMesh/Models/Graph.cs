@@ -12,8 +12,12 @@ public sealed class Graph
     /// Bumped whenever node keying, edge semantics or on-disk shape change.
     /// A graph written by an older version is rejected on load so the user is told to re-index
     /// instead of silently querying a graph built with different rules.
+    ///
+    /// v14 added <see cref="Edge.Role"/>: a member-access edge now carries Read/Write/Subscribe.
+    /// A v13 graph would answer a --writes query as if every member access were a read, which is
+    /// the bug the version guards against, so v13 is rejected rather than half-read.
     /// </summary>
-    public const int CurrentFormatVersion = 13;
+    public const int CurrentFormatVersion = 14;
 
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }

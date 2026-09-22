@@ -35,6 +35,19 @@ public sealed class Edge
     /// </summary>
     public string? Site { get; set; }
 
+    /// <summary>
+    /// For a member-access Call edge, how the member is used: Read, Write, Subscribe, or a union
+    /// of those. Null on every other edge -- a method call, a type use, a binding -- so the
+    /// on-disk graph does not grow a field only member accesses use.
+    ///
+    /// Read|Write on a single edge is the reason this is flags: before it, a property read and a
+    /// property write deduped to the same edge, and "where is this property written" had no
+    /// answer. Test the bits, never equality against one named value, because Read|Write has no
+    /// single name. When the union includes Write, <see cref="Site"/> holds the first write site
+    /// in syntax order; a read-only edge keeps Site null.
+    /// </summary>
+    public EdgeRole? Role { get; set; }
+
     /// <summary>Confidence with the default applied. Never null, never serialized.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public double Score => Confidence ?? 1.0;
