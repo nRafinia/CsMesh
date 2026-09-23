@@ -2,7 +2,7 @@
 name: csmesh
 description: >
   Use this skill in ANY repository that contains C# or .NET code -- if you see a .sln or .slnx, a
-  .csproj, or .cs files, this skill applies. Reach for csmesh before grep, ripgrep, glob, reading
+  .csproj, or .cs files, this skill applies. Prefer csmesh over grep, ripgrep, glob, reading
   files, or delegating discovery to a subagent. It answers structural questions from a prebuilt
   symbol graph in one shell call: what does this end up calling, which class actually runs behind
   this interface, what breaks if I change this, where does this route go, which handler receives
@@ -66,6 +66,12 @@ you do not have to look for it.
 
 Before changing any `public` member. Production callers and test callers are listed separately,
 with how many projects the change reaches.
+
+**"Where is this property or field written, not read?"**
+-> `csmesh blast-radius Type.Prop --writes --budget 800`
+
+Writes only, not reads. A write through an interface-typed reference is included and marked
+`[via-interface]`; an event `+=`/`-=` is a subscription, not a write.
 
 **"I see `_mediator.Send(...)` or a bus publish. Where does it go?"**
 -> `csmesh trace` on the calling method
@@ -168,6 +174,9 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 
 - `[impl, di-bound]` -- registered in the container, so this is the one that runs.
 - `[mediatr via Send(CreatePaymentCommand)]` -- dispatched, not called directly.
+- `[via-interface]` -- under `blast-radius --writes`, a writer that reached the member
+  through an interface-typed reference; the edge targets the interface member, not this
+  implementation.
 - `@ Api/Registrations.cs:22` -- where the edge was wired up, beside where the target is defined.
   Go there to change a binding; do not search for it.
 - `{http:POST /payments}` -- an HTTP entrypoint.
@@ -198,10 +207,10 @@ Each row is `Symbol  [edge marker]  {tags}  file:line`.
 ## Rules
 
 - **Nested types**: csmesh keys members by their immediate containing type, not the outermost
-  class. A method `LineRange` inside `class Builder` nested inside `class Indexer` is keyed as
-  `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
-  a member, **always use `where <member-name>` first** to discover the correct qualified name
-  rather than guessing from the file or outer class name.
+  class. A member `M` inside `class Inner` nested inside `class Outer` is keyed as `Inner.M`,
+  not `Outer.M`. When you read code from a file and want to query a member, **always use
+  `where <member-name>` first** to discover the correct qualified name rather than guessing
+  from the file or outer class name.
 - Always pass `--budget`. Default it to 700 for `trace`, 600 for `impl`, 800 for `blast-radius`
   and `diff`, 900 for `context`, 500 for `path`.
 - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
