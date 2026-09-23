@@ -184,7 +184,7 @@ public sealed class ReviewCommandTests : IDisposable
         Assert.Equal(Exit.Ok, Review(baseSha));
 
         var current = GraphStore.Load(_root, out _)!;
-        var cached = GraphStore.LoadBaseGraph(_root, baseSha);
+        var cached = GraphStore.LoadBaseGraph(_root, baseSha, GraphStore.ReferenceKeyFor(_root));
         Assert.NotNull(cached);
         Assert.Equal(
             current.Nodes.Single(n => n.Short == "Foo.M").Key,
@@ -313,7 +313,7 @@ public sealed class ReviewCommandTests : IDisposable
         ReindexCurrent();
 
         Review(baseSha);
-        var cachePath = GraphStore.BaseGraphPathFor(_root, baseSha);
+        var cachePath = GraphStore.BaseGraphPathFor(_root, baseSha, GraphStore.ReferenceKeyFor(_root));
         Assert.True(File.Exists(cachePath));
         var writtenAt = File.GetLastWriteTimeUtc(cachePath);
 
@@ -321,6 +321,31 @@ public sealed class ReviewCommandTests : IDisposable
         Review(baseSha);
 
         Assert.Equal(writtenAt, File.GetLastWriteTimeUtc(cachePath));
+    }
+
+    /// <summary>
+    /// A base graph cached against a different reference set must not be reused: the same commit
+    /// compiled against a changed bin/ is a different graph, and reusing the old one reintroduces
+    /// the thin-base false positive. The reference key moves when a working-tree reference appears.
+    /// </summary>
+    [Fact]
+    public void A_base_graph_built_against_a_different_reference_set_is_not_reused()
+    {
+        var baseSha = SeedBase();
+        Write("Registration.cs", Registration("ThingB"));
+        ReindexCurrent();
+
+        Review(baseSha);
+        var thinKey = GraphStore.ReferenceKeyFor(_root);
+        Assert.NotNull(GraphStore.LoadBaseGraph(_root, baseSha, thinKey));
+
+        EmitExternalLibrary(); // a new working-tree reference, the way a restore adds one
+        var fullKey = GraphStore.ReferenceKeyFor(_root);
+        Assert.NotEqual(thinKey, fullKey);
+
+        Assert.Null(GraphStore.LoadBaseGraph(_root, baseSha, fullKey));
+        Review(baseSha);
+        Assert.NotNull(GraphStore.LoadBaseGraph(_root, baseSha, fullKey));
     }
 
     [Fact]

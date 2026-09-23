@@ -225,7 +225,10 @@ public static class ReviewCommand
         graph = null!;
         error = "";
 
-        var cached = GraphStore.LoadBaseGraph(root, sha);
+        // The reference set is part of the cache key: the same commit indexed against a different
+        // bin/ is a different graph, and reusing the thin one is the false exit 5 this prevents.
+        var referenceKey = GraphStore.ReferenceKeyFor(root);
+        var cached = GraphStore.LoadBaseGraph(root, sha, referenceKey);
         if (cached != null)
         {
             graph = cached;
@@ -258,7 +261,7 @@ public static class ReviewCommand
                 return false;
             }
 
-            GraphStore.SaveBaseGraph(root, sha, built);
+            GraphStore.SaveBaseGraph(root, sha, referenceKey, built);
             graph = built;
             return true;
         }
