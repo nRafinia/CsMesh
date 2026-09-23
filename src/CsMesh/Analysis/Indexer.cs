@@ -1761,6 +1761,17 @@ public static partial class Indexer
                                 RecordExternalIn(evs.Type, ed.Type, _currentAssembly);
                                 break;
                             }
+                            // An indexer is reached as obj[i], not by name. Without a node of its
+                            // own the element-access write below would have nothing to point at,
+                            // which is why obj[i] = x was invisible to --writes.
+                            case IndexerDeclarationSyntax ix when model.GetDeclaredSymbol(ix) is { } ixs:
+                            {
+                                var iId = NodeFor(ixs, "indexer", ix.GetLocation());
+                                Link(typeId, iId, EdgeKind.TypeUse, "member");
+                                g.ById(iId)!.Signature = Display(ixs.Type);
+                                RecordExternalIn(ixs.Type, ix.Type, _currentAssembly);
+                                break;
+                            }
                         }
                     }
 
@@ -1932,6 +1943,7 @@ public static partial class Indexer
         private static string? KindOf(ISymbol member) => member switch
         {
             IMethodSymbol => "method",
+            IPropertySymbol { IsIndexer: true } => "indexer",
             IPropertySymbol => "property",
             IEventSymbol => "event",
             _ => null
@@ -2393,6 +2405,15 @@ public static partial class Indexer
                             EmitMemberRole(OwnerOf(id), bare, role.Value, id);
                         break;
                     }
+
+                    // obj[i] = x. The element access resolves to the indexer property; an array
+                    // element resolves to nothing and is skipped, because an array has no node.
+                    case ElementAccessExpressionSyntax ea:
+                    {
+                        if (model.GetSymbolInfo(ea).Symbol is IPropertySymbol { IsIndexer: true } idx)
+                            EmitMemberRole(OwnerOf(ea), idx, ElementRole(ea), ea);
+                        break;
+                    }
                 }
             }
 
@@ -2507,6 +2528,30 @@ public static partial class Indexer
                 : EdgeRole.Read;
 
         /// <summary>
+        /// The role an element access carries. "obj[i] = x" writes, compound and ++/-- are
+        /// read-write, ref/out follow the argument, and a bare read is a read. An array element
+        /// never reaches here because it resolves to no indexer symbol and has no node to point at.
+        /// </summary>
+        private static EdgeRole ElementRole(ElementAccessExpressionSyntax ea) => ea.Parent switch
+        {
+            AssignmentExpressionSyntax a when a.Left == ea =>
+                a.Kind() == SyntaxKind.SimpleAssignmentExpression
+                    ? EdgeRole.Write
+                    : EdgeRole.Read | EdgeRole.Write,
+            PostfixUnaryExpressionSyntax pu when pu.Operand == ea &&
+                pu.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression
+                => EdgeRole.Read | EdgeRole.Write,
+            PrefixUnaryExpressionSyntax pr when pr.Operand == ea &&
+                pr.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
+                => EdgeRole.Read | EdgeRole.Write,
+            ArgumentSyntax arg when arg.Expression == ea && arg.RefKindKeyword.IsKind(SyntaxKind.RefKeyword)
+                => EdgeRole.Read | EdgeRole.Write,
+            ArgumentSyntax arg when arg.Expression == ea && arg.RefKindKeyword.IsKind(SyntaxKind.OutKeyword)
+                => EdgeRole.Write,
+            _ => EdgeRole.Read
+        };
+
+        /// <summary>
         /// True when the node is an element of a tuple on the left of a deconstruction. The
         /// element on its own is not necessarily a write -- a local or a discard is not -- so the
         /// caller still checks the symbol. Without this the member element of "(a, obj.P) = ..."
@@ -2528,6 +2573,7 @@ public static partial class Indexer
 
             var (kind, note) = sym switch
             {
+                IPropertySymbol { IsIndexer: true } => ("indexer", "indexer"),
                 IPropertySymbol => ("property", "prop"),
                 IEventSymbol => ("event", "event"),
                 IFieldSymbol f when f.ContainingType?.TypeKind == TypeKind.Enum => ("enum-member", "enum-member"),
