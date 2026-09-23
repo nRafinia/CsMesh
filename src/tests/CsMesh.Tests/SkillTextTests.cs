@@ -38,7 +38,7 @@ public sealed class SkillTextTests
     /// SkillBlock.cs and SkillCommandTests.cs contain both markers as source literals, and scanning
     /// every file would mistake them for installed blocks.
     /// </summary>
-    [Fact]
+    [RequiresGit]
     public void Every_tracked_block_file_carries_the_rendered_rules()
     {
         var root = RepoRoot();
