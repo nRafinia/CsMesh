@@ -127,7 +127,7 @@ public static class SkillText
         **"What does this type hold? Is this field nullable?"**
         -> `csmesh context TypeName`, read the `MEMBERS` section
 
-        Names, types and nullable annotations (`HostId  Guid?`). Do not open the file for the shape.
+        Names, types and nullable annotations (`Name  string?`). Do not open the file for the shape.
 
         **"If I add a member to this enum, what has to change?"**
         -> `csmesh blast-radius EnumName`

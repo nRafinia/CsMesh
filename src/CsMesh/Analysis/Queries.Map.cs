@@ -98,7 +98,7 @@ public static partial class Queries
     /// Dependencies come from the declared ProjectReference set, not from symbol edges. An
     /// interface edge runs from the abstraction to the implementation -- correct for "what runs",
     /// backwards for "what needs what" -- and reading the map off those edges produced
-    /// "Fleetdeck.Core depends on Fleetdeck.Hub", which is the reverse of the architecture.
+    /// "Core depends on Hub", which is the reverse of the architecture.
     /// </summary>
     private static void Projects(Graph g, List<Node> nodes, BudgetWriter w,
         List<(string, int, int, string?)> capped, List<(string, int, int, string?)> truncated)
@@ -178,7 +178,7 @@ public static partial class Queries
 
     /// <summary>
     /// The shared leading segment of every project name, so a solution where each one begins
-    /// "Fleetdeck." does not spend half of every line repeating it.
+    /// with the same namespace prefix does not spend half of every line repeating it.
     /// </summary>
     private static string CommonPrefix(IEnumerable<string> names)
     {

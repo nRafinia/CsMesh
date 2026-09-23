@@ -801,7 +801,7 @@ public static partial class Indexer
         //
         // For ordinary calls the source declaration usually wins and nothing looks wrong. Extension
         // methods are where it shows, because their lookup gathers candidates from every assembly
-        // in scope: the compiler finds AddFleetdeckData in the source and again in the reference,
+        // in scope: the compiler finds the extension method in the source and again in the reference,
         // cannot prefer either, and returns candidates with no symbol. What arrives in the index is
         // 'ambiguous-overload' clustered in whichever file calls the most extension methods --
         // which is always the composition root, so it reads like a problem with that one file.
@@ -3011,7 +3011,7 @@ public static partial class Indexer
         ///
         /// True, and beside the point. The question csmesh exists to answer is which class runs
         /// when the container is asked for the interface, and the alias states the answer outright.
-        /// Refusing to read it means 'impl ITenantContext' falls back to ranking every implementor
+        /// Refusing to read it means a query for the interface falls back to ranking every implementor
         /// by name -- guessing at something written down two lines away. On a codebase that wires
         /// itself this way it is not an edge case; it is most of the container.
         ///
