@@ -205,6 +205,34 @@ public sealed class SkillCommandTests : IDisposable
     }
 
     /// <summary>
+    /// install rewrites a file the user also owns, so it adopts that file's line endings instead of
+    /// imposing its own. Converting a CRLF rules file to LF on the first install is a full-file diff
+    /// the user never made.
+    /// </summary>
+    [Fact]
+    public void Install_keeps_the_line_endings_the_target_file_already_uses()
+    {
+        var agentsMd = Path.Combine(_root, "AGENTS.md");
+
+        File.WriteAllText(agentsMd, "# Rules\r\n\r\nKeep production up.\r\n");
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
+        AssertNoBareLf(File.ReadAllText(agentsMd));
+
+        File.WriteAllText(agentsMd, "# Rules\n\nKeep production up.\n");
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
+        Assert.DoesNotContain('\r', File.ReadAllText(agentsMd));
+    }
+
+    private static void AssertNoBareLf(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '\n') continue;
+            Assert.True(i > 0 && text[i - 1] == '\r', $"bare LF at index {i}");
+        }
+    }
+
+    /// <summary>
     /// Pins the bytes install writes, so extracting the wrapper into <see cref="SkillBlock.Render"/>
     /// cannot move a marker, a newline or the trailing line ending unnoticed. A refactor that is
     /// meant to change no output is the kind that changes output.

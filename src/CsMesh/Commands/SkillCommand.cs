@@ -655,9 +655,31 @@ public static class SkillCommand
         {
             Directory.CreateDirectory(dir);
         }
+
+        if (File.Exists(path))
+        {
+            content = WithNewline(content, NewlineOf(File.ReadAllText(path)));
+        }
+
         File.WriteAllText(path, content);
         Console.WriteLine($"wrote {path}");
     }
+
+    /// <summary>
+    /// The line ending the file already uses, so rewriting it does not convert its whole body. A
+    /// CRLF working tree on Windows turned into LF by the first install is a full-file diff no one
+    /// asked for.
+    /// </summary>
+    private static string NewlineOf(string text) =>
+        text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+
+    /// <summary>
+    /// Rewrites every line ending in <paramref name="text"/> to <paramref name="newline"/>. The body
+    /// of the block comes from <see cref="SkillText"/>, whose line endings follow the checkout, so
+    /// without this the wrapper and the body could disagree inside one file.
+    /// </summary>
+    private static string WithNewline(string text, string newline) =>
+        text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", newline);
 
     private static void WriteOrUpdateBlock(string filePath, string blockContent)
     {
@@ -668,11 +690,16 @@ public static class SkillCommand
 
         if (!File.Exists(filePath))
         {
+            // A new file keeps today's bytes: the rendered block verbatim plus one trailing newline.
+            // Its endings are the ones the checkout gives SkillText -- LF around the markers, and
+            // whatever the source uses inside the body -- because there is no file yet to read them
+            // from. A rewrite is the case that follows the target.
             WriteFile(filePath, wrappedBlock + "\n");
             return;
         }
 
         var existing = File.ReadAllText(filePath);
+        var newline = NewlineOf(existing);
         var startIndex = existing.IndexOf(startTag, StringComparison.Ordinal);
         var endIndex = existing.IndexOf(endTag, StringComparison.Ordinal);
 
@@ -684,13 +711,13 @@ public static class SkillCommand
                 ? (string.IsNullOrEmpty(after) ? wrappedBlock : $"{wrappedBlock}\n\n{after}")
                 : (string.IsNullOrEmpty(after) ? $"{before}\n\n{wrappedBlock}" : $"{before}\n\n{wrappedBlock}\n\n{after}");
 
-            File.WriteAllText(filePath, updated + "\n");
+            File.WriteAllText(filePath, WithNewline(updated + "\n", newline));
             Console.WriteLine($"updated {filePath}");
         }
         else
         {
             var updated = existing.TrimEnd() + "\n\n" + wrappedBlock + "\n";
-            File.WriteAllText(filePath, updated);
+            File.WriteAllText(filePath, WithNewline(updated, newline));
             Console.WriteLine($"updated {filePath}");
         }
     }
