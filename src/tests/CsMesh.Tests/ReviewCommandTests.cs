@@ -348,6 +348,54 @@ public sealed class ReviewCommandTests : IDisposable
         Assert.NotNull(GraphStore.LoadBaseGraph(_root, baseSha, fullKey));
     }
 
+    /// <summary>A change to a reference input is a real change review cannot see as an edge, so it
+    /// warns on stderr and keeps its exit code.</summary>
+    [Fact]
+    public void A_changed_reference_input_warns_and_leaves_the_exit_code_unchanged()
+    {
+        var baseSha = SeedBase();
+        ReindexCurrent();
+        Assert.Equal(Exit.Ok, Review(baseSha)); // baseline: no warning, no findings
+
+        File.WriteAllText(Path.Combine(_root, "global.json"), "{}");
+        CommitAll("bump a reference input");
+        ReindexCurrent();
+
+        var err = ReviewErr(out var exit, baseSha);
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.Contains("reference inputs changed", err, StringComparison.Ordinal);
+        Assert.Contains("global.json", err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_source_only_change_does_not_warn()
+    {
+        var baseSha = SeedBase();
+
+        Write("Things.cs", ImplSource.Replace("public void Do() { }", "public void Do() { } // note"));
+        ReindexCurrent();
+
+        var err = ReviewErr(out _, baseSha);
+
+        Assert.DoesNotContain("reference inputs changed", err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_json_envelope_lists_the_changed_reference_inputs()
+    {
+        var baseSha = SeedBase();
+
+        File.WriteAllText(Path.Combine(_root, "global.json"), "{}");
+        CommitAll("bump a reference input");
+        ReindexCurrent();
+
+        var json = ReviewOut(out _, baseSha, "--json");
+
+        Assert.Contains("reference_inputs_changed", json, StringComparison.Ordinal);
+        Assert.Contains("global.json", json, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void No_change_reports_ok_and_names_zero_findings()
     {

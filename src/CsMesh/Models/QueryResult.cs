@@ -70,6 +70,16 @@ public sealed class QueryResult
     public List<string> Notes { get; set; } = [];
 
     /// <summary>
+    /// 'review' only: the reference inputs (project, props, targets, solution, packages.lock.json,
+    /// global.json) that changed between the base and the working tree. Non-empty means the graph
+    /// comparison may be looking past a dependency change the edges do not capture -- the command
+    /// still reports normally, but a caller should read the finding with that in mind. Null when
+    /// nothing changed so the field is absent from the envelope rather than an empty list on every
+    /// command.
+    /// </summary>
+    public List<string>? ReferenceInputsChanged { get; set; }
+
+    /// <summary>
     /// The answer as it was rendered for a terminal, line by line.
     ///
     /// Rows carry the structured part, but not every command has one: 'silence' explains why a

@@ -78,6 +78,16 @@ public static class ReviewCommand
                 $"baseline predates format v{Graph.CurrentFormatVersion} -> csmesh review --accept");
         }
 
+        // A reference input that changed in the range is a change the graph cannot see as an edge:
+        // the package set moved, but no symbol did. Report normally and say so out loud rather than
+        // guess, so the comparison is not mistaken for exhaustive.
+        var referenceInputs = ChangedReferenceInputs(root, sha);
+        if (referenceInputs.Count > 0)
+        {
+            result.ReferenceInputsChanged = referenceInputs;
+            if (!json) Console.Error.WriteLine(ReferenceWarning(referenceInputs));
+        }
+
         var findings = Queries.DiffFindings(current, baseGraph, includeCalls);
 
         var pruned = 0;
@@ -210,6 +220,39 @@ public static class ReviewCommand
 
         var shortHead = head.Length > built.Length ? head[..built.Length] : head;
         return $"# index built at {built}, HEAD is {shortHead};{remedy}";
+    }
+
+    // ------------------------------------------------------------------ reference inputs
+
+    /// <summary>Files that name or configure the reference set: changing one can change which
+    /// packages and projects the build resolves without moving a symbol the graph records.</summary>
+    private static bool IsReferenceInput(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name is "Directory.Packages.props" or "packages.lock.json" or "global.json") return true;
+        return Path.GetExtension(name) is ".csproj" or ".props" or ".targets" or ".sln" or ".slnx";
+    }
+
+    private static List<string> ChangedReferenceInputs(string root, string sha)
+    {
+        if (!GitTool.TryRun(root, $"diff --name-only {sha}", out var stdout, out _, out _)) return [];
+
+        return stdout
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => p.Replace('\\', '/'))
+            .Where(IsReferenceInput)
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>One warning line: at most five names, then a count, so a rename of a big props file
+    /// cannot flood the terminal.</summary>
+    private static string ReferenceWarning(List<string> changed)
+    {
+        var shown = string.Join(", ", changed.Take(5));
+        var more = changed.Count > 5 ? $" (+{changed.Count - 5} more)" : "";
+        return $"warning: reference inputs changed in this range: {shown}{more}. "
+             + "The base is still compiled against the working tree's reference set.";
     }
 
     // ------------------------------------------------------------------ base graph, cached per commit
