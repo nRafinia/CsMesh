@@ -1,4 +1,5 @@
-﻿using CsMesh.Skill;
+﻿using CsMesh.Analysis;
+using CsMesh.Skill;
 using Xunit;
 
 namespace CsMesh.Tests;
@@ -116,4 +117,50 @@ public sealed class SkillTextTests
         Assert.Contains("the depth the message names", SkillText.Rules, StringComparison.Ordinal);
         Assert.Contains("never for exit 2 itself", SkillText.Rules, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// The three renderings are the same body for three audiences, so a new flag has to land in all
+    /// of them or one assistant never hears about it.
+    /// </summary>
+    [Fact]
+    public void The_skill_teaches_the_writes_flag()
+    {
+        foreach (var text in new[] { SkillText.Markdown, SkillText.Rules, SkillText.CursorMdc })
+        {
+            Assert.Contains("--writes", text, StringComparison.Ordinal);
+            Assert.Contains("blast-radius Type.Prop --writes --budget 800", text, StringComparison.Ordinal);
+            Assert.Contains("via-interface", text, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// The skill is written for other repositories; naming one of csmesh's own types is the self-
+    /// reference an agent then searches for in a solution that does not contain it. The list comes
+    /// from this repository's own index (never a hand list). Names shorter than six characters are
+    /// left out: they collide with ordinary English and CLI vocabulary (`Exit`, `Reach`).
+    /// </summary>
+    [Fact]
+    public void The_skill_leaks_no_csmesh_internal_type_name()
+    {
+        var internalTypes = InternalTypeShortNames.Value;
+        Assert.NotEmpty(internalTypes);
+
+        foreach (var text in new[] { SkillText.Markdown, SkillText.Rules, SkillText.CursorMdc })
+        foreach (var name in internalTypes)
+            Assert.DoesNotContain(name, text, StringComparison.Ordinal);
+    }
+
+    private static readonly Lazy<HashSet<string>> InternalTypeShortNames = new(() =>
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root != null && !File.Exists(Path.Combine(root.FullName, "CsMesh.slnx"))) root = root.Parent;
+        Assert.NotNull(root);
+
+        var graph = Indexer.Build(Path.Combine(root!.FullName, "src", "CsMesh"));
+        return graph.Nodes
+            .Where(n => n.Kind is "type" or "interface" or "enum" or "delegate")
+            .Select(n => n.Short)
+            .Where(shortName => shortName.Length >= 6)
+            .ToHashSet(StringComparer.Ordinal);
+    });
 }

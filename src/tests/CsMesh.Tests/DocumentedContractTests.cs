@@ -188,4 +188,14 @@ public sealed class DocumentedContractTests
     {
         Assert.Contains($"default: {ReviewCommand.DefaultBudget}", HelpCommand.ReviewHelp, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// --writes is a blast-radius mode with its own output contract (the [via-interface] rows and the
+    /// event hint); the help an agent reads has to name it.
+    /// </summary>
+    [Fact]
+    public void The_blast_radius_help_names_the_writes_mode()
+    {
+        Assert.Contains("--writes", HelpCommand.BlastRadiusHelp, StringComparison.Ordinal);
+    }
 }

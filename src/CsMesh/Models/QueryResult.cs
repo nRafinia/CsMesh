@@ -80,6 +80,13 @@ public sealed class QueryResult
     public List<string>? ReferenceInputsChanged { get; set; }
 
     /// <summary>
+    /// 'blast-radius --writes' on an event: its += / -= edges are Subscribe, not Write, so no writer
+    /// rows are due. The hint names the command that does show its subscribers. Text mode prints it;
+    /// JSON carries it here instead of duplicating it in <see cref="Text"/>.
+    /// </summary>
+    public string? Hint { get; set; }
+
+    /// <summary>
     /// The answer as it was rendered for a terminal, line by line.
     ///
     /// Rows carry the structured part, but not every command has one: 'silence' explains why a
