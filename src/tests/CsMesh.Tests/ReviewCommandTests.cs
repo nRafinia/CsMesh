@@ -3,6 +3,8 @@ using CsMesh.Commands;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Storage;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace CsMesh.Tests;
@@ -153,6 +155,58 @@ public sealed class ReviewCommandTests : IDisposable
 
     // ------------------------------------------------------------------ scenarios
 
+    /// <summary>
+    /// The base worktree is a clean checkout with no bin/, so indexing it against its own tree
+    /// leaves a package type unbound: the method key that names it shifts and review reports a
+    /// false exit 5 on a tree that did not change. Compiling the base against the working tree's
+    /// built reference set is the fix.
+    /// </summary>
+    [Fact]
+    public void The_base_is_compiled_against_the_working_trees_references()
+    {
+        EmitExternalLibrary();
+        // The build output must not be committed: the base worktree is a clean checkout and the
+        // whole point of the reference fix is that it has no bin/ of its own.
+        File.AppendAllText(Path.Combine(_root, ".git", "info", "exclude"), "\nbin/\n");
+        Write("Foo.cs",
+            """
+            namespace Demo
+            {
+                using Ext;
+                public sealed class Foo : IExt { public void M(ExtType t) { } }
+            }
+            """);
+        CommitAll("base");
+        var baseSha = Sha();
+
+        ReindexCurrent();
+
+        Assert.Equal(Exit.Ok, Review(baseSha));
+
+        var current = GraphStore.Load(_root, out _)!;
+        var cached = GraphStore.LoadBaseGraph(_root, baseSha, GraphStore.ReferenceKeyFor(_root));
+        Assert.NotNull(cached);
+        Assert.Equal(
+            current.Nodes.Single(n => n.Short == "Foo.M").Key,
+            cached!.Nodes.Single(n => n.Short == "Foo.M").Key);
+    }
+
+    /// <summary>An assembly that lives only in the working tree's bin/, the way a restored package
+    /// does: the clean base worktree has no copy of it.</summary>
+    private void EmitExternalLibrary()
+    {
+        var compilation = CSharpCompilation.Create(
+            "Ext",
+            [CSharpSyntaxTree.ParseText("namespace Ext { public interface IExt { } public class ExtType { } }")],
+            [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        var path = Path.Combine(_root, "bin", "Release", "net10.0", "Ext.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var result = compilation.Emit(path);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+    }
+
     [Fact]
     public void A_moved_DI_binding_is_reported()
     {
@@ -259,7 +313,7 @@ public sealed class ReviewCommandTests : IDisposable
         ReindexCurrent();
 
         Review(baseSha);
-        var cachePath = GraphStore.BaseGraphPathFor(_root, baseSha);
+        var cachePath = GraphStore.BaseGraphPathFor(_root, baseSha, GraphStore.ReferenceKeyFor(_root));
         Assert.True(File.Exists(cachePath));
         var writtenAt = File.GetLastWriteTimeUtc(cachePath);
 
@@ -267,6 +321,79 @@ public sealed class ReviewCommandTests : IDisposable
         Review(baseSha);
 
         Assert.Equal(writtenAt, File.GetLastWriteTimeUtc(cachePath));
+    }
+
+    /// <summary>
+    /// A base graph cached against a different reference set must not be reused: the same commit
+    /// compiled against a changed bin/ is a different graph, and reusing the old one reintroduces
+    /// the thin-base false positive. The reference key moves when a working-tree reference appears.
+    /// </summary>
+    [Fact]
+    public void A_base_graph_built_against_a_different_reference_set_is_not_reused()
+    {
+        var baseSha = SeedBase();
+        Write("Registration.cs", Registration("ThingB"));
+        ReindexCurrent();
+
+        Review(baseSha);
+        var thinKey = GraphStore.ReferenceKeyFor(_root);
+        Assert.NotNull(GraphStore.LoadBaseGraph(_root, baseSha, thinKey));
+
+        EmitExternalLibrary(); // a new working-tree reference, the way a restore adds one
+        var fullKey = GraphStore.ReferenceKeyFor(_root);
+        Assert.NotEqual(thinKey, fullKey);
+
+        Assert.Null(GraphStore.LoadBaseGraph(_root, baseSha, fullKey));
+        Review(baseSha);
+        Assert.NotNull(GraphStore.LoadBaseGraph(_root, baseSha, fullKey));
+    }
+
+    /// <summary>A change to a reference input is a real change review cannot see as an edge, so it
+    /// warns on stderr and keeps its exit code.</summary>
+    [Fact]
+    public void A_changed_reference_input_warns_and_leaves_the_exit_code_unchanged()
+    {
+        var baseSha = SeedBase();
+        ReindexCurrent();
+        Assert.Equal(Exit.Ok, Review(baseSha)); // baseline: no warning, no findings
+
+        File.WriteAllText(Path.Combine(_root, "global.json"), "{}");
+        CommitAll("bump a reference input");
+        ReindexCurrent();
+
+        var err = ReviewErr(out var exit, baseSha);
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.Contains("reference inputs changed", err, StringComparison.Ordinal);
+        Assert.Contains("global.json", err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_source_only_change_does_not_warn()
+    {
+        var baseSha = SeedBase();
+
+        Write("Things.cs", ImplSource.Replace("public void Do() { }", "public void Do() { } // note"));
+        ReindexCurrent();
+
+        var err = ReviewErr(out _, baseSha);
+
+        Assert.DoesNotContain("reference inputs changed", err, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_json_envelope_lists_the_changed_reference_inputs()
+    {
+        var baseSha = SeedBase();
+
+        File.WriteAllText(Path.Combine(_root, "global.json"), "{}");
+        CommitAll("bump a reference input");
+        ReindexCurrent();
+
+        var json = ReviewOut(out _, baseSha, "--json");
+
+        Assert.Contains("reference_inputs_changed", json, StringComparison.Ordinal);
+        Assert.Contains("global.json", json, StringComparison.Ordinal);
     }
 
     [Fact]

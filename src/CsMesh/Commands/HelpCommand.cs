@@ -501,6 +501,13 @@ public static class HelpCommand
             Building the base graph checks the revision out into a disposable worktree under
             .csmesh/; your own working tree, staged or not, is never touched.
 
+            The base is compiled against this working tree's reference set -- the runtime pack plus
+            its bin/ DLLs -- not the clean checkout's empty bin/, so a package type is never
+            spuriously unbound and review does not report a false 5. When a reference input
+            (csproj, props, targets, sln, slnx, Directory.Packages.props, packages.lock.json,
+            global.json) changed in the range, review warns on stderr (a reference_inputs_changed
+            field under --json) that the comparison may be looking past a dependency change.
+
         EXIT CODES:
             0   nothing unaccepted changed (or --accept just ran)
             4   the base revision could not be indexed; no current index exists; the current

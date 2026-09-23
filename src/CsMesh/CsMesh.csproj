@@ -13,12 +13,7 @@
     <AssemblyName>csmesh</AssemblyName>
     <PackageId>CsMesh</PackageId>
     <Version>0.6.1</Version>
-    <!-- RID-specific tool packages. The release matrix packs one Native AOT
-         package per RID on that RID's native runner (AOT cannot cross-compile),
-         and a single pointer package that lists them. `any` is the
-         framework-dependent fallback the CLI picks when no listed RID matches
-         the machine. Keep this list in step with the build-aot matrix in
-         .github/workflows/release.yml; PointerListsEveryMatrixRidTests pins it. -->
+
     <ToolPackageRuntimeIdentifiers>win-x64;linux-x64;osx-arm64;osx-x64;linux-arm64;win-arm64;any</ToolPackageRuntimeIdentifiers>
     <Authors>Vali (naser) Rafinia</Authors>
     <Description>Structural answer engine for C# codebases. Answers agent questions about call paths, interface implementations and change blast radius under a hard token budget.</Description>
