@@ -1,4 +1,6 @@
 ﻿using CsMesh.Analysis;
+using CsMesh.Commands;
+using CsMesh.Common;
 using CsMesh.Skill;
 using Xunit;
 
@@ -24,6 +26,56 @@ public sealed class SkillTextTests
     public void The_installed_skill_is_the_documented_skill()
     {
         Assert.Equal(SkillFile().TrimEnd('\r', '\n'), SkillText.Markdown.TrimEnd('\r', '\n'));
+    }
+
+    /// <summary>
+    /// Every tracked file that carries a csmesh block -- today only AGENTS.md -- holds exactly the
+    /// block this build's install would write. This one pinned the root SKILL.md and left the
+    /// delimited block unpinned; 0.7.0 shipped an AGENTS.md whose block disagreed with the binary's
+    /// rules and nothing failed. The expected value renders through <see cref="SkillBlock"/> and
+    /// <see cref="SkillText.Rules"/> rather than carrying a second copy of the text, and the
+    /// comparison normalizes line endings the way doctor does. Only block targets are read:
+    /// SkillBlock.cs and SkillCommandTests.cs contain both markers as source literals, and scanning
+    /// every file would mistake them for installed blocks.
+    /// </summary>
+    [Fact]
+    public void Every_tracked_block_file_carries_the_rendered_rules()
+    {
+        var root = RepoRoot();
+        Assert.True(
+            GitTool.TryRun(root, "ls-files", out var tracked, out var error, out _),
+            $"git ls-files is needed to know which block files are tracked: {error}");
+
+        var trackedPaths = tracked
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => Path.GetFullPath(Path.Combine(root, line.Trim())))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var expected = SkillBlock.Normalize(SkillBlock.Render(SkillText.Rules));
+        var checkedBlocks = 0;
+
+        foreach (var target in SkillCommand.BlockTargets(root, isGlobal: false))
+        {
+            var path = Path.GetFullPath(target);
+            if (!trackedPaths.Contains(path) || !File.Exists(path)) continue;
+
+            var installed = SkillBlock.Extract(File.ReadAllText(path));
+            if (installed is null) continue;
+
+            checkedBlocks++;
+            Assert.Equal(expected, SkillBlock.Normalize(installed));
+        }
+
+        Assert.True(checkedBlocks > 0, "no tracked block file was found to pin");
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "CsMesh.slnx"))) dir = dir.Parent;
+
+        Assert.NotNull(dir);
+        return dir!.FullName;
     }
 
     [Fact]
