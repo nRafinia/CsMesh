@@ -17,7 +17,7 @@ public static class SkillText
         name: csmesh
         description: >
           Use this skill in ANY repository that contains C# or .NET code -- if you see a .sln or .slnx, a
-          .csproj, or .cs files, this skill applies. Reach for csmesh before grep, ripgrep, glob, reading
+          .csproj, or .cs files,           this skill applies. Prefer csmesh over grep, ripgrep, glob, reading
           files, or delegating discovery to a subagent. It answers structural questions from a prebuilt
           symbol graph in one shell call: what does this end up calling, which class actually runs behind
           this interface, what breaks if I change this, where does this route go, which handler receives
@@ -81,6 +81,12 @@ public static class SkillText
 
         Before changing any `public` member. Production callers and test callers are listed separately,
         with how many projects the change reaches.
+
+        **"Where is this property or field written, not read?"**
+        -> `csmesh blast-radius Type.Prop --writes --budget 800`
+
+        Writes only, not reads. A write through an interface-typed reference is included and marked
+        `[via-interface]`; an event `+=`/`-=` is a subscription, not a write.
 
         **"I see `_mediator.Send(...)` or a bus publish. Where does it go?"**
         -> `csmesh trace` on the calling method
@@ -183,6 +189,9 @@ public static class SkillText
 
         - `[impl, di-bound]` -- registered in the container, so this is the one that runs.
         - `[mediatr via Send(CreatePaymentCommand)]` -- dispatched, not called directly.
+        - `[via-interface]` -- under `blast-radius --writes`, a writer that reached the member
+          through an interface-typed reference; the edge targets the interface member, not this
+          implementation.
         - `@ Api/Registrations.cs:22` -- where the edge was wired up, beside where the target is defined.
           Go there to change a binding; do not search for it.
         - `{http:POST /payments}` -- an HTTP entrypoint.
@@ -213,10 +222,10 @@ public static class SkillText
         ## Rules
 
         - **Nested types**: csmesh keys members by their immediate containing type, not the outermost
-          class. A method `LineRange` inside `class Builder` nested inside `class Indexer` is keyed as
-          `Builder.LineRange`, not `Indexer.LineRange`. When you read code from a file and want to query
-          a member, **always use `where <member-name>` first** to discover the correct qualified name
-          rather than guessing from the file or outer class name.
+          class. A member `M` inside `class Inner` nested inside `class Outer` is keyed as `Inner.M`,
+          not `Outer.M`. When you read code from a file and want to query a member, **always use
+          `where <member-name>` first** to discover the correct qualified name rather than guessing
+          from the file or outer class name.
         - Always pass `--budget`. Default it to 700 for `trace`, 600 for `impl`, 800 for `blast-radius`
           and `diff`, 900 for `context`, 500 for `path`.
         - On a large solution, narrow with `--under src/Api` before raising `--budget`. Scoping the
@@ -251,11 +260,6 @@ public static class SkillText
 
         Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
 
-        In any repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, reach for `csmesh` before grep,
-        ripgrep, glob, reading files in sequence, or handing discovery to a subagent. It answers from a
-        prebuilt symbol graph in one shell call and resolves what text search cannot see: DI registrations
-        including assembly scanning, MediatR Send/Publish, interface dispatch, attribute routing.
-
         ## Match the thing you are about to do
 
         | you are about to | run instead |
@@ -266,6 +270,7 @@ public static class SkillText
         | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
         | guess which class implements an interface | `csmesh impl IThing --budget 600` |
         | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
+        | find where a property or field is written | `csmesh blast-radius Type.Prop --writes --budget 800` |
         | grep for a mediator handler | `csmesh trace` on the calling method |
         | search for an HTTP route or a background job | `csmesh entrypoints <filter>` |
         | work out how A reaches B | `csmesh path <from> <to>` |
@@ -306,6 +311,8 @@ public static class SkillText
         ## Reading the output
 
         - `[impl, di-bound]` -- registered in the container; this is the one that runs.
+        - `[via-interface]` -- under `--writes`, a writer through an interface-typed reference; the
+          edge lands on the interface member, not this implementation.
         - `@ Api/Registrations.cs:22` -- where the edge was wired up. Go there; do not search for it.
         - `{test}` -- test code: a real caller, but not what breaks in production.
         - `?0.70 short-name-match` / `?0.75 assembly-scan` -- inferred, not read off a compiler symbol.
@@ -320,8 +327,8 @@ public static class SkillText
 
         ## Practice
 
-        - **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
-          nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
+        - **Nested types**: keys use the immediate containing type, not the outermost class. `Inner`
+          nested inside `Outer` means the key is `Inner.M`, **not** `Outer.M`.
           Use `csmesh where <member-name>` first to discover the correct qualified name.
         - Always pass `--budget`: 700 `trace`, 600 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 500 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
@@ -357,11 +364,6 @@ public static class SkillText
 
         Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
 
-        In any repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, reach for `csmesh` before grep,
-        ripgrep, glob, reading files in sequence, or handing discovery to a subagent. It answers from a
-        prebuilt symbol graph in one shell call and resolves what text search cannot see: DI registrations
-        including assembly scanning, MediatR Send/Publish, interface dispatch, attribute routing.
-
         ## Match the thing you are about to do
 
         | you are about to | run instead |
@@ -372,6 +374,7 @@ public static class SkillText
         | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
         | guess which class implements an interface | `csmesh impl IThing --budget 600` |
         | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
+        | find where a property or field is written | `csmesh blast-radius Type.Prop --writes --budget 800` |
         | grep for a mediator handler | `csmesh trace` on the calling method |
         | search for an HTTP route or a background job | `csmesh entrypoints <filter>` |
         | work out how A reaches B | `csmesh path <from> <to>` |
@@ -412,6 +415,8 @@ public static class SkillText
         ## Reading the output
 
         - `[impl, di-bound]` -- registered in the container; this is the one that runs.
+        - `[via-interface]` -- under `--writes`, a writer through an interface-typed reference; the
+          edge lands on the interface member, not this implementation.
         - `@ Api/Registrations.cs:22` -- where the edge was wired up. Go there; do not search for it.
         - `{test}` -- test code: a real caller, but not what breaks in production.
         - `?0.70 short-name-match` / `?0.75 assembly-scan` -- inferred, not read off a compiler symbol.
@@ -426,8 +431,8 @@ public static class SkillText
 
         ## Practice
 
-        - **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
-          nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
+        - **Nested types**: keys use the immediate containing type, not the outermost class. `Inner`
+          nested inside `Outer` means the key is `Inner.M`, **not** `Outer.M`.
           Use `csmesh where <member-name>` first to discover the correct qualified name.
         - Always pass `--budget`: 700 `trace`, 600 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 500 `path`.
         - Narrow with `--under src/Api` before raising `--budget`.
