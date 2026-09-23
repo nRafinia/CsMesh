@@ -1,4 +1,4 @@
-# AGENTS.md — TheDnsSite
+# AGENTS.md — CsMesh
 
 Standing rules for every session in this repository. A prompt may override a
 rule by naming it; otherwise every rule below holds, and prompts do not repeat
@@ -6,128 +6,149 @@ them.
 
 ## Source of truth
 
-- The code, then `DESIGN.md`, then the prompt. When the code contradicts a
-  prompt, the code wins: report the wrong premise with file and line, do not
-  build around it.
-- Stop at the end of each checkpoint or correction and wait for a go.
+- The code, then `docs/adr/`, then the prompt. When the code contradicts a
+  prompt, the code wins: report the wrong premise with file and line and stop
+  that item. Do not build around it.
+- Data before code. A diagnosis-only item is answered and stops there; nothing
+  is patched from a guessed cause.
+- Answer every numbered item of the prompt, or write "not done" and why.
+- Stop at the end of the prompt and wait for a go.
 
 ## Environment
 
-- `global.json` pins SDK 10.0.112. Build, test and publish in WSL. Never relax
-  the pin or set `DOTNET_ROLL_FORWARD`. If no satisfying SDK is present, stop
-  and report.
-- Shell calls from Windows run as `wsl -e bash -lc "…"`.
-- Never run tree-wide `sed`/`perl` through the PowerShell-to-WSL quoting layer
-  (it corrupted `d36941a`). Edit files one at a time with the edit tool. If a
-  mechanical multi-file change is unavoidable, write the script to a file
-  inside the WSL filesystem, run it there, and show `git diff --stat` before
-  staging.
-- Line endings are LF (`.gitattributes`). Never commit CRLF.
+- .NET 10 SDK. There is no `global.json`; do not add one.
+- The checkout is CRLF on disk with `core.autocrlf=true` on Windows git, and
+  there is no `.gitattributes`. Run git from Windows git only: WSL git sees
+  every file as modified, and committing through it creates a line-ending
+  churn commit across the tree. Keep each file's line endings as checked out.
+- Never run tree-wide `sed`/`perl` through the PowerShell-to-WSL quoting
+  layer. Edit files one at a time with the edit tool. If a mechanical
+  multi-file change is unavoidable, write the script to a file, run it, and
+  show `git diff --stat` before staging.
+- Never stop `dotnet` processes you did not start.
 
 ## Git
 
-- Commit messages: `Checkpoint Cnn: …` or `Correction nn: …`. A finished part
-  of an unfinished step is committed as `… part N`. Unfinished work goes to a
-  `wip/…` branch, never to `main`, and is never discarded.
-- Stage only your own files, with `git add -p` or explicit paths. Uncommitted
-  changes you did not make never ride in a commit.
-- `skills-lock.json` is untracked on purpose: never stage, ignore, delete or
-  report it.
-- `.csmesh/` is never committed. If `.gitignore` does not list it, add it in
-  your first commit.
+- One logical change per commit, messages in the repo's style:
+  `feat(index): …`, `fix(query): …`, `docs: …`, `chore(release): …`.
+- `git status` before each commit. Stage by explicit path only. Untracked
+  scratch (`patches*/`, `deliverables/`, `commits.txt`, `skills-lock.json`,
+  `CLAUDE.md`) is never staged, ignored, moved or deleted.
+- Deliver with `git format-patch <base>..HEAD -o deliverables/<series>/`, one
+  directory per series.
+- No push, no merge, no `workflow_dispatch`. Naser merges and releases.
+- `CsMesh.csproj` `<Version>` and `npm/package.json` are touched only when the
+  prompt asks.
+- A commit on your branch that you did not make: report its hash and files
+  under deviations. Do not drop, squash or rebase it away.
+- `.csmesh/` is never committed.
 
 ## Code
 
-- Native AOT is the shipping shape: DTOs in source-generated
-  `JsonSerializerContext`s, no reflection, no runtime code generation. No new
-  NuGet package without asking.
-- Composition root (`Program.cs`, `HostApplication`, `CoreServiceExtensions`,
-  `AcmeServiceExtensions`, `EndpointMappingExtensions`): pointwise edits only,
-  never regenerated. Report the registration diff.
-- The answer pipeline stays `BuildAnswer → (signer hook) → Serialize`.
-- Nothing added to the per-query allocation. The ceiling is pinned in
-  `MetricsTests.HotPath_Recording_AddsNoAllocation`; an increase fails it.
-- No `// TODO`, no placeholders, no scaffolds.
-
-## Documentation
-
-- Documented at birth: every route, DTO field and config key lands with its
-  OpenAPI description, `settings.reference.yml` entry and
-  `docs/configuration.md` entry. Drift and completeness tests enforce it.
-- `DESIGN.md` is edited only in the sections the prompt names.
-- No §21 row, XML doc or README line for behaviour that is not in the same
-  commit.
+- Native AOT is the shipping shape: JSON through the source-generated
+  `Common/AppJsonContext.cs`, no reflection-based serialization, no runtime
+  code generation. The only package references are
+  `Microsoft.CodeAnalysis.CSharp` and the xunit stack; no new one without
+  asking.
+- MSBuild is never evaluated. Solutions and projects are read as XML; that
+  constraint is the tool's startup time and AOT compatibility.
+- MCP tools forward to the CLI command implementations. No query logic in
+  `Mcp/`; the two paths must not be able to drift.
+- All answer text goes through `BudgetWriter` / `Emit`. Nothing else reaches
+  stdout in JSON or MCP mode.
+- Exit codes are the public contract: 0 ok, 1 not found, 2 over budget,
+  3 ambiguous, 4 no index / format mismatch / baseline behind, 5 unaccepted
+  structural change (`review`), 64 usage, 70 internal, 75 index contended.
+  No new code and no changed meaning unless the prompt asks.
+- Bump `Graph.CurrentFormatVersion` on any change to node keying, edge
+  semantics or on-disk shape.
+- Node identity is `Node.Key`. Never key, compare or assert by `Id` or by
+  position.
+- XML docs explain why and name the bug the design prevents. No `// TODO`,
+  no placeholders, no scaffolds.
 
 ## Evidence and tests
 
-- New behaviour gets a test plus one observed red run or one executed mutation
-  (edit, output, revert). Pinning tests, refactors and docs need no red
-  evidence. A named but unrun mutation is not evidence.
-- No placeholder or skipping test is committed, except a test that needs an
-  external tool and skips with a clear reason when it is absent.
-- Never stop `dotnet` processes. Kill only leftover `TheDnsSite.Host` (and
-  `pebble`) by name.
+- Every behaviour commit carries its own regression test in the same commit,
+  shown red on revert: revert the behaviour, run the test, paste the failure,
+  restore. A named but unrun mutation is not evidence. Docs-only and pure
+  refactor commits need no red run; say so.
+- No skipping or placeholder test, except one that needs an external tool and
+  skips with a clear reason when it is absent.
+- A test touching `Console.Out`/`Error`, process environment variables or
+  `Telemetry.Current` joins the matching collection: `console-capture`,
+  `env-mutation`, `telemetry-state`.
+- `Fixtures/<case>/` solutions reference no NuGet package and declare their
+  handler interfaces locally. Golden snapshots assert by `Node.Key`.
+- The suite runs on Windows: file-sharing violations and lock-file access are
+  real failure modes there. Design tests for them.
 - Build once, then `--no-build`. Use `--filter` while working.
-- Logic is tested at the service layer. Live-host tests only for HTTP-level
-  behaviour, one shared fixture per class. No test waits on wall-clock time for
-  something a fake `TimeProvider` can drive.
-- End of checkpoint, once: full suite (Release, wall time), `linux-x64`
-  publish (warning count, `IL2xxx`/`IL3xxx` count), AOT smoke against a binary
-  published from the reported commit (stale-binary guard passing). No repeat
-  loops unless chasing a named flake, at most 10.
+- End of prompt, once: full `dotnet test` with a build after the last commit;
+  the reported count comes from that run. Publish Native AOT only when the
+  prompt asks, and then report the warning count and the `IL2xxx`/`IL3xxx`
+  count.
+- A change to indexing is verified with `csmesh index --full` on a real
+  solution before it is claimed to work.
 
-## Production box
+## Private test solutions
 
-- The VPS (`thedns.site`) is read-only: inspect it and quote it, change
-  nothing — binary, config, certificates, firewall, systemd. A needed change is
-  written up as commands for Naser to run.
+- Measurements use private solutions. Their names, paths and access limits
+  come from `AGENTS.private.md` (git-excluded; read it if present) or from the
+  prompt.
+- Their names, paths and symbol names never appear in anything tracked and
+  are never printed in a report: placeholders and counts only.
+- Before the last commit, grep the full `<base>..HEAD` diff and every staged
+  file with a pattern built from the private solutions' indexes (in-source
+  short names, length 6 or more, word boundary) plus the literal list from
+  `AGENTS.private.md`. Report the pattern size and the hit count, never the
+  pattern.
+- `--no-telemetry` on every csmesh invocation.
 
 ## Token economy
 
 The csmesh block at the end of this file is generated by `csmesh skill` and
-belongs to Naser. Never edit between its csmesh-instructions markers
-and never run `csmesh skill` yourself. Its commands, budgets and exit codes apply as
+belongs to Naser. Never edit between its csmesh-instructions markers and never
+run `csmesh skill` yourself. Its commands, budgets and exit codes apply as
 written; the rules below add to it and win where the two disagree.
 
-- `csmesh` and `rtk` are installed inside WSL. Call them explicitly inside
-  `wsl -e bash -lc "…"`; no hook rewrites commands inside that string. csmesh
-  runs from WSL only, never also from Windows against the same tree: two
-  binaries sharing one `.csmesh/` contend for its lock and answer exit 75.
-- Keep the index current: `csmesh index` after a checkpoint's edits,
-  `csmesh index --full` after any change to a `.csproj`, `Directory.*.props`,
-  `global.json` or a package reference. A reference-set change dirties no
-  source file, so an incremental refresh misses it and the graph answers stale.
+- Navigate with the installed `csmesh` on PATH before opening files, then read
+  only the line ranges it points to. If it rejects this repo's index with a
+  format mismatch, report `csmesh --version` under deviations and navigate
+  with the build under development instead, by full path.
+- The build under development is otherwise for verification. When a
+  verification needs this repository itself and a different binary owns
+  `.csmesh/`, run it on a copy under `%TEMP%`.
+- One csmesh platform per tree: never a Windows and a WSL binary against the
+  same `.csmesh/`. Two binaries contend for its lock and answer exit 75.
+- Keep the index current: `csmesh index` after edits, `csmesh index --full`
+  after any change to a `.csproj`, `CsMesh.slnx` or a package reference. A
+  reference-set change dirties no source file, so an incremental refresh
+  misses it.
 - If csmesh gives an answer the code contradicts, report the query, its output
-  and the file and line under deviations. If a command from the csmesh block
-  exits 64, report `csmesh --version` and the command under deviations; do not
-  fall back to grep for it.
-- **rtk** filters exploration output only: `git status`/`diff`/`log`,
-  `ls`/`tree`, grep, logs, and reading a file to understand it. csmesh output
-  is already budgeted and is not piped through rtk. Before editing a file, read
-  the exact line range raw, without rtk; an edit is never based on a
-  compressed view. A diff that goes into the report (the registration diff) or
-  decides what gets staged (`git diff --stat` before a mechanical change) is
-  read raw too.
-- **Gate runs are never filtered by rtk**: the full suite, the publish, the AOT
-  smoke run and every mutation red run. Run them raw with stdout and stderr
-  redirected to a log file under `/tmp`, extract the reported numbers with grep
-  from that file, and name the file in the report. A number that did not come
-  from a raw log is not evidence.
-- Quiet `dotnet` instead of filtering it: builds and test runs pass
-  `-nologo -v q -tl:off`, test runs add `--logger "console;verbosity=minimal"`.
-  `-tl:off` holds for gate runs as well, so no terminal-logger redraws land in
-  the log. `-clp:ErrorsOnly` is for working builds only: the publish reports a
-  warning count and an `IL2xxx`/`IL3xxx` count, so it keeps its warnings.
-- Large documents are read by section, never whole: grep for the heading, then
-  read a line range. This applies to `DESIGN.md`, `HANDOFF-M4.md`, `README.md`
-  and `docs/configuration.md`.
+  and the file and line under deviations.
+- **rtk** filters exploration only: `git status`/`log`, `ls`/`tree`, grep,
+  logs, and reading a file to understand it. Prefix it explicitly. csmesh
+  output is already budgeted and is not piped through rtk. Before editing a
+  file, read the exact line range raw.
+- **Evidence is never filtered by rtk**: the full suite, a publish, every
+  red-on-revert run, any diff the private-name grep reads, `git format-patch`,
+  and any output captured for analysis. Run them raw with stdout and stderr
+  redirected to a log file under `%TEMP%` (or `/tmp` in WSL), take the numbers
+  from that file, and name the file in the report. Never `rtk summary` for
+  evidence.
+- Quiet `dotnet` instead of filtering it: `-nologo -v q -tl:off`, and test
+  runs add `--logger "console;verbosity=minimal"`. `-clp:ErrorsOnly` is for
+  working builds only; a publish keeps its warnings.
+- Large files are read by section: grep for the heading or member, then read a
+  line range. This applies to `README.md`, `npm/README.md`, `docs/index.html`
+  and `Analysis/Indexer.cs`.
 
 ## Reports
 
-Six sections: what landed; tests and evidence; wrong premises; registration
-diff; suite, publish and AOT numbers with wall times; deviations. Numbers as
-plain lines, never tables. Commit hashes for every commit. Every raw log file
-named.
+Numbered to match the prompt's items. Then: commit hashes; red-on-revert per
+commit; the full-suite count with its log file; wrong premises; deviations;
+final `git status`. Plain lines, tables only for numbers. Paste only the lines
+that carry the evidence. End with the one-line `rtk gain` summary.
 
 <!-- csmesh-instructions -->
 # csmesh: C# structural code intelligence
