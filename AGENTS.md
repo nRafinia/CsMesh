@@ -97,11 +97,11 @@ them.
   prompt.
 - Their names, paths and symbol names never appear in anything tracked and
   are never printed in a report: placeholders and counts only.
-- Before the last commit, grep the full `<base>..HEAD` diff and every staged
-  file with a pattern built from the private solutions' indexes (in-source
-  short names, length 6 or more, word boundary) plus the literal list from
-  `AGENTS.private.md`. Report the pattern size and the hit count, never the
-  pattern.
+- Before the last commit, sweep every tracked file with a pattern built from
+  the private solutions' indexes -- in-source short names, length 6 or more,
+  word boundary -- minus every short name this repository's own index declares,
+  plus the literal list from `AGENTS.private.md`. Hits must be zero: any hit is
+  a leak. Report the pattern size and the hit count, never the pattern.
 - `--no-telemetry` on every csmesh invocation.
 
 ## Token economy
