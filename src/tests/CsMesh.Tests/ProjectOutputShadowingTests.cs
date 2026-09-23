@@ -49,7 +49,7 @@ public sealed class ProjectOutputShadowingTests : IDisposable
 
             public interface IServices { }
 
-            public static class DataServiceExtensions
+            public static class StorageExtensions
             {
                 public static IServices AddData(this IServices s) => s;
             }
@@ -101,7 +101,7 @@ public sealed class ProjectOutputShadowingTests : IDisposable
         Assert.False(graph.UnresolvedByReason.ContainsKey("call/ambiguous-overload"));
         Assert.Contains(graph.Edges, e =>
             graph.ById(e.From)?.Short == "Composition.Wire" &&
-            graph.ById(e.To)?.Short == "DataServiceExtensions.AddData");
+            graph.ById(e.To)?.Short == "StorageExtensions.AddData");
     }
 
     [Fact]

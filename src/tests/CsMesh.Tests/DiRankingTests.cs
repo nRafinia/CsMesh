@@ -75,15 +75,15 @@ public sealed class DiRankingTests : IDisposable
             """
             using Microsoft.Extensions.DependencyInjection;
 
-            public interface ITenantContext { }
-            public sealed class TenantContextAccessor : ITenantContext { }
+            public interface IScopeContext { }
+            public sealed class ScopeContextAccessor : IScopeContext { }
 
             public static class Wiring
             {
                 public static void Register(IServiceCollection s)
                 {
-                    s.AddScoped<TenantContextAccessor>();
-                    s.AddSingleton<ITenantContext>(sp => sp.GetRequiredService<TenantContextAccessor>());
+                    s.AddScoped<ScopeContextAccessor>();
+                    s.AddSingleton<IScopeContext>(sp => sp.GetRequiredService<ScopeContextAccessor>());
                 }
             }
             """);
@@ -104,23 +104,23 @@ public sealed class DiRankingTests : IDisposable
             """
             using Microsoft.Extensions.DependencyInjection;
 
-            public interface ISecretStore { }
-            public sealed class LocalSecretStore : ISecretStore { }
-            public sealed class AzureSecretStore : ISecretStore { }
-            public sealed class FakeSecretStore : ISecretStore { }
+            public interface IKeyStore { }
+            public sealed class LocalKeyStore : IKeyStore { }
+            public sealed class AzureSecretStore : IKeyStore { }
+            public sealed class FakeSecretStore : IKeyStore { }
 
             public static class Wiring
             {
                 public static void Register(IServiceCollection s)
                 {
-                    s.AddScoped<LocalSecretStore>();
-                    s.AddSingleton<ISecretStore>(sp => sp.GetRequiredService<LocalSecretStore>());
+                    s.AddScoped<LocalKeyStore>();
+                    s.AddSingleton<IKeyStore>(sp => sp.GetRequiredService<LocalKeyStore>());
                 }
             }
             """);
 
         // Alphabetically Local comes last of the three. Only the registration puts it first.
-        Assert.Equal("LocalSecretStore", ImplOrder(g, "ISecretStore")[0]);
+        Assert.Equal("LocalKeyStore", ImplOrder(g, "IKeyStore")[0]);
     }
 
     [Fact]
