@@ -282,11 +282,26 @@ public sealed class SkillCommandTests : IDisposable
 
         Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
 
-        var expected = System.Text.Encoding.UTF8.GetBytes(
-            "<!-- csmesh-instructions -->\n"
-            + SkillText.Rules.Trim()
-            + "\n<!-- /csmesh-instructions -->\n");
+        var expected = System.Text.Encoding.UTF8.GetBytes(SkillBlock.Render(SkillText.Rules) + "\n");
 
         Assert.Equal(expected, File.ReadAllBytes(agentsMd));
+    }
+
+    /// <summary>
+    /// A brand-new target file has no ending to adopt, so it takes the render's: LF throughout. A
+    /// body that kept the checkout's CRLF would leave the markers in LF and the body in CRLF -- two
+    /// styles in one file, and a whole-file diff the first time anyone's editor normalizes it. The
+    /// existing-file path is the one that follows the target instead.
+    /// </summary>
+    [Fact]
+    public void A_new_target_file_has_one_line_ending_style()
+    {
+        var agentsMd = Path.Combine(_root, "AGENTS.md");
+
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
+
+        var text = File.ReadAllText(agentsMd);
+        Assert.Contains('\n', text);
+        Assert.DoesNotContain('\r', text);
     }
 }

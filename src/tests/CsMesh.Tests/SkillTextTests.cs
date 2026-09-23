@@ -69,6 +69,20 @@ public sealed class SkillTextTests
         Assert.True(checkedBlocks > 0, "no tracked block file was found to pin");
     }
 
+    /// <summary>
+    /// The rendered block is LF whatever line endings the build checkout gave SkillText.cs. A raw
+    /// string literal carries its source file's endings, so without normalizing at the render the
+    /// same release would install different bytes from a CRLF and an LF checkout.
+    /// </summary>
+    [Fact]
+    public void The_rendered_rules_block_is_lf()
+    {
+        var rendered = SkillBlock.Render(SkillText.Rules);
+
+        Assert.Contains('\n', rendered);
+        Assert.DoesNotContain('\r', rendered);
+    }
+
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
