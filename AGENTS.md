@@ -98,10 +98,12 @@ them.
 - Their names, paths and symbol names never appear in anything tracked and
   are never printed in a report: placeholders and counts only.
 - Before the last commit, sweep every tracked file with a pattern built from
-  the private solutions' indexes -- in-source short names, length 6 or more,
-  word boundary -- minus every short name this repository's own index declares,
-  plus the literal list from `AGENTS.private.md`. Hits must be zero: any hit is
-  a leak. Report the pattern size and the hit count, never the pattern.
+  the private solutions' indexes: in-source short names that are compound
+  PascalCase (at least two capitalized words, `^I?[A-Z][a-z0-9]+[A-Z]`), minus
+  every name, or dotted component of a name, that this repository's own index
+  declares, plus the literal list from `AGENTS.private.md`. Single-word names
+  identify nothing and are left out. Hits must be zero: any hit is a leak.
+  Report the pattern size and the hit count, never the pattern.
 - `--no-telemetry` on every csmesh invocation.
 
 ## Token economy
