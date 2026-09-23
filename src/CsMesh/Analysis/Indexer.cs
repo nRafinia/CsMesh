@@ -455,7 +455,20 @@ public static partial class Indexer
         return (result, unreadable);
     }
 
-    public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false)
+    /// <summary>
+    /// Indexes <paramref name="root"/>. When <paramref name="referenceRoot"/> is given, the
+    /// reference set is read from that tree's bin/ instead of <paramref name="root"/>'s.
+    ///
+    /// Review needs this. A base revision is checked out into a clean worktree with no bin/, so
+    /// indexing it against its own tree leaves every package type unbound: the DI, MediatR and
+    /// route edges those types produced drop, and symbol keys that name a package type shift, so
+    /// the comparison reports a false exit 5 against a working tree that did not change. Compiling
+    /// the base against the working tree's built reference set removes the difference. The shadow
+    /// rule stays the base scope's own assemblies, because those are exactly the types the base
+    /// compiles from source and must not also load as references.
+    /// </summary>
+    public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false,
+                              string? referenceRoot = null)
     {
         var scope = includeAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
 
@@ -583,7 +596,7 @@ public static partial class Indexer
         ReferenceReport referenceReport;
         using (var phase = Timings.Phase("reference-set"))
         {
-            references = ReferenceSet(root, scope, out referenceReport);
+            references = ReferenceSet(referenceRoot ?? root, scope, out referenceReport);
             phase.Detail($"references={references.Count} dlls-opened={referenceReport.Opened} " +
                          $"bytes-opened={referenceReport.Bytes}");
         }

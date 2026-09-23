@@ -246,7 +246,11 @@ public static class ReviewCommand
 
         try
         {
-            var built = Indexer.Build(worktreePath, message => Dbg.Log(message));
+            // The base is compiled against the working tree's built reference set, not the clean
+            // worktree's empty bin/. Indexing it against its own tree leaves package types unbound,
+            // which drops DI/MediatR/route edges and shifts symbol keys -- a false exit 5 on a tree
+            // that did not change.
+            var built = Indexer.Build(worktreePath, message => Dbg.Log(message), referenceRoot: root);
             if (built.Files.Count == 0)
             {
                 error = $"base revision {sha} indexed to zero files. " +

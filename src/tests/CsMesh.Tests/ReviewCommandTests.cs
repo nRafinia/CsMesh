@@ -3,6 +3,8 @@ using CsMesh.Commands;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Storage;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace CsMesh.Tests;
@@ -152,6 +154,58 @@ public sealed class ReviewCommandTests : IDisposable
     }
 
     // ------------------------------------------------------------------ scenarios
+
+    /// <summary>
+    /// The base worktree is a clean checkout with no bin/, so indexing it against its own tree
+    /// leaves a package type unbound: the method key that names it shifts and review reports a
+    /// false exit 5 on a tree that did not change. Compiling the base against the working tree's
+    /// built reference set is the fix.
+    /// </summary>
+    [Fact]
+    public void The_base_is_compiled_against_the_working_trees_references()
+    {
+        EmitExternalLibrary();
+        // The build output must not be committed: the base worktree is a clean checkout and the
+        // whole point of the reference fix is that it has no bin/ of its own.
+        File.AppendAllText(Path.Combine(_root, ".git", "info", "exclude"), "\nbin/\n");
+        Write("Foo.cs",
+            """
+            namespace Demo
+            {
+                using Ext;
+                public sealed class Foo : IExt { public void M(ExtType t) { } }
+            }
+            """);
+        CommitAll("base");
+        var baseSha = Sha();
+
+        ReindexCurrent();
+
+        Assert.Equal(Exit.Ok, Review(baseSha));
+
+        var current = GraphStore.Load(_root, out _)!;
+        var cached = GraphStore.LoadBaseGraph(_root, baseSha);
+        Assert.NotNull(cached);
+        Assert.Equal(
+            current.Nodes.Single(n => n.Short == "Foo.M").Key,
+            cached!.Nodes.Single(n => n.Short == "Foo.M").Key);
+    }
+
+    /// <summary>An assembly that lives only in the working tree's bin/, the way a restored package
+    /// does: the clean base worktree has no copy of it.</summary>
+    private void EmitExternalLibrary()
+    {
+        var compilation = CSharpCompilation.Create(
+            "Ext",
+            [CSharpSyntaxTree.ParseText("namespace Ext { public interface IExt { } public class ExtType { } }")],
+            [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        var path = Path.Combine(_root, "bin", "Release", "net10.0", "Ext.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var result = compilation.Emit(path);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+    }
 
     [Fact]
     public void A_moved_DI_binding_is_reported()
