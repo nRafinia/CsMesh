@@ -1434,7 +1434,7 @@ public static partial class Indexer
         private static string FullName(ISymbol s)
         {
             if (s is INamedTypeSymbol) return s.ToDisplayString();
-            if (s is IMethodSymbol or IPropertySymbol or IFieldSymbol)
+            if (s is IMethodSymbol or IPropertySymbol or IFieldSymbol or IEventSymbol)
                 return $"{s.ContainingType?.ToDisplayString() ?? "?"}.{s.Name}";
             return s.ToDisplayString();
         }
@@ -1442,7 +1442,7 @@ public static partial class Indexer
         private static string ShortName(ISymbol s)
         {
             if (s is INamedTypeSymbol t) return t.Name;
-            if (s is IMethodSymbol or IPropertySymbol or IFieldSymbol)
+            if (s is IMethodSymbol or IPropertySymbol or IFieldSymbol or IEventSymbol)
                 return $"{s.ContainingType?.Name ?? "?"}.{s.Name}";
             return s.Name;
         }
@@ -1735,6 +1735,30 @@ public static partial class Indexer
                                     RecordExternalIn(fs.Type, fd.Declaration.Type, _currentAssembly);
                                 }
 
+                                break;
+                            }
+                            // An event is a member a caller subscribes to. Without a node it could
+                            // not be asked about, and --writes could not tell a subscription from a
+                            // missing symbol. Field-like and explicit add/remove both live here.
+                            case EventFieldDeclarationSyntax efd:
+                            {
+                                foreach (var variable in efd.Declaration.Variables)
+                                {
+                                    if (model.GetDeclaredSymbol(variable) is not IEventSymbol ev) continue;
+                                    var vId = NodeFor(ev, "event", variable.GetLocation());
+                                    Link(typeId, vId, EdgeKind.TypeUse, "member");
+                                    g.ById(vId)!.Signature = Display(ev.Type);
+                                    RecordExternalIn(ev.Type, efd.Declaration.Type, _currentAssembly);
+                                }
+
+                                break;
+                            }
+                            case EventDeclarationSyntax ed when model.GetDeclaredSymbol(ed) is { } evs:
+                            {
+                                var vId = NodeFor(evs, "event", ed.GetLocation());
+                                Link(typeId, vId, EdgeKind.TypeUse, "member");
+                                g.ById(vId)!.Signature = Display(evs.Type);
+                                RecordExternalIn(evs.Type, ed.Type, _currentAssembly);
                                 break;
                             }
                         }
@@ -2355,7 +2379,9 @@ public static partial class Indexer
                     case MemberAccessExpressionSyntax ma:
                     {
                         var sym = model.GetSymbolInfo(ma).Symbol;
-                        if (sym is IPropertySymbol or IFieldSymbol)
+                        if (sym is IEventSymbol)
+                            EmitMemberRole(OwnerOf(ma), sym, EventRole(ma), ma);
+                        else if (sym is IPropertySymbol or IFieldSymbol)
                             EmitMemberRole(OwnerOf(ma), sym, MemberRole(ma), ma);
                         break;
                     }
@@ -2434,15 +2460,20 @@ public static partial class Indexer
         /// </summary>
         private static EdgeRole? BareRole(IdentifierNameSyntax id, SemanticModel model)
         {
+            var sym = model.GetSymbolInfo(id).Symbol;
+            if (sym is not (IPropertySymbol or IFieldSymbol or IEventSymbol)) return null;
+
             // "(x, _f) = ..." writes only the member elements; a local or a discard resolves to
-            // neither a property nor a field and records nothing.
+            // neither a property nor a field and records nothing. An event is not a write target.
             if (InDeconstructionTarget(id))
-                return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol ? EdgeRole.Write : null;
+                return sym is IEventSymbol ? null : EdgeRole.Write;
 
             switch (id.Parent)
             {
                 case AssignmentExpressionSyntax a when a.Left == id:
-                    if (model.GetSymbolInfo(id).Symbol is not (IPropertySymbol or IFieldSymbol)) return null;
+                    // += / -= on an event is a subscription, never a value write.
+                    if (a.Kind() is SyntaxKind.AddAssignmentExpression or SyntaxKind.SubtractAssignmentExpression)
+                        return sym is IEventSymbol ? EdgeRole.Subscribe : EdgeRole.Read | EdgeRole.Write;
                     return a.Kind() == SyntaxKind.SimpleAssignmentExpression
                         ? EdgeRole.Write
                         : EdgeRole.Read | EdgeRole.Write;
@@ -2451,25 +2482,29 @@ public static partial class Indexer
                     pu.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression:
                 case PrefixUnaryExpressionSyntax pr when pr.Operand == id &&
                     pr.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression:
-                    return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol
-                        ? EdgeRole.Read | EdgeRole.Write
-                        : null;
+                    return sym is IEventSymbol ? null : EdgeRole.Read | EdgeRole.Write;
 
                 // A ref argument reads and writes its target; an out argument writes it only.
                 case ArgumentSyntax a when a.Expression == id && a.RefKindKeyword.IsKind(SyntaxKind.RefKeyword):
-                    return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol
-                        ? EdgeRole.Read | EdgeRole.Write
-                        : null;
+                    return sym is IEventSymbol ? null : EdgeRole.Read | EdgeRole.Write;
 
                 case ArgumentSyntax a when a.Expression == id && a.RefKindKeyword.IsKind(SyntaxKind.OutKeyword):
-                    return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol
-                        ? EdgeRole.Write
-                        : null;
+                    return sym is IEventSymbol ? null : EdgeRole.Write;
 
                 default:
                     return null;
             }
         }
+
+        /// <summary>
+        /// The role of an event access. += / -= is Subscribe, deliberately not Write: an event
+        /// subscription attaches a handler, it does not set a value, and it must not answer --writes.
+        /// </summary>
+        private static EdgeRole EventRole(SyntaxNode node) =>
+            node.Parent is AssignmentExpressionSyntax a && a.Left == node &&
+            a.Kind() is SyntaxKind.AddAssignmentExpression or SyntaxKind.SubtractAssignmentExpression
+                ? EdgeRole.Subscribe
+                : EdgeRole.Read;
 
         /// <summary>
         /// True when the node is an element of a tuple on the left of a deconstruction. The
@@ -2494,6 +2529,7 @@ public static partial class Indexer
             var (kind, note) = sym switch
             {
                 IPropertySymbol => ("property", "prop"),
+                IEventSymbol => ("event", "event"),
                 IFieldSymbol f when f.ContainingType?.TypeKind == TypeKind.Enum => ("enum-member", "enum-member"),
                 IFieldSymbol => ("field", "field"),
                 _ => ("", "")
