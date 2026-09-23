@@ -503,3 +503,5 @@ copilot-instructions.md
 opencode.json
 !npm/bin/
 !npm/bin/**
+skils-lock.json
+/skills-lock.json

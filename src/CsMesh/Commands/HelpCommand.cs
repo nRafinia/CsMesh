@@ -264,6 +264,10 @@ public static class HelpCommand
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
             --depth <N>        Maximum reverse traversal depth (default: 3)
+            --writes           Only the sites that write the symbol, not the ones that read it.
+                               Roles are Read/Write/Subscribe; one reverse interface hop is
+                               included and marked [via-interface]. Metadata-only targets and
+                               attribute named arguments are not recorded.
             --project <PATH>   Pick one project when a name repeats across assemblies
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -272,6 +276,7 @@ public static class HelpCommand
         EXAMPLES:
             csmesh blast-radius Order.Status --budget 800
             csmesh blast-radius PaymentService.Process --depth 2
+            csmesh blast-radius Order.Status --writes
         """;
 
     public const string EntrypointsHelp =
@@ -500,6 +505,13 @@ public static class HelpCommand
 
             Building the base graph checks the revision out into a disposable worktree under
             .csmesh/; your own working tree, staged or not, is never touched.
+
+            The base is compiled against this working tree's reference set -- the runtime pack plus
+            its bin/ DLLs -- not the clean checkout's empty bin/, so a package type is never
+            spuriously unbound and review does not report a false 5. When a reference input
+            (csproj, props, targets, sln, slnx, Directory.Packages.props, packages.lock.json,
+            global.json) changed in the range, review warns on stderr (a reference_inputs_changed
+            field under --json) that the comparison may be looking past a dependency change.
 
         EXIT CODES:
             0   nothing unaccepted changed (or --accept just ran)

@@ -62,8 +62,8 @@ public static class SymbolSuggest
             var score = (int)(covered * 55 + recall * 25);
             var why = covered >= 1.0 ? "contains" : "shares words";
 
-            // A qualifier the caller supplied is evidence, not noise. Asking for
-            // CredentialService.DeleteCredentialAsync should not rank AuditWriter.DeleteAsync
+            // A qualifier the caller supplied is evidence, not noise. Asking for a
+            // store's DeleteCredentialAsync should not rank an unrelated writer's DeleteAsync
             // above the method on the type that was named.
             if (owner.Length > 0 &&
                 node.Short.Contains(owner, StringComparison.OrdinalIgnoreCase))

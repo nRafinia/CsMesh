@@ -78,6 +78,16 @@ public static class ReviewCommand
                 $"baseline predates format v{Graph.CurrentFormatVersion} -> csmesh review --accept");
         }
 
+        // A reference input that changed in the range is a change the graph cannot see as an edge:
+        // the package set moved, but no symbol did. Report normally and say so out loud rather than
+        // guess, so the comparison is not mistaken for exhaustive.
+        var referenceInputs = ChangedReferenceInputs(root, sha);
+        if (referenceInputs.Count > 0)
+        {
+            result.ReferenceInputsChanged = referenceInputs;
+            if (!json) Console.Error.WriteLine(ReferenceWarning(referenceInputs));
+        }
+
         var findings = Queries.DiffFindings(current, baseGraph, includeCalls);
 
         var pruned = 0;
@@ -212,6 +222,39 @@ public static class ReviewCommand
         return $"# index built at {built}, HEAD is {shortHead};{remedy}";
     }
 
+    // ------------------------------------------------------------------ reference inputs
+
+    /// <summary>Files that name or configure the reference set: changing one can change which
+    /// packages and projects the build resolves without moving a symbol the graph records.</summary>
+    private static bool IsReferenceInput(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name is "Directory.Packages.props" or "packages.lock.json" or "global.json") return true;
+        return Path.GetExtension(name) is ".csproj" or ".props" or ".targets" or ".sln" or ".slnx";
+    }
+
+    private static List<string> ChangedReferenceInputs(string root, string sha)
+    {
+        if (!GitTool.TryRun(root, $"diff --name-only {sha}", out var stdout, out _, out _)) return [];
+
+        return stdout
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => p.Replace('\\', '/'))
+            .Where(IsReferenceInput)
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>One warning line: at most five names, then a count, so a rename of a big props file
+    /// cannot flood the terminal.</summary>
+    private static string ReferenceWarning(List<string> changed)
+    {
+        var shown = string.Join(", ", changed.Take(5));
+        var more = changed.Count > 5 ? $" (+{changed.Count - 5} more)" : "";
+        return $"warning: reference inputs changed in this range: {shown}{more}. "
+             + "The base is still compiled against the working tree's reference set.";
+    }
+
     // ------------------------------------------------------------------ base graph, cached per commit
 
     /// <summary>
@@ -225,7 +268,10 @@ public static class ReviewCommand
         graph = null!;
         error = "";
 
-        var cached = GraphStore.LoadBaseGraph(root, sha);
+        // The reference set is part of the cache key: the same commit indexed against a different
+        // bin/ is a different graph, and reusing the thin one is the false exit 5 this prevents.
+        var referenceKey = GraphStore.ReferenceKeyFor(root);
+        var cached = GraphStore.LoadBaseGraph(root, sha, referenceKey);
         if (cached != null)
         {
             graph = cached;
@@ -246,7 +292,11 @@ public static class ReviewCommand
 
         try
         {
-            var built = Indexer.Build(worktreePath, message => Dbg.Log(message));
+            // The base is compiled against the working tree's built reference set, not the clean
+            // worktree's empty bin/. Indexing it against its own tree leaves package types unbound,
+            // which drops DI/MediatR/route edges and shifts symbol keys -- a false exit 5 on a tree
+            // that did not change.
+            var built = Indexer.Build(worktreePath, message => Dbg.Log(message), referenceRoot: root);
             if (built.Files.Count == 0)
             {
                 error = $"base revision {sha} indexed to zero files. " +
@@ -254,7 +304,7 @@ public static class ReviewCommand
                 return false;
             }
 
-            GraphStore.SaveBaseGraph(root, sha, built);
+            GraphStore.SaveBaseGraph(root, sha, referenceKey, built);
             graph = built;
             return true;
         }

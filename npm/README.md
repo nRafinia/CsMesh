@@ -106,7 +106,7 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
 
 ## 📊 Empirical Benchmarks
 
-To quantify the real-world performance gains, `csmesh` was benchmarked against the standard AI agent workflow (**Ripgrep / `rg` + sequential file reads**) across a private 29-project .NET solution (**1,945 symbols, 5,164 edges**, measured 2026-09-21 on csmesh 0.6.0).
+To quantify the real-world performance gains, `csmesh` was benchmarked against the standard AI agent workflow (**Ripgrep / `rg` + sequential file reads**) across a private 29-project .NET solution (**1,945 symbols, 5,328 edges**, measured 2026-09-23 on csmesh 0.7.0).
 
 The evaluation measured four critical dimensions:
 1. **Query & Execution Latency**: Raw tool execution time and total agent turnaround time.

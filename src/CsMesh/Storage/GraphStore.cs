@@ -4,7 +4,6 @@ using CsMesh.Common;
 using CsMesh.Models;
 
 namespace CsMesh.Storage;
-
 /// <summary>
 /// Handles persistence and freshness tracking of the code graph on disk.
 /// </summary>
@@ -285,17 +284,53 @@ public static class GraphStore
     /// </summary>
     public static string BaseWorktreePath(string root) => Path.Combine(DirFor(root), "base");
 
-    /// <summary>The cached graph for one base revision, keyed on its commit so it survives being
-    /// asked for twice.</summary>
-    public static string BaseGraphPathFor(string root, string sha) => Path.Combine(DirFor(root), $"base-{sha}.json");
+    /// <summary>
+    /// A short identity of the reference set a base graph was compiled against: the indexer build,
+    /// the graph format, the shared framework, and the working tree's bin/ DLLs by name, size and
+    /// write time. The base cache is keyed on it because a base built by an older binary, or
+    /// against a bin/ that has since changed, would compile the same source against different
+    /// references -- unbound package types, dropped edges -- and review would report a false exit 5.
+    ///
+    /// Cost is one walk and stat of the working tree's bin/ DLLs, tens of files, next to the full
+    /// index the base build already does; the write time is in the identity so a rebuilt DLL of the
+    /// same size still invalidates the cache.
+    /// </summary>
+    public static string ReferenceKeyFor(string root)
+    {
+        var parts = new List<string> { AppVersion.Get(), Graph.CurrentFormatVersion.ToString() };
+        try { parts.Add(RuntimeLocator.FindSharedFramework() ?? ""); } catch { parts.Add(""); }
+
+        if (Directory.Exists(root))
+        {
+            foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories)
+                         .OrderBy(p => p, StringComparer.Ordinal))
+            foreach (var dll in Directory.EnumerateFiles(bin, "*.dll", SearchOption.AllDirectories)
+                         .OrderBy(p => p, StringComparer.Ordinal))
+            {
+                long size = 0, ticks = 0;
+                try { var info = new FileInfo(dll); size = info.Length; ticks = info.LastWriteTimeUtc.Ticks; }
+                catch { /* a stat was not available; the name still identifies it */ }
+                parts.Add($"{Path.GetFileName(dll)}|{size}|{ticks}");
+            }
+        }
+
+        var hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(string.Join("\n", parts)));
+        return Convert.ToHexString(hash)[..12].ToLowerInvariant();
+    }
+
+    /// <summary>The cached graph for one base revision and reference set. The commit alone is not
+    /// enough: the same commit indexed against a different reference set is a different graph.</summary>
+    public static string BaseGraphPathFor(string root, string sha, string referenceKey) =>
+        Path.Combine(DirFor(root), $"base-{sha}-{referenceKey}.json");
 
     /// <summary>
-    /// Loads a cached base-revision graph, or null when there is none or it predates the current
-    /// keying rules -- same reasoning as <see cref="LoadPrevious"/>.
+    /// Loads a cached base-revision graph for this reference set, or null when there is none or it
+    /// predates the current keying rules -- same reasoning as <see cref="LoadPrevious"/>.
     /// </summary>
-    public static Graph? LoadBaseGraph(string root, string sha)
+    public static Graph? LoadBaseGraph(string root, string sha, string referenceKey)
     {
-        var path = BaseGraphPathFor(root, sha);
+        var path = BaseGraphPathFor(root, sha, referenceKey);
         if (!File.Exists(path)) return null;
 
         try
@@ -315,10 +350,10 @@ public static class GraphStore
         }
     }
 
-    public static void SaveBaseGraph(string root, string sha, Graph g)
+    public static void SaveBaseGraph(string root, string sha, string referenceKey, Graph g)
     {
         CsMeshDir.Ensure(root);
-        WriteAtomic(g, BaseGraphPathFor(root, sha));
+        WriteAtomic(g, BaseGraphPathFor(root, sha, referenceKey));
     }
 
     /// <summary>

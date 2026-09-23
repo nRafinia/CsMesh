@@ -107,7 +107,7 @@ In layered, enterprise .NET applications, **lexical text search (`grep`, `ripgre
 
 ## 📊 Empirical Benchmarks
 
-To quantify the real-world performance gains, `csmesh` was benchmarked against the standard AI agent workflow (**Ripgrep / `rg` + sequential file reads**) across a private 29-project .NET solution (**1,945 symbols, 5,164 edges**, measured 2026-09-21 on csmesh 0.6.0).
+To quantify the real-world performance gains, `csmesh` was benchmarked against the standard AI agent workflow (**Ripgrep / `rg` + sequential file reads**) across a private 29-project .NET solution (**1,945 symbols, 5,328 edges**, measured 2026-09-23 on csmesh 0.7.0).
 
 The evaluation measured four critical dimensions:
 1. **Query & Execution Latency**: Raw tool execution time and total agent turnaround time.
@@ -435,6 +435,13 @@ csmesh blast-radius Order.Status --budget 800
 csmesh blast PaymentService.Process --depth 2
 ```
 
+`--writes` answers the narrower question "where is this written, not read". It returns only the sites whose edge carries the `Write` role, and takes one reverse interface hop so a write through an interface-typed reference is included and marked `[via-interface]`.
+```bash
+csmesh blast-radius Order.Status --writes
+```
+
+A member-access edge carries a role: `Read`, `Write`, `Subscribe` (an event `+=`/`-=`, which never counts as a write), or `Read|Write` for a compound assignment, `++`/`--` or a `ref`. `--writes` selects the edges with `Write`. Two things are deliberately not recorded: writes to a target with no source declaration (a property setter inherited from a package has no node to point at), and attribute named arguments, which are metadata rather than a body access.
+
 #### `csmesh entrypoints [filter]`
 Finds HTTP endpoints (`[HttpGet]`, `[HttpPost]`, Blazor `@page`), message handlers, consumers, and background services.
 ```bash
@@ -482,6 +489,8 @@ csmesh changes --calls --budget 1200
 
 #### `csmesh review [base]`
 The same structural comparison as `changes`, but against a named git revision instead of whatever the last index happened to see — the question a pull request or a CI gate actually asks. Defaults to the merge base with the remote's default branch, cached per commit so a second run is fast. `--accept` writes the current findings to `.csmesh/accepted.txt`; accepted findings stop being reported, and dead entries are pruned automatically once the base moves past them. Exits `5` when something unaccepted remains, so a pipeline can gate on it without parsing prose. When the index predates `HEAD` the comparison is refused rather than guessed at — exit `4`, or `64` for `--accept`, since findings from the wrong current side must not be written to the baseline.
+
+The base revision is checked out into a clean worktree, but it is compiled against *this* working tree's built reference set — the runtime pack plus the working tree's `bin/` DLLs — not the checkout's empty `bin/`. Indexing it against its own tree would leave every package type unbound, drop the DI/MediatR/route edges those types produced and shift symbol keys, and review would report a false `5` on a tree that did not change. The cache is keyed on that reference set, so a base built by an older binary or against a changed `bin/` is rebuilt rather than reused. When a reference input changed in the range (`*.csproj`, `*.props`, `*.targets`, `*.sln`, `*.slnx`, `Directory.Packages.props`, `packages.lock.json`, `global.json`), review still reports normally and adds one warning line on stderr — a `reference_inputs_changed` field in `--json` — because the graph cannot see a dependency change as an edge.
 ```bash
 csmesh review                        # vs. the merge base with the default branch
 csmesh review origin/main --calls
