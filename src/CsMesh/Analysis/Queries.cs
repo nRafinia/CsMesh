@@ -438,16 +438,26 @@ public static partial class Queries
                     if (we.Kind == EdgeKind.Call && HasWrite(we) && g.ById(we.From) is { } owner)
                         Add(owner, via: true);
 
+        // Two writers can share a short display name -- Writer.Save in two namespaces -- and two
+        // identical-looking rows would be worse than one. When that happens, both show the
+        // containing-type-qualified name so the caller can tell them apart.
+        var ambiguous = writers
+            .GroupBy(x => x.Node.Short, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
         w.Force($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}", Row(target, 0, "root", null, dirty));
-        w.Force($"written by {writers.Count} site(s)");
+        w.Force($"written by {writers.Count} writer(s)");
 
         foreach (var (node, via) in writers
             .OrderBy(x => IsTest(x.Node) ? 1 : 0)
             .ThenBy(x => x.Node.Short, StringComparer.Ordinal))
         {
+            var display = ambiguous.Contains(node.Short) ? node.Name : node.Short;
             var marker = via ? "  [via-interface]" : "";
             var row = Row(node, 1, "writer", via ? "via-interface" : null, dirty);
-            if (!w.Add($"  {node.Short}{marker}{Loc(node)}{StaleTag(node, dirty)}", row))
+            if (!w.Add($"  {display}{marker}{Loc(node)}{StaleTag(node, dirty)}", row))
                 return Overflow(w, writers.Count);
         }
 
