@@ -2397,28 +2397,34 @@ public static partial class Indexer
         /// <summary>
         /// The role a member access carries. An assignment reads like a write unless it is
         /// compound, and ++/-- is both; a ref argument is read and written, an out argument is
-        /// written only, and an in argument is a read. Everything else is a read.
+        /// written only, and an in argument is a read. Everything else is a read. A member element
+        /// of a deconstruction target -- "(a, obj.P) = ..." -- is a write.
         /// </summary>
-        private static EdgeRole MemberRole(MemberAccessExpressionSyntax ma) => ma.Parent switch
+        private static EdgeRole MemberRole(MemberAccessExpressionSyntax ma)
         {
-            AssignmentExpressionSyntax a when a.Left == ma =>
-                a.Kind() == SyntaxKind.SimpleAssignmentExpression
-                    ? EdgeRole.Write
-                    : EdgeRole.Read | EdgeRole.Write,
-            PostfixUnaryExpressionSyntax pu when pu.Operand == ma &&
-                pu.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression
-                => EdgeRole.Read | EdgeRole.Write,
-            PrefixUnaryExpressionSyntax pr when pr.Operand == ma &&
-                pr.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
-                => EdgeRole.Read | EdgeRole.Write,
-            // ref can read and write the target; out can only write it. Miss them and an out
-            // parameter that initializes a field looks like a read, so --writes loses the writer.
-            ArgumentSyntax arg when arg.Expression == ma && arg.RefKindKeyword.IsKind(SyntaxKind.RefKeyword)
-                => EdgeRole.Read | EdgeRole.Write,
-            ArgumentSyntax arg when arg.Expression == ma && arg.RefKindKeyword.IsKind(SyntaxKind.OutKeyword)
-                => EdgeRole.Write,
-            _ => EdgeRole.Read
-        };
+            if (InDeconstructionTarget(ma)) return EdgeRole.Write;
+
+            return ma.Parent switch
+            {
+                AssignmentExpressionSyntax a when a.Left == ma =>
+                    a.Kind() == SyntaxKind.SimpleAssignmentExpression
+                        ? EdgeRole.Write
+                        : EdgeRole.Read | EdgeRole.Write,
+                PostfixUnaryExpressionSyntax pu when pu.Operand == ma &&
+                    pu.Kind() is SyntaxKind.PostIncrementExpression or SyntaxKind.PostDecrementExpression
+                    => EdgeRole.Read | EdgeRole.Write,
+                PrefixUnaryExpressionSyntax pr when pr.Operand == ma &&
+                    pr.Kind() is SyntaxKind.PreIncrementExpression or SyntaxKind.PreDecrementExpression
+                    => EdgeRole.Read | EdgeRole.Write,
+                // ref can read and write the target; out can only write it. Miss them and an out
+                // parameter that initializes a field looks like a read, so --writes loses the writer.
+                ArgumentSyntax arg when arg.Expression == ma && arg.RefKindKeyword.IsKind(SyntaxKind.RefKeyword)
+                    => EdgeRole.Read | EdgeRole.Write,
+                ArgumentSyntax arg when arg.Expression == ma && arg.RefKindKeyword.IsKind(SyntaxKind.OutKeyword)
+                    => EdgeRole.Write,
+                _ => EdgeRole.Read
+            };
+        }
 
         /// <summary>
         /// The role a bare identifier target carries, or null when it is not a member write. Bare
@@ -2428,6 +2434,11 @@ public static partial class Indexer
         /// </summary>
         private static EdgeRole? BareRole(IdentifierNameSyntax id, SemanticModel model)
         {
+            // "(x, _f) = ..." writes only the member elements; a local or a discard resolves to
+            // neither a property nor a field and records nothing.
+            if (InDeconstructionTarget(id))
+                return model.GetSymbolInfo(id).Symbol is IPropertySymbol or IFieldSymbol ? EdgeRole.Write : null;
+
             switch (id.Parent)
             {
                 case AssignmentExpressionSyntax a when a.Left == id:
@@ -2459,6 +2470,17 @@ public static partial class Indexer
                     return null;
             }
         }
+
+        /// <summary>
+        /// True when the node is an element of a tuple on the left of a deconstruction. The
+        /// element on its own is not necessarily a write -- a local or a discard is not -- so the
+        /// caller still checks the symbol. Without this the member element of "(a, obj.P) = ..."
+        /// read as an ordinary read and --writes missed it.
+        /// </summary>
+        private static bool InDeconstructionTarget(SyntaxNode node) =>
+            node.Parent is ArgumentSyntax { Parent: TupleExpressionSyntax tuple } &&
+            tuple.Parent is AssignmentExpressionSyntax { Left: TupleExpressionSyntax left } &&
+            ReferenceEquals(left, tuple);
 
         /// <summary>
         /// Records a member access with its role on the single deduped Call edge. A read on one
