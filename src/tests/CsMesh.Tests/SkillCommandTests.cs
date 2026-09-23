@@ -233,6 +233,44 @@ public sealed class SkillCommandTests : IDisposable
     }
 
     /// <summary>
+    /// An --agent all run aims several agents at the same AGENTS.md. Without dedup each rewrites the
+    /// file and prints its own line, so one install reads as a repeated failure. Today mimo, codex
+    /// and opencode all resolve to the repository AGENTS.md, which is the one path that collapses.
+    /// </summary>
+    [Fact]
+    public void Each_target_path_is_written_once_even_when_several_agents_share_it()
+    {
+        var agentsMd = Path.Combine(_root, "AGENTS.md");
+        File.WriteAllText(agentsMd, "# Rules\n");
+
+        using var sw = new StringWriter();
+        var origOut = Console.Out;
+        try
+        {
+            Console.SetOut(sw);
+            Assert.Equal(Exit.Ok, SkillCommand.Install(_root, "all", isGlobal: false));
+        }
+        finally
+        {
+            Console.SetOut(origOut);
+        }
+
+        var writes = sw.ToString()
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.StartsWith("wrote ", StringComparison.Ordinal)
+                        || l.StartsWith("updated ", StringComparison.Ordinal))
+            .Select(l => l[(l.IndexOf(' ') + 1)..].Trim())
+            .ToList();
+
+        Assert.Equal(writes.Count, writes.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(1, writes.Count(p => p.Equals(agentsMd, StringComparison.OrdinalIgnoreCase)));
+
+        var content = File.ReadAllText(agentsMd);
+        Assert.Equal(1, content.Split(SkillBlock.StartTag).Length - 1);
+        Assert.Equal(1, content.Split(SkillBlock.EndTag).Length - 1);
+    }
+
+    /// <summary>
     /// Pins the bytes install writes, so extracting the wrapper into <see cref="SkillBlock.Render"/>
     /// cannot move a marker, a newline or the trailing line ending unnoticed. A refactor that is
     /// meant to change no output is the kind that changes output.
