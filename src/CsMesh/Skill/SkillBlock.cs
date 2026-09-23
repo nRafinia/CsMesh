@@ -19,11 +19,19 @@ public static class SkillBlock
     /// <summary>
     /// The block as install writes it: the start marker, the trimmed body, the end marker.
     ///
-    /// Pure formatting. No machine name, path or date enters, so the same body always renders the
-    /// same text and a comparison against an installed block is meaningful rather than a coin toss.
+    /// Pure formatting, and always LF. A raw string literal carries the line endings of the file it
+    /// was compiled from, so a binary built from a CRLF checkout and one from an LF checkout would
+    /// render different bytes for the same body -- and a body that kept CRLF would leave a new file
+    /// with LF around the markers and CRLF inside. Normalizing here, at the one place the block is
+    /// composed, gives every target the same starting text; <c>WriteOrUpdateBlock</c> then re-applies
+    /// the existing file's own ending. No machine name, path or date enters, so the same body always
+    /// renders the same text and a comparison against an installed block is meaningful.
     /// </summary>
-    public static string Render(string blockContent) =>
-        $"{StartTag}\n{blockContent.Trim()}\n{EndTag}";
+    public static string Render(string blockContent)
+    {
+        var body = blockContent.Replace("\r\n", "\n").Replace("\r", "\n").Trim();
+        return $"{StartTag}\n{body}\n{EndTag}";
+    }
 
     /// <summary>
     /// The block installed in <paramref name="fileText"/>, from the start marker through the end

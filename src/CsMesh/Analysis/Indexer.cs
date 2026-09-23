@@ -1906,7 +1906,7 @@ public static partial class Indexer
                     if (SymbolEqualityComparer.Default.Equals(found, member)) continue;
 
                     // The implementation reached through a constructed interface can be a member of
-                    // a constructed base, SqlCommandRepositoryBase<UserBooking, DbContext>.AddAsync.
+                    // a constructed base, RepositoryBase<TAggregateRoot, TDbContext>.AddAsync.
                     // The graph declares the open member, so reduce before keying.
                     var implementation = found.OriginalDefinition;
                     var implKind = KindOf(implementation);
@@ -2764,7 +2764,7 @@ public static partial class Indexer
             // A dispatch carries the message and then only plumbing: a CancellationToken, a
             // configure lambda, a context. It never takes a host and a port.
             //
-            // TcpLogClient.SendAsync(Payload, _settings.Host, _settings.Port) got through the
+            // TransportClient.SendAsync(Payload, _settings.Host, _settings.Port) got through the
             // source-declared guard because Payload is declared in the repository, and was
             // reported as a message with no handler -- sending the reader looking for a consumer
             // that was never meant to exist. Same family as the HttpClient.SendAsync case, and

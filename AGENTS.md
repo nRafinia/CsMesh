@@ -97,13 +97,18 @@ them.
   prompt.
 - Their names, paths and symbol names never appear in anything tracked and
   are never printed in a report: placeholders and counts only.
-- Before the last commit, sweep every tracked file with a pattern built from
+- Before the last commit, sweep every tracked file and every commit message
+  and author field of the series (`<base>..HEAD`) with a pattern built from
   the private solutions' indexes: in-source short names that are compound
-  PascalCase (at least two capitalized words, `^I?[A-Z][a-z0-9]+[A-Z]`), minus
-  every name, or dotted component of a name, that this repository's own index
-  declares, plus the literal list from `AGENTS.private.md`. Single-word names
-  identify nothing and are left out. Hits must be zero: any hit is a leak.
-  Report the pattern size and the hit count, never the pattern.
+  PascalCase (at least two capitalized words, `^I?[A-Z][a-z0-9]+[A-Z]`),
+  matched as whole identifier tokens. Subtract every name, or dotted
+  component of a name, that this repository declares when indexed with
+  `--all`, and every public type name or namespace component of an assembly
+  the private solution references, excluding that solution's own project
+  outputs. Add the literal list from `AGENTS.private.md` or the prompt.
+  Single-word names identify nothing and are left out. Hits must be zero:
+  any hit is a leak. Report the pattern size and the hit count, never the
+  pattern or any term, including assembly and project names.
 - `--no-telemetry` on every csmesh invocation.
 
 ## Token economy
@@ -170,11 +175,6 @@ Your VERY FIRST action when exploring or investigating C# code MUST be running `
 
 Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
 
-In any repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, reach for `csmesh` before grep,
-ripgrep, glob, reading files in sequence, or handing discovery to a subagent. It answers from a
-prebuilt symbol graph in one shell call and resolves what text search cannot see: DI registrations
-including assembly scanning, MediatR Send/Publish, interface dispatch, attribute routing.
-
 ## Match the thing you are about to do
 
 | you are about to | run instead |
@@ -185,6 +185,7 @@ including assembly scanning, MediatR Send/Publish, interface dispatch, attribute
 | enumerate call sites ("who calls this? where is it invoked from?") | `csmesh blast-radius Type.Member --depth 1` |
 | guess which class implements an interface | `csmesh impl IThing --budget 600` |
 | change a `public` member | `csmesh blast-radius Type.Member --budget 800` |
+| find where a property or field is written | `csmesh blast-radius Type.Prop --writes --budget 800` |
 | grep for a mediator handler | `csmesh trace` on the calling method |
 | search for an HTTP route or a background job | `csmesh entrypoints <filter>` |
 | work out how A reaches B | `csmesh path <from> <to>` |
@@ -225,6 +226,8 @@ Keep using grep for string literals, config values, TODOs, error messages, and n
 ## Reading the output
 
 - `[impl, di-bound]` -- registered in the container; this is the one that runs.
+- `[via-interface]` -- under `--writes`, a writer through an interface-typed reference; the
+  edge lands on the interface member, not this implementation.
 - `@ Api/Registrations.cs:22` -- where the edge was wired up. Go there; do not search for it.
 - `{test}` -- test code: a real caller, but not what breaks in production.
 - `?0.70 short-name-match` / `?0.75 assembly-scan` -- inferred, not read off a compiler symbol.
@@ -239,8 +242,8 @@ Branch on these; do not parse the text.
 
 ## Practice
 
-- **Nested types**: keys use the immediate containing type, not the outermost class. `Builder`
-  nested inside `Indexer` means the key is `Builder.LineRange`, **not** `Indexer.LineRange`.
+- **Nested types**: keys use the immediate containing type, not the outermost class. `Inner`
+  nested inside `Outer` means the key is `Inner.M`, **not** `Outer.M`.
   Use `csmesh where <member-name>` first to discover the correct qualified name.
 - Always pass `--budget`: 700 `trace`, 600 `impl`, 800 `blast-radius`/`diff`, 900 `context`, 500 `path`.
 - Narrow with `--under src/Api` before raising `--budget`.

@@ -630,7 +630,7 @@ public static class HelpCommand
         EXAMPLES:
             csmesh silence PaymentController.Post StripeGateway.Authorize
             csmesh silence IPaymentGateway
-            csmesh why-not OrderService.Process AuditLog.Write --depth 6
+            csmesh why-not OrderService.Process LogWriter.Write --depth 6
         """;
 
     public const string UsageHelp =

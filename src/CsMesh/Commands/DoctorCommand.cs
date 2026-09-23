@@ -194,7 +194,7 @@ public static class DoctorCommand
         foreach (var path in StaleInstalledBlocks(root, home))
         {
             report.StaleInstructions.Add(path);
-            e.Line($"{path}: installed csmesh instructions differ from this build \u2192 csmesh install");
+            e.Line($"{path}: installed csmesh instructions differ from this build -> csmesh install");
         }
 
         var (caller, via) = CallerDetector.Detect();
