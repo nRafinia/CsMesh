@@ -435,6 +435,13 @@ csmesh blast-radius Order.Status --budget 800
 csmesh blast PaymentService.Process --depth 2
 ```
 
+`--writes` answers the narrower question "where is this written, not read". It returns only the sites whose edge carries the `Write` role, and takes one reverse interface hop so a write through an interface-typed reference is included and marked `[via-interface]`.
+```bash
+csmesh blast-radius Order.Status --writes
+```
+
+A member-access edge carries a role: `Read`, `Write`, `Subscribe` (an event `+=`/`-=`, which never counts as a write), or `Read|Write` for a compound assignment, `++`/`--` or a `ref`. `--writes` selects the edges with `Write`. Two things are deliberately not recorded: writes to a target with no source declaration (a property setter inherited from a package has no node to point at), and attribute named arguments, which are metadata rather than a body access.
+
 #### `csmesh entrypoints [filter]`
 Finds HTTP endpoints (`[HttpGet]`, `[HttpPost]`, Blazor `@page`), message handlers, consumers, and background services.
 ```bash

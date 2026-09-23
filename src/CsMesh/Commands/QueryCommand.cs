@@ -231,7 +231,7 @@ public static class QueryCommand
                 "trace" => Queries.Trace(graph, node, depth, writer, dirtySet,
                                          $"csmesh trace {query} --budget {budget}"),
                 "impl" => Queries.Impl(graph, node, writer, dirtySet),
-                "blast" => Queries.BlastRadius(graph, node, depth, writer, dirtySet),
+                "blast" => Queries.BlastRadius(graph, node, depth, writer, dirtySet, opt.Flag("writes")),
                 "context" => Queries.Context(graph, node, depth, writer, dirtySet),
                 _ => Exit.Usage
             };

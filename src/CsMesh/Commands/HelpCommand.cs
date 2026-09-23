@@ -264,6 +264,10 @@ public static class HelpCommand
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
             --depth <N>        Maximum reverse traversal depth (default: 3)
+            --writes           Only the sites that write the symbol, not the ones that read it.
+                               Roles are Read/Write/Subscribe; one reverse interface hop is
+                               included and marked [via-interface]. Metadata-only targets and
+                               attribute named arguments are not recorded.
             --project <PATH>   Pick one project when a name repeats across assemblies
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -272,6 +276,7 @@ public static class HelpCommand
         EXAMPLES:
             csmesh blast-radius Order.Status --budget 800
             csmesh blast-radius PaymentService.Process --depth 2
+            csmesh blast-radius Order.Status --writes
         """;
 
     public const string EntrypointsHelp =

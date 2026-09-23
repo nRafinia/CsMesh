@@ -274,13 +274,16 @@ public static partial class Queries
             // Key, not Name, and the note is part of the identity: a binding that moved from
             // scoped to singleton is a different edge, and reporting it as unchanged hides the
             // only trace the change leaves anywhere outside the registration line itself.
+            // Role joins them: under --calls, a member access that became a write is a different
+            // edge than the read it was, and must not read as unchanged. Call edges are excluded
+            // by default, so this cannot surface unless the caller asked for calls.
             // A graph written before keys were persisted falls back to the display name.
             var fromKey = from.Key.Length > 0 ? from.Key : from.Name;
             var toKey = to.Key.Length > 0 ? to.Key : to.Name;
 
             // \u0001 as the separator: a fully qualified generic parameter list is full of
             // punctuation, and every printable delimiter tried appears inside real symbol keys.
-            var signature = $"{e.Kind}\u0001{fromKey}\u0001{toKey}\u0001{e.Note}";
+            var signature = $"{e.Kind}\u0001{fromKey}\u0001{toKey}\u0001{e.Note}\u0001{e.Role}";
 
             map[signature] = new EdgeFact(
                 from.Short, to.Short, e.Kind, e.Note, e.Site, e.Score, e.Source,
