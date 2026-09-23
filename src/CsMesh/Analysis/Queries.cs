@@ -270,9 +270,9 @@ public static partial class Queries
     /// reverse interface hop (see <see cref="BlastRadiusWrites"/>).
     /// </summary>
     public static int BlastRadius(Graph g, Node target, int depth, BudgetWriter w, HashSet<string> dirty,
-                                  bool writes = false)
+                                  bool writes = false, ICollection<string>? hints = null)
     {
-        if (writes) return BlastRadiusWrites(g, target, w, dirty);
+        if (writes) return BlastRadiusWrites(g, target, w, dirty, hints);
         // Confidence is carried along the path, not read off the last edge. A caller reached only
         // through a 0.70 dispatch is a 0.70 caller no matter how certain the remaining hops were,
         // and blast-radius is the worst place to overstate certainty: the person running it is
@@ -418,7 +418,8 @@ public static partial class Queries
     /// Deliberately one hop and one level: a write-only walk that kept going would collect the
     /// callers of the writers, which is the ordinary blast radius and not what --writes asks for.
     /// </summary>
-    private static int BlastRadiusWrites(Graph g, Node target, BudgetWriter w, HashSet<string> dirty)
+    private static int BlastRadiusWrites(Graph g, Node target, BudgetWriter w, HashSet<string> dirty,
+                                         ICollection<string>? hints)
     {
         var seen = new HashSet<int> { target.Id };
         var writers = new List<(Node Node, bool ViaInterface)>();
@@ -437,6 +438,16 @@ public static partial class Queries
                 foreach (var we in g.In(iface.Id))
                     if (we.Kind == EdgeKind.Call && HasWrite(we) && g.ById(we.From) is { } owner)
                         Add(owner, via: true);
+
+        // An event's += / -= edges are Subscribe, not Write, so --writes has no rows to show for it.
+        // Say so and name the command that does show its subscribers, rather than an empty list that
+        // reads like "nothing ever touches this".
+        if (writers.Count == 0 && target.Kind == "event" &&
+            g.In(target.Id).Any(e => e.Role is { } role && (role & EdgeRole.Subscribe) != 0))
+        {
+            hints?.Add($"an event's += / -= edges are subscribes, not writes. "
+                     + $"run: csmesh blast-radius {target.Short}");
+        }
 
         // Two writers can share a short display name -- Writer.Save in two namespaces -- and two
         // identical-looking rows would be worse than one. When that happens, both show the

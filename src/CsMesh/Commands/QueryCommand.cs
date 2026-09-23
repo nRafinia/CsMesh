@@ -14,6 +14,7 @@ public static class QueryCommand
         var writer = WriterFor(kind, opt);
         var budget = writer.Budget;
         var result = new QueryResult { Command = kind, Query = opt.Positional.FirstOrDefault() };
+        var hints = new List<string>();
 
         var graph = GraphStore.Load(root, out var problem);
         if (graph == null)
@@ -231,13 +232,21 @@ public static class QueryCommand
                 "trace" => Queries.Trace(graph, node, depth, writer, dirtySet,
                                          $"csmesh trace {query} --budget {budget}"),
                 "impl" => Queries.Impl(graph, node, writer, dirtySet),
-                "blast" => Queries.BlastRadius(graph, node, depth, writer, dirtySet, opt.Flag("writes")),
+                "blast" => Queries.BlastRadius(graph, node, depth, writer, dirtySet, opt.Flag("writes"), hints),
                 "context" => Queries.Context(graph, node, depth, writer, dirtySet),
                 _ => Exit.Usage
             };
         }
 
         Telemetry.Telemetry.Current.FilesReferenced = writer.DistinctFiles;
+
+        // A hint is text-mode prose or a JSON field, never both: printing it in text and leaving it
+        // out of Text keeps the JSON consumer from reading the same sentence twice.
+        if (hints.Count > 0)
+        {
+            result.Hint = hints[0];
+            if (!json) writer.Force(hints[0]);
+        }
 
         if (json) return EmitJson(result, writer, exitCode, null);
 
