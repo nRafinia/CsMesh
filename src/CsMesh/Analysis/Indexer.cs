@@ -823,6 +823,7 @@ public static partial class Indexer
     internal static (int Assets, int Unrestored, int InScope) CountAssetsReferences(string root)
     {
         var scope = ProjectScope.Discover(root);
+        var frameworkNames = FrameworkAssemblyNames();
         var assets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var unrestored = 0;
 
@@ -833,7 +834,14 @@ public static partial class Indexer
 
             if (ProjectAssets.TryRead(directory, tfm, out var entry))
             {
-                foreach (var file in entry.CompileFiles) assets.Add(file);
+                // A compile asset whose simple name is already a shared-framework assembly is not a
+                // new reference: the framework copy wins, exactly as ReferenceSet decides it.
+                // Counting it here would make the source counts sum past the compilation's total.
+                var names = new HashSet<string>(frameworkNames, StringComparer.OrdinalIgnoreCase);
+                foreach (var file in entry.CompileFiles)
+                {
+                    if (names.Add(Path.GetFileName(file))) assets.Add(file);
+                }
             }
             else
             {
@@ -842,6 +850,30 @@ public static partial class Indexer
         }
 
         return (assets.Count, unrestored, scope.LiveDirectories.Count);
+    }
+
+    /// <summary>
+    /// The file names of the shared framework and its installed siblings. Enumerating names only is
+    /// enough to exclude a package asset the framework already supplies, and avoids reading a header
+    /// per DLL the way the reference set itself has to.
+    /// </summary>
+    private static HashSet<string> FrameworkAssemblyNames()
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        string? runtimeDir;
+        try { runtimeDir = RuntimeLocator.FindSharedFramework(); } catch { return names; }
+        if (runtimeDir is null) return names;
+
+        void Add(string dir)
+        {
+            if (!Directory.Exists(dir)) return;
+            foreach (var dll in Directory.EnumerateFiles(dir, "*.dll")) names.Add(Path.GetFileName(dll));
+        }
+
+        Add(runtimeDir);
+        foreach (var dir in SiblingSharedFrameworks(runtimeDir)) Add(dir);
+        return names;
     }
 
     /// <summary>

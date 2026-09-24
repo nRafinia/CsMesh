@@ -78,8 +78,9 @@ public sealed class ReferenceSourceMessageTests : IDisposable
     [Fact]
     public void An_unrestored_project_is_named_and_the_fix_is_restore()
     {
-        // A is restored: its assets file resolves an assembly that exists on disk.
-        var existing = typeof(object).Assembly.Location;
+        // A is restored: its assets file resolves an assembly that exists on disk and is not part
+        // of the shared framework, so it counts as an assets reference.
+        var existing = typeof(ReferenceSourceMessageTests).Assembly.Location;
         var folder = Path.GetDirectoryName(existing)!.Replace('\\', '/') + "/";
         var dll = Path.GetFileName(existing);
         Write("A/A.csproj", Csproj);
@@ -112,5 +113,38 @@ public sealed class ReferenceSourceMessageTests : IDisposable
         Assert.Contains("1 in-scope project(s) have no obj/project.assets.json", output, StringComparison.Ordinal);
         Assert.Contains("dotnet restore", output, StringComparison.Ordinal);
         Assert.DoesNotContain("NOTHING from bin/", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_framework_named_package_asset_is_not_counted_as_a_new_reference()
+    {
+        // The assets file names a framework assembly; the runtime copy already supplies it, so the
+        // references line must not count it again and the sources still sum to the compilation.
+        var existing = typeof(object).Assembly.Location;
+        var folder = Path.GetDirectoryName(existing)!.Replace('\\', '/') + "/";
+        var dll = Path.GetFileName(existing);
+        Write("A/A.csproj", Csproj);
+        Write("A/Thing.cs", "namespace A; public sealed class Thing { }");
+        Write("A/obj/project.assets.json", $$"""
+            {
+              "version": 3,
+              "targets": {
+                "net10.0": {
+                  "Package.Lib/1.0.0": {
+                    "type": "package",
+                    "compile": { "{{dll}}": {} }
+                  }
+                }
+              },
+              "libraries": { "Package.Lib/1.0.0": { "type": "package", "path": "" } },
+              "packageFolders": { "{{folder}}": {} },
+              "project": { "frameworks": { "net10.0": {} } }
+            }
+            """);
+
+        Index();
+        var output = Doctor();
+
+        Assert.Contains("0 assets", output, StringComparison.Ordinal);
     }
 }
