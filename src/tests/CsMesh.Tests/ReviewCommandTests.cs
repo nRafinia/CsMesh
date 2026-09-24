@@ -324,6 +324,95 @@ public sealed class ReviewCommandTests : IDisposable
     }
 
     /// <summary>
+    /// A base graph is keyed by (revision, reference set). After the write, this revision's other
+    /// keys are files no run with the current reference set can reuse, so they are deleted at once;
+    /// a file for a different revision is a different cache slot and is left to the count rule.
+    /// </summary>
+    [Fact]
+    public void A_successful_base_write_prunes_only_this_revisions_other_reference_keys()
+    {
+        var baseSha = SeedBase();
+        Write("Registration.cs", Registration("ThingB"));
+        ReindexCurrent();
+
+        var dir = GraphStore.DirFor(_root);
+        Directory.CreateDirectory(dir);
+
+        var currentKey = GraphStore.ReferenceKeyFor(_root);
+        var otherKey = currentKey == "ffffffffffff" ? "000000000000" : "ffffffffffff";
+        var sameRevisionStale = Path.Combine(dir, $"base-{baseSha}-{otherKey}.json");
+        var otherRevision = Path.Combine(dir, "base-aaaaaaaaaaaa-bbbbbbbbbbbb.json");
+
+        var current = GraphStore.BaseGraphPathFor(_root, baseSha, currentKey);
+        Assert.NotEqual(Path.GetFileName(current), Path.GetFileName(sameRevisionStale));
+        File.WriteAllText(sameRevisionStale, "{}");
+        File.WriteAllText(otherRevision, "{}");
+
+        Review(baseSha);
+
+        Assert.True(File.Exists(current));
+        Assert.False(File.Exists(sameRevisionStale));
+        Assert.True(File.Exists(otherRevision));
+    }
+
+    /// <summary>
+    /// The count rule still bounds the whole cache. Each cached base graph is a full-solution graph,
+    /// so the ones past the most recent five by write time are deleted whatever revision they are.
+    /// </summary>
+    [Fact]
+    public void The_base_cache_keeps_only_the_five_most_recent_graphs()
+    {
+        var dir = GraphStore.DirFor(_root);
+        Directory.CreateDirectory(dir);
+
+        var files = new List<string>();
+        for (var i = 0; i < 7; i++)
+        {
+            var path = Path.Combine(dir, $"base-{i:x12}-{i:x12}.json");
+            File.WriteAllText(path, "{}");
+            File.SetLastWriteTimeUtc(path, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i));
+            files.Add(path);
+        }
+
+        GraphStore.PruneBaseGraphs(_root, 5);
+
+        Assert.False(File.Exists(files[0]));
+        Assert.False(File.Exists(files[1]));
+        foreach (var kept in files.Skip(2)) Assert.True(File.Exists(kept));
+    }
+
+    /// <summary>
+    /// Windows refuses to delete a file another handle holds without FILE_SHARE_DELETE, and a second
+    /// csmesh reviewing the same repository is exactly that. Pruning is housekeeping: a delete that
+    /// fails must be swallowed, not turn a review that already succeeded into a failure.
+    /// </summary>
+    [Fact]
+    public void A_locked_same_revision_base_graph_is_left_alone_and_does_not_throw()
+    {
+        const string sha = "bbbbbbbbbbbb";
+        const string key = "bbbbbbbbbbbb";
+
+        var dir = GraphStore.DirFor(_root);
+        Directory.CreateDirectory(dir);
+        var stale = Path.Combine(dir, "base-bbbbbbbbbbbb-000000000000.json");
+        var current = GraphStore.BaseGraphPathFor(_root, sha, key);
+        File.WriteAllText(stale, "{}");
+        File.WriteAllText(current, "{}");
+
+        using (new FileStream(stale, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            GraphStore.PruneBaseGraphsForRevision(_root, sha, key);
+
+            Assert.True(File.Exists(current));
+            if (OperatingSystem.IsWindows()) Assert.True(File.Exists(stale));
+        }
+
+        // With the handle gone the same prune reclaims it, so the failure above really was the lock.
+        GraphStore.PruneBaseGraphsForRevision(_root, sha, key);
+        Assert.False(File.Exists(stale));
+    }
+
+    /// <summary>
     /// A base graph cached against a different reference set must not be reused: the same commit
     /// compiled against a changed bin/ is a different graph, and reusing the old one reintroduces
     /// the thin-base false positive. The reference key moves when a working-tree reference appears.

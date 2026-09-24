@@ -305,6 +305,13 @@ public static class ReviewCommand
             }
 
             GraphStore.SaveBaseGraph(root, sha, referenceKey, built);
+
+            // Only after the write is known to have landed: the newly cached key is the one the
+            // next run reuses, and this revision's other keys are full-solution graphs no run with
+            // this reference set can. Best effort by construction -- pruning never changes the exit
+            // code of the review that just succeeded.
+            GraphStore.PruneBaseGraphsForRevision(root, sha, referenceKey);
+
             graph = built;
             return true;
         }
@@ -316,6 +323,9 @@ public static class ReviewCommand
         finally
         {
             CleanupWorktree(root, worktreePath);
+
+            // The count rule runs on the way out, after any write above, and deletes by write time.
+            // The file just written is the most recent, so it is never the one evicted.
             GraphStore.PruneBaseGraphs(root);
         }
     }
