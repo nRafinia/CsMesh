@@ -43,29 +43,33 @@ asset is under `lib/` (0 under `ref/`). One S2 project has no assets file (never
 
 ## Decision
 
-For each in-scope project, add that project's `obj/project.assets.json` compile assets to its
-compilation's metadata references, keep the shared framework and the `bin/` walk as the fallback, and
-give each project its own reference list. Bump the graph format v14 -> v15.
+Give each in-scope project its own metadata-reference list built from the shared framework, that
+project's `obj/project.assets.json` compile assets, and two narrow reads from `bin/`. No format bump.
 
 ### 1. Source order and fallback
 
 Per project, references are assembled in this order:
 
 1. Shared framework and its installed siblings (`Indexer.cs:862-895`), unchanged.
-2. That project's compile assets from its own `obj/project.assets.json`, resolved under its
-   `packageFolders`.
-3. `bin/` assemblies (`Indexer.cs:897-914`), unchanged, now a per-project fallback rather than the
-   only package source.
+2. That project's compile assets from its own `obj/project.assets.json`, resolved per decision 3.
+3. `bin/` — **not** the global walk. For a project with an assets file, only two things are taken
+   from `bin/`: (a) the output assembly of a `type: project` entry in the assets file whose project
+   is **out of scope** — an in-scope `type: project` entry is skipped, because the
+   `CompilationReference` of ADR 0002 already supplies its declarations — and (b) the `bin/`
+   assembly with the same simple name as a package whose compile asset is missing from disk.
 
-The assets file decides the package types; `bin/` still supplies out-of-scope projects and anything
-an app copied that the assets file does not cover. When the assets file is absent (never restored),
-the project keeps today's shared-framework + `bin/` behaviour and doctor records it as not restored.
-When the file is present but an individual compile asset is missing from disk, that one package falls
-back to its `bin/` copy and the missing count is reported rather than failing the index. The fallback
-is per project, not global: one unrestored project must not remove another's package references.
+A project with **no** assets file keeps today's global `bin/` walk (`Indexer.cs:897-914`). A file
+that is absent, truncated or unparsable is the "no assets" case for that project only: one unrestored
+project must not change another project's references.
 
-Bug prevented: a restored `obj/` with an unbuilt `bin/` compiling against no packages, and an
-unrestored project silently dropping only some of its packages.
+The leak this closes: today the one shared `bin/` walk puts **every** assembly under **every**
+`bin/` into **every** compilation, so a project binds a package it never referenced merely because a
+sibling app or test project copied it. With per-project assets plus the two narrow `bin/` uses, a
+project sees its own closure.
+
+Bug prevented: a restored `obj/` with an unbuilt `bin/` compiling against no packages; a project
+binding another project's package; and an unrestored project silently dropping only some of its
+packages.
 
 ### 2. Per-project sets, not one global set
 
@@ -94,8 +98,15 @@ reading `compile` prefers a package's `ref` assembly when it ships one, with no 
 three measured solutions every compile asset is under `lib/` and none under `ref/`, so the
 distinction is a no-op here but must not be hard-coded to `lib/`.
 
-Bug prevented: referencing an assembly the compiler would not use, and turning a `_._` placeholder
-into an empty or duplicate reference.
+The path of a compile asset is: iterate the `packageFolders` in their listed order, join
+`libraries["<id>/<version>"].path` and the compile key, and take the **first** joined path that
+exists on disk, where `<id>/<version>` is the library key exactly as written in `targets`. The
+target read is the **RID-less** key for the TFM the indexer already selects for that project
+(`ProjectTfm`): the `targets` key equal to that TFM, with no `/` runtime suffix. A RID-specific key
+(`<tfm>/<rid>`) is ignored.
+
+Bug prevented: referencing an assembly the compiler would not use, an asset read from a stale
+package folder, and a RID-specific asset chosen over the RID-less one the build selects.
 
 ### 4. Version-conflict policy
 
@@ -138,13 +149,14 @@ Two existing caches ignore `project.assets.json` and must stop:
   project's `project.assets.json` (path plus size and write time, or a content hash). Without that,
   a base graph built before a restore is reused against a different package set and review reports a
   false exit 5.
-- **Incremental freshness.** `GraphStore.DirtyFiles` (`GraphStore.cs:423`) compares only `.cs`
-  `FileStamp`s plus the directory gate (`DirectoriesChanged`, `GraphStore.cs:460`). A changed
-  `project.assets.json` is under `obj/`, is not a stamped file, and a zero-dirty tree short-circuits
-  (`Indexer.Incremental.cs:81`); so today a restore is invisible. Add each in-scope
-  `project.assets.json` as a tracked freshness input so a restore marks the index dirty.
-  `ReferenceSet` is already recomputed on the incremental path (`Indexer.Incremental.cs:223`), so
-  once it reads assets the rebind follows correctly.
+- **Incremental freshness.** An assets change dirties no `.cs` file, so `GraphStore.DirtyFiles`
+  (`GraphStore.cs:423`) reports nothing and `IndexCommand.TryIncremental` announces the index current
+  at `IndexCommand.cs:117`, before any reference is recomputed. A changed `project.assets.json` must
+  therefore force a **full pass**: the assets stamp is part of the freshness comparison, so a changed
+  file marks the index dirty, and `TryIncremental` declines the incremental path for a dirty entry
+  that is not a source file and returns false, which runs the full `Indexer.Build`. The stamp rides in
+  the existing `Graph.Files` `FileStamp` list (`Graph.cs:274`), which `GraphStore.DirtyFiles` already
+  walks by path, size and write time — no new graph field.
 
 Bug prevented: an index that keeps serving a pre-restore reference set while reporting freshness
 clean, and a review base built against the wrong references.
@@ -164,21 +176,17 @@ is fine while `bin/` is genuinely the only source of a needed assembly.
 
 ### 8. Graph.CurrentFormatVersion
 
-Move 14 -> 15. The persisted `Graph` gains a reference-source count so doctor can report offline
-which source supplied the packages (`PackageReferences`, alongside the existing `ReferenceCount`,
-`RuntimeReferences` and `OutputReferences` in `src/CsMesh/Models/Graph.cs:184-199`). AGENTS.md
-requires a bump on any change to node keying, edge semantics, or on-disk shape; node keying and edge
-semantics are untouched, but adding a persisted field is an on-disk shape change, so the rule
-applies. The cost is the usual one: `Load`, `LoadPrevious` and `LoadBaseGraph` reject a mismatched
-format, so the current graph rebuilds and the review base cache is re-indexed.
+**No bump; the format stays v14, and no field is persisted.** Nothing on disk changes shape. The
+reference counts already on the graph (`ReferenceCount`, `RuntimeReferences`, `OutputReferences`;
+`src/CsMesh/Models/Graph.cs:184-199`) describe the references the build used. Provenance — which
+source supplied them — is recomputed by `doctor` **from the tree at run time**, the way it already
+recomputes freshness (`DoctorCommand.cs:59`), by reading each in-scope project's
+`project.assets.json`. AGENTS.md requires a bump on node keying, edge semantics or on-disk shape;
+none of the three changes, so a `PackageReferences` field would invalidate every existing graph and
+base cache for a fact that is derivable from the tree.
 
-A design that reads assets but persists no new field would not move the version. We accept the bump
-because the bug is invisible without provenance: the difference between "0 from `bin/` because
-nothing was built" and "0 from `bin/` because assets supplied everything" is the whole diagnosis, and
-doctor must state it from the stored graph.
-
-Bug prevented: an on-disk graph whose reference provenance cannot be reconstructed offline, and
-caches silently reused across a shape change.
+Bug prevented: a forced re-index and base re-index (the cost of a format bump) for a fact the tree
+already states, and a stored count that can disagree with the tree it was derived from.
 
 ### 9. Regression test shape
 
@@ -205,14 +213,14 @@ that ignores a restore has one too.
 Ordered, each green on its own:
 
 - A. This ADR.
-- B. `feat(index)`: parse each in-scope project's `project.assets.json` compile assets, per-project
-  reference lists through `CreateCompilations`, shared-framework and `bin/` fallback. No format bump
-  if provenance is not yet persisted.
-- C. `feat(doctor)`: three-source references line, `PackageReferences` on the graph, format
-  v14 -> v15, `ReferenceKeyFor` and `DirtyFiles` inputs.
-- D. `test(index)`: the temp-dir package-assembly fixture and the restore-freshness assertion.
+- B. `feat(index)`: parse each in-scope project's `project.assets.json` compile assets per decisions
+  1-5, per-project reference lists through `CreateCompilations`, the two narrow `bin/` uses, and the
+  package-assembly regression test (decision 9).
+- C. `feat(doctor)`: the three-source references line recomputed from the tree (decisions 7 and 8) and
+  the assets-change-forces-full-pass freshness (decision 6), with the restore-freshness test.
 
-Each behaviour commit carries its own red-on-revert regression test, per AGENTS.md.
+No separate test commit: the package-assembly test lands in B, the restore-freshness test in C. Each
+behaviour commit carries its own red-on-revert regression test, per AGENTS.md.
 
 ## Consequences
 
@@ -222,6 +230,5 @@ Each behaviour commit carries its own red-on-revert regression test, per AGENTS.
   ADR 0002; `CreateCompilations`'s signature changes.
 - Reference collection now reads files under `obj/`, so freshness and the review cache key must
   track them (decision 6).
-- The graph format moves once for the provenance field; everything that rejects a format mismatch
-  rebuilds.
+- The graph format stays v14; reference provenance is recomputed at run time rather than persisted.
 - `doctor`'s "not built" advice becomes conditional on whether assets supplied the packages.
