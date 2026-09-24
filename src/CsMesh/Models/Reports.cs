@@ -86,8 +86,28 @@ public sealed class DoctorReport
     /// </summary>
     public List<GeneratedOutputFinding> MissingGeneratedOutput { get; set; } = [];
 
+    /// <summary>
+    /// PackageReferences whose Include names an in-scope project's package id. The package is never
+    /// restored, so the referenced project's types are not bound through it; a ProjectReference is
+    /// the fix.
+    /// </summary>
+    public List<ProjectPackageFinding> PackageReferencesToProjects { get; set; } = [];
+
     /// <summary>The report as a terminal would have shown it.</summary>
     public List<string> Text { get; set; } = [];
+}
+
+/// <summary>One PackageReference that names an in-scope project instead of a package.</summary>
+public sealed class ProjectPackageFinding
+{
+    /// <summary>The project carrying the PackageReference, relative to the repository root.</summary>
+    public string ReferencedFrom { get; set; } = string.Empty;
+
+    /// <summary>The Include value that matched an in-scope project's package id.</summary>
+    public string PackageId { get; set; } = string.Empty;
+
+    /// <summary>The project that id belongs to, relative to the repository root.</summary>
+    public string ReferencedProject { get; set; } = string.Empty;
 }
 
 /// <summary>One project whose compilation reported CS8795, with how many times.</summary>
