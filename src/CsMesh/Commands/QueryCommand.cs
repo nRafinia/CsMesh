@@ -208,7 +208,13 @@ public static class QueryCommand
                 return Exit.Usage;
             }
 
-            var candidates = graph.Resolve(query);
+            // A selector names one overload of a member the name alone leaves ambiguous; a plain
+            // name resolves exactly as before.
+            var selection = SymbolSelector.Analyze(graph, query);
+            if (selection.Status == SymbolSelector.SelectorStatus.SyntaxError)
+                return SelectorUsage(result, writer, json, selection.Error!);
+
+            var candidates = selection.Matches;
             if (candidates.Count == 0) return NotFound(graph, query, writer, result, json, dirtySet);
 
             var wanted = kind == "impl"
@@ -300,7 +306,14 @@ public static class QueryCommand
         HashSet<string> dirty,
         out int exitCode)
     {
-        var candidates = graph.Resolve(query);
+        var selection = SymbolSelector.Analyze(graph, query);
+        if (selection.Status == SymbolSelector.SelectorStatus.SyntaxError)
+        {
+            exitCode = SelectorUsage(result, writer, json, selection.Error!);
+            return null;
+        }
+
+        var candidates = selection.Matches;
         if (candidates.Count == 0)
         {
             exitCode = NotFound(graph, query, writer, result, json, dirty);
@@ -354,6 +367,17 @@ public static class QueryCommand
         if (json) return EmitJson(result, writer, Exit.NotFound, null, keepRows: true);
         writer.Flush();
         return Exit.NotFound;
+    }
+
+    /// <summary>
+    /// The exit-64 answer for a malformed selector, on the same path the other usage errors take:
+    /// stderr in text mode, the envelope's note under --json.
+    /// </summary>
+    private static int SelectorUsage(QueryResult result, BudgetWriter writer, bool json, string message)
+    {
+        if (json) return EmitJson(result, writer, Exit.Usage, message);
+        Console.Error.WriteLine(message);
+        return Exit.Usage;
     }
 
     private static int NotFound(
