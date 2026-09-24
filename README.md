@@ -380,7 +380,7 @@ csmesh entrypoints orders
 |:---|:---|
 | `--repo <PATH>` | Target repository root (default: nearest `.sln`, `.slnx`, or `.git` above cwd) |
 | `--under <PATH>` | Restrict the answer to a subtree, e.g. `--under src/Api`. Narrow before raising the budget. |
-| `--project <PATH>` | Pick one project when a name repeats across assemblies, e.g. `--project src/Api`. Exit `3` lists each candidate's project. |
+| `--project <PATH>` | Pick one project when a name repeats across assemblies, e.g. `--project src/Api`. Exit `3` lists each candidate's project. Two overloads in one project need the parameter list instead, e.g. `Type.Member(int, string)`. |
 | `--budget <N>` | Hard token limit for stdout. Exits code `2` on overflow. Defaults per command below. |
 | `--depth <N>` | Traversal depth limit (`trace` 6, `blast-radius` 3, `context` 3, `path` 12, `diff` 3) |
 | `--heal` | Re-bind changed files before answering, instead of marking rows `[STALE]` |
@@ -611,7 +611,7 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 | `0` | **Success** | Complete answer returned within budget. | Parse output directly. |
 | `1` | **Not Found** | Symbol does not exist in repository. | Check spelling or verify namespace. |
 | `2` | **Over Budget** | Answer exists but exceeds `--budget`. | Re-run with narrower `--depth` or query a specific callee. |
-| `3` | **Ambiguous** | Multiple symbols match query, including the same name declared in more than one project. | Re-run with qualified `Type.Member`, or with `--project <path>` taken from the candidate list. |
+| `3` | **Ambiguous** | Multiple symbols match query, including the same name declared in more than one project. | Re-run with qualified `Type.Member`, or with `--project <path>` taken from the candidate list. Two overloads in one project defeat `--project`: use the selector each candidate row prints, e.g. `Type.Member(int, string)`. |
 | `4` | **No Index** | No usable graph: not generated, or (for `review`) the index predates HEAD. | Execute `csmesh index` and retry. |
 | `5` | **Changed** (`review` only) | Unaccepted structural change vs. the base revision. | Review the finding, then `csmesh review --accept` if it's fine to keep. |
 | `64`| **Usage Error** | Invalid flags, syntax, or arguments, including `review --accept` while the index predates HEAD. | Run `csmesh <cmd> --help`. |

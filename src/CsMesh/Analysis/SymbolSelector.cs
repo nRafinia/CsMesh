@@ -314,9 +314,11 @@ public static class SymbolSelector
         foreach (var group in Enumerable.Range(0, nodes.Count).GroupBy(i => ShortSelectorOf(nodes[i])))
         {
             var indices = group.ToList();
-            if (indices.Count == 1)
+            if (indices.Count == 1 || indices.Any(i => keys[i] is null))
             {
-                result[indices[0]] = ShortSelectorOf(nodes[indices[0]]);
+                // A node with no parameter list -- a type, or a synthetic top-level key -- has
+                // nothing to qualify; its name is the selector, and --project is what separates it.
+                foreach (var i in indices) result[i] = ShortSelectorOf(nodes[i]);
                 continue;
             }
 

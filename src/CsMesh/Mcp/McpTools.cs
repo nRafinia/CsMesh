@@ -171,7 +171,7 @@ public static class McpTools
                     schema.Properties["project"] = new JsonSchemaProperty
                     {
                         Type = "string",
-                        Description = "Pick one project when a name repeats across assemblies, e.g. src/Payments. Shown in ambiguous output."
+                        Description = "Pick one project when a name repeats across assemblies, e.g. src/Payments. Shown in ambiguous output. Two overloads in one project cannot be separated this way; pass the parameter list in 'symbol' instead."
                     };
                 }
             }
@@ -233,7 +233,8 @@ public static class McpTools
                      + "default branch.",
         _ => "Fully qualified or short name, e.g. OrderService.SaveAsync. When a name repeats "
              + "across projects the answer exits 3 and lists each candidate's project; re-run "
-             + "with 'project' set to one of them."
+             + "with 'project' set to one of them. Two overloads in one project need the parameter "
+             + "list instead: 'Type.Member(int, string)', as the candidate list prints it."
     };
 
     /// <summary>

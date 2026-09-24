@@ -153,7 +153,7 @@ public static class UsageCommand
 
         if (amb > lookups.Count * 0.2 && lookups.Count > 5)
         {
-            Console.WriteLine($"    * {FormattingUtils.Pct(amb, lookups.Count)} ambiguous: use qualified Type.Member names to prevent collisions.");
+            Console.WriteLine($"    * {FormattingUtils.Pct(amb, lookups.Count)} ambiguous: use qualified Type.Member names to prevent collisions; for two overloads in one type, add the parameter list (Type.Member(int, string)).");
         }
 
         if (miss > lookups.Count * 0.25 && lookups.Count > 5)

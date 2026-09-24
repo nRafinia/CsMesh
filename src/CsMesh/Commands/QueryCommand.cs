@@ -506,13 +506,20 @@ public static class QueryCommand
     {
         writer.Force($"ambiguous: {candidates.Count} matches for '{query}'");
 
-        foreach (var candidate in candidates.Take(12))
+        // Selectors are computed over the whole candidate set, not the twelve that fit, so a
+        // printed one stays unique against every candidate and not just the visible ones.
+        var selectors = SymbolSelector.SelectorsFor(candidates);
+
+        for (var i = 0; i < candidates.Count && i < 12; i++)
         {
+            var candidate = candidates[i];
+            var selector = selectors[i];
+
             // Budget-guarded: a bare member name in a large solution can match hundreds of symbols.
             // The project leads the location so a repeated name -- every linked type, every
             // top-level Program -- can be told apart and pasted into --project.
             var project = candidate.Project.Length > 0 ? $"{candidate.Project}  " : "";
-            if (!writer.Add($"  {candidate.Name}  ({candidate.Kind})  {project}{candidate.File}:{candidate.Line}"))
+            if (!writer.Add($"  {selector}  ({candidate.Kind})  {project}{candidate.File}:{candidate.Line}"))
                 break;
 
             result.Rows.Add(new QueryRow
@@ -521,6 +528,7 @@ public static class QueryCommand
                 Kind = candidate.Kind,
                 Relation = "candidate",
                 Note = candidate.Name,
+                Selector = selector,
                 Project = candidate.Project.Length > 0 ? candidate.Project : null,
                 File = candidate.File.Length > 0 ? candidate.File : null,
                 Line = candidate.Line,
@@ -528,7 +536,13 @@ public static class QueryCommand
             });
         }
 
-        writer.Force("pick one with --project <name> (shown above), or re-run with a qualified Type.Member name.");
+        // Every candidate one member's overloads -- same name, same project -- means --project
+        // cannot separate them, so the footer points at a selector instead.
+        var sameName = candidates.Select(c => c.Name).Distinct(StringComparer.Ordinal).Count() == 1;
+        var sameProject = candidates.Select(c => c.Project).Distinct(StringComparer.Ordinal).Count() == 1;
+        writer.Force(sameName && sameProject && SymbolSelector.HasList(selectors[0])
+            ? $"pick one with its selector, quoted: \"{selectors[0]}\""
+            : "pick one with --project <name> (shown above), or re-run with a qualified Type.Member name.");
 
         if (json) return EmitJson(result, writer, Exit.Ambiguous, null, keepRows: true);
 

@@ -40,6 +40,13 @@ public sealed class QueryRow
     public string? Site { get; set; }
 
     /// <summary>
+    /// The selector that names exactly this exit-3 candidate: its name plus the parameter list with
+    /// short type names, disambiguated against the other candidates. Passing it back as the symbol
+    /// resolves to this row alone. Null on every other row.
+    /// </summary>
+    public string? Selector { get; set; }
+
+    /// <summary>
     /// The stable finding id 'review' derives from the edge signature. Null outside 'review', where
     /// nothing needs an identity that survives being asked about twice.
     /// </summary>

@@ -312,7 +312,8 @@ public static class McpServer
                 + "'entrypoints' with filter='orders' rather than reaching for a terminal.\n\n"
                 + "When a name is declared in more than one project, the answer exits 3 and lists each "
                 + "candidate with its project. Re-run the tool with 'project' set to one of them rather "
-                + "than guessing."
+                + "than guessing. Two overloads of one member in one project are separated by the "
+                + "parameter list instead: pass 'Type.Member(int, string)', as the candidate list prints it."
         };
     }
 

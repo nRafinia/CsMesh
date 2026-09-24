@@ -215,6 +215,7 @@ public static class HelpCommand
 
         ARGUMENTS:
             <Type.Member>      Target member to trace (e.g. PaymentController.Post)
+                               Overloads: add the parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
@@ -260,6 +261,7 @@ public static class HelpCommand
 
         ARGUMENTS:
             <Type.Member>      Target member to analyze (e.g. Order.Status)
+                               Overloads: add the parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
@@ -311,6 +313,7 @@ public static class HelpCommand
 
         ARGUMENTS:
             <Type.Member>      Target symbol (e.g. PaymentService.Process)
+                               Overloads: add the parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 900, exits code 2 on overflow)
@@ -341,6 +344,7 @@ public static class HelpCommand
         ARGUMENTS:
             <From>             Where the request starts (e.g. PaymentController.Post)
             <To>               Where you want to know it arrives (e.g. StripeGateway.Authorize)
+            Either may be an overload: add its parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 500, exits code 2 on overflow)
@@ -609,6 +613,7 @@ public static class HelpCommand
         ARGUMENTS:
             <symbol>           The symbol the answer was expected about
             [<target>]         Optional. With two symbols, explains a missing path between them
+            An overload: pass the parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --depth <N>        How far to walk before giving up (default: 12)
