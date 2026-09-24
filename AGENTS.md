@@ -243,6 +243,8 @@ Branch on these; do not parse the text.
 - Narrow with `--under src/Api` before raising `--budget`.
 - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3. When the name
   repeats across projects, exit 3 lists each candidate with its project: use `--project <path>`.
+- Overloads of one member in one project: exit 3 prints a selector per candidate. Pass it back quoted,
+  `csmesh trace "Type.Member(int,string)"`. The parameter list must match exactly.
 - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
 - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
   the code you are about to change.

@@ -212,7 +212,7 @@ public static class SkillText
         | 0 | complete answer | use it |
         | 1 | nothing found | `csmesh silence <symbol>` before anything else |
         | 2 | answer exists but exceeds the budget | in order: the depth the message names, then `--under <path>`, then `--depth 1` for direct edges only. Do **not** just raise `--budget` to a huge number, and do **not** run `silence` here -- a *narrowed* query that then exits 1 is when `silence` applies |
-        | 3 | ambiguous | the name repeats across projects, or is a bare member name: re-run with `--project <path>` taken from the candidate list, or with `Type.Member` |
+        | 3 | ambiguous | the name repeats across projects, or is a bare member name: re-run with `--project <path>` taken from the candidate list, or with `Type.Member`. Two overloads in one project: pass back the quoted selector from the candidate row, `"Type.Member(int,string)"` |
         | 4 | no index; one written by an older csmesh; or (review) an index that predates HEAD | run `csmesh index` |
         | 5 | `review` only: unaccepted structural change vs. the base revision | fix it, or `csmesh review --accept` once reviewed |
         | 64 | bad command line, including `review --accept` when the index predates HEAD | run `csmesh <cmd> --help` |
@@ -233,6 +233,8 @@ public static class SkillText
         - Prefer `Type.Member` over a bare member name; a bare name costs a round trip via exit 3. When
           the name really does repeat across projects, exit 3 prints each candidate with its project:
           re-run with `--project <path>` taken from that list.
+        - Overloads of one member in one project: exit 3 prints a selector per candidate. Pass it back quoted,
+          `csmesh trace "Type.Member(int,string)"`. The parameter list must match exactly.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use that rather
           than guessing a smaller number.
         - Chain two questions into one shell call:
@@ -334,6 +336,8 @@ public static class SkillText
         - Narrow with `--under src/Api` before raising `--budget`.
         - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3. When the name
           repeats across projects, exit 3 lists each candidate with its project: use `--project <path>`.
+        - Overloads of one member in one project: exit 3 prints a selector per candidate. Pass it back quoted,
+          `csmesh trace "Type.Member(int,string)"`. The parameter list must match exactly.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
         - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
           the code you are about to change.
@@ -438,6 +442,8 @@ public static class SkillText
         - Narrow with `--under src/Api` before raising `--budget`.
         - Prefer `Type.Member` over a bare name; a bare name costs a round trip via exit 3. When the name
           repeats across projects, exit 3 lists each candidate with its project: use `--project <path>`.
+        - Overloads of one member in one project: exit 3 prints a selector per candidate. Pass it back quoted,
+          `csmesh trace "Type.Member(int,string)"`. The parameter list must match exactly.
         - On overflow, `trace` names a depth that fits and prints the command to re-run. Use it.
         - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
           the code you are about to change.
