@@ -220,7 +220,7 @@ public static partial class Indexer
                 new[] { projectDir }));
         }
 
-        var references = ReferenceSet(root, scope, out _);
+        var references = ReferenceSet(root, root, scope, out _);
 
         var compilations = CreateCompilations(root, scope, ownedTrees, references);
 
