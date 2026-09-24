@@ -300,10 +300,15 @@ csmesh index
 
 > [!TIP]
 > **Using source generators — or starting from a cold checkout?** A fresh clone resolves less
-> completely than a built one: package and framework types come from `bin/`, and generated sources
-> (Blazor/Razor, System.Text.Json, `[GeneratedRegex]`, `[LibraryImport]`, `[LoggerMessage]`, ...)
-> live under `obj/`. A plain build restores the references; the flags additionally write the
-> generated sources to disk where `csmesh` can read them:
+> completely than a restored one: package types come from each project's
+> `obj/project.assets.json`, and generated sources (Blazor/Razor, System.Text.Json,
+> `[GeneratedRegex]`, `[LibraryImport]`, `[LoggerMessage]`, ...) live under `obj/`. Restore first
+> so the assets files are on disk:
+> ```bash
+> dotnet restore
+> csmesh index
+> ```
+> When the code uses source generators, build with the flags first so their output is on disk too:
 > ```bash
 > dotnet build --no-incremental -p:EmitCompilerGeneratedFiles=true
 > csmesh index

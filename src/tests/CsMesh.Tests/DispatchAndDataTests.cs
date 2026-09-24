@@ -227,7 +227,7 @@ public sealed class TransportCallTests : IDisposable
                 public void Handle(RealCommand command) { }
             }
 
-            public static class TcpLogClient
+            public static class TransportClient
             {
                 public static void SendAsync(Payload payload, string host, int port) { }
             }
@@ -238,7 +238,7 @@ public sealed class TransportCallTests : IDisposable
             {
                 private readonly IBus _bus = null!;
 
-                public void Log(Payload payload) => TcpLogClient.SendAsync(payload, "localhost", 5000);
+                public void Log(Payload payload) => TransportClient.SendAsync(payload, "localhost", 5000);
                 public void Dispatch() => _bus.Publish(new RealCommand(1), default);
             }
             """);
@@ -259,7 +259,7 @@ public sealed class TransportCallTests : IDisposable
     public void PrimitiveExtraArgumentsRuleOutADispatch()
     {
         Assert.DoesNotContain(_graph.Unresolved, u =>
-            u.Kind == "mediatr" && u.Expression.Contains("TcpLogClient", StringComparison.Ordinal));
+            u.Kind == "mediatr" && u.Expression.Contains("TransportClient", StringComparison.Ordinal));
     }
 
     /// <summary>A CancellationToken is plumbing, and must not disqualify a real dispatch.</summary>

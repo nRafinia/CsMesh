@@ -127,14 +127,14 @@ public static partial class Indexer
         string root,
         ProjectScope scope,
         IReadOnlyList<OwnedTree> trees,
-        IReadOnlyList<MetadataReference> references)
+        ReferenceSets references)
     {
         var set = new CompilationSet();
 
         if (!scope.HasProjects || scope.LiveDirectories.Count == 0)
         {
             var single = CSharpCompilation.Create(
-                "csmesh.index", trees.Select(t => t.Tree), references, IndexCompilationOptions());
+                "csmesh.index", trees.Select(t => t.Tree), references.Global, IndexCompilationOptions());
 
             set.Compilations.Add(single);
             set.Named.Add(("", single));
@@ -201,7 +201,7 @@ public static partial class Indexer
         {
             var unit = units[directory];
 
-            var scopedReferences = new List<MetadataReference>(references);
+            var scopedReferences = new List<MetadataReference>(references.For(directory));
             foreach (var dependency in Closure(directory, units, closureCache))
             {
                 if (created.TryGetValue(dependency, out var dependencyCompilation))

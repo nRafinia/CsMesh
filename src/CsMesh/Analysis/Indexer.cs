@@ -575,6 +575,24 @@ public static partial class Indexer
             }
         }
 
+        // A project's package references come from its obj/project.assets.json, so a restore changes
+        // what the compilation binds against without moving a .cs file. Stamping the file puts it in
+        // the same freshness list as source; a change to it is what makes the next incremental pass
+        // decline and a full one run.
+        foreach (var directory in scope.LiveDirectories)
+        {
+            var assets = ProjectAssets.PathFor(directory);
+            if (!File.Exists(assets)) continue;
+
+            var assetsInfo = new FileInfo(assets);
+            stamps.Add(new FileStamp
+            {
+                Path = Path.GetRelativePath(root, assets),
+                Ticks = assetsInfo.LastWriteTimeUtc.Ticks,
+                Size = assetsInfo.Length
+            });
+        }
+
         // The repository root itself may gain a new source file without any tracked directory changing.
         if (!dirs.ContainsKey("."))
         {
@@ -592,20 +610,20 @@ public static partial class Indexer
         }
         owned.AddRange(globalUsings);
 
-        List<MetadataReference> references;
+        ReferenceSets referenceSets;
         ReferenceReport referenceReport;
         using (var phase = Timings.Phase("reference-set"))
         {
-            references = ReferenceSet(referenceRoot ?? root, scope, out referenceReport);
-            phase.Detail($"references={references.Count} dlls-opened={referenceReport.Opened} " +
+            referenceSets = ReferenceSet(root, referenceRoot ?? root, scope, out referenceReport);
+            phase.Detail($"references={referenceReport.Total} dlls-opened={referenceReport.Opened} " +
                          $"bytes-opened={referenceReport.Bytes}");
         }
-        progress?.Invoke($"compiling against {references.Count} references");
+        progress?.Invoke($"compiling against {referenceReport.Total} references");
 
         CompilationSet compilations;
         using (Timings.Phase("compile"))
         {
-            compilations = CreateCompilations(root, scope, owned, references);
+            compilations = CreateCompilations(root, scope, owned, referenceSets);
         }
 
         var graph = new Graph
@@ -632,7 +650,7 @@ public static partial class Indexer
             ProjectReferences = scope.References,
             ProjectCycles = compilations.Cycles,
             Dirs = dirs.Select(kv => new DirStamp { Path = kv.Key, Ticks = kv.Value }).ToList(),
-            ReferenceCount = references.Count,
+            ReferenceCount = referenceReport.Total,
             RuntimeReferences = referenceReport.Runtime,
             OutputReferences = referenceReport.Output,
             OutputDirectories = referenceReport.OutputDirectories,
@@ -788,44 +806,119 @@ public static partial class Indexer
         }
     }
 
-    private static List<MetadataReference> ReferenceSet(string root, ProjectScope scope, out ReferenceReport report)
-    {
-        var list = new List<MetadataReference>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var tally = new ReferenceReport();
+    /// <summary>
+    /// Whether a freshness path is a project's <c>obj/project.assets.json</c>. A change to it moves
+    /// no .cs file, so no file can be rebound around it; the caller forces a full pass instead.
+    /// </summary>
+    internal static bool IsAssetsStamp(string relativePath) =>
+        relativePath.EndsWith("project.assets.json", StringComparison.OrdinalIgnoreCase) &&
+        relativePath.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase);
 
-        // Every bin/ under the repository is scanned for references, and every project in the
-        // repository also builds into one of them. Left alone, the compilation ends up holding each
-        // of the repository's own types twice: once from the source being indexed and once from the
-        // assembly that source was compiled into.
-        //
-        // For ordinary calls the source declaration usually wins and nothing looks wrong. Extension
-        // methods are where it shows, because their lookup gathers candidates from every assembly
-        // in scope: the compiler finds the extension method in the source and again in the reference,
-        // cannot prefer either, and returns candidates with no symbol. What arrives in the index is
-        // 'ambiguous-overload' clustered in whichever file calls the most extension methods --
-        // which is always the composition root, so it reads like a problem with that one file.
-        //
-        // Only the projects actually being compiled are shadowed. A project the scope left out is
-        // not in the compilation at all, so its assembly in bin/ is the only way anything that
-        // calls into it can bind -- dropping that would trade one silent gap for a larger one.
-        foreach (var name in OwnAssemblyNames(scope.LiveDirectories))
+    /// <summary>
+    /// The package references the tree supplies from <c>obj/project.assets.json</c> right now: the
+    /// distinct compile assets the in-scope projects resolve, how many in-scope projects are
+    /// unrestored, and how many are in scope. Doctor and the index warning report this instead of a
+    /// persisted count, so provenance is always the tree's current answer and nothing new is stored.
+    /// </summary>
+    internal static (int Assets, int Unrestored, int InScope) CountAssetsReferences(string root)
+    {
+        var scope = ProjectScope.Discover(root);
+        var frameworkNames = FrameworkAssemblyNames();
+        var assets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unrestored = 0;
+
+        foreach (var directory in scope.LiveDirectories)
         {
-            seen.Add(name);
-            tally.Shadowed++;
+            var csproj = ProjectTfm.Single(directory);
+            var tfm = csproj is null ? null : ProjectTfm.Declared(csproj);
+
+            if (ProjectAssets.TryRead(directory, tfm, out var entry))
+            {
+                // A compile asset whose simple name is already a shared-framework assembly is not a
+                // new reference: the framework copy wins, exactly as ReferenceSet decides it.
+                // Counting it here would make the source counts sum past the compilation's total.
+                var names = new HashSet<string>(frameworkNames, StringComparer.OrdinalIgnoreCase);
+                foreach (var file in entry.CompileFiles)
+                {
+                    if (names.Add(Path.GetFileName(file))) assets.Add(file);
+                }
+            }
+            else
+            {
+                unrestored++;
+            }
         }
 
-        void AddDir(string dir, int cap, bool runtime)
+        return (assets.Count, unrestored, scope.LiveDirectories.Count);
+    }
+
+    /// <summary>
+    /// The file names of the shared framework and its installed siblings. Enumerating names only is
+    /// enough to exclude a package asset the framework already supplies, and avoids reading a header
+    /// per DLL the way the reference set itself has to.
+    /// </summary>
+    private static HashSet<string> FrameworkAssemblyNames()
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        string? runtimeDir;
+        try { runtimeDir = RuntimeLocator.FindSharedFramework(); } catch { return names; }
+        if (runtimeDir is null) return names;
+
+        void Add(string dir)
+        {
+            if (!Directory.Exists(dir)) return;
+            foreach (var dll in Directory.EnumerateFiles(dir, "*.dll")) names.Add(Path.GetFileName(dll));
+        }
+
+        Add(runtimeDir);
+        foreach (var dir in SiblingSharedFrameworks(runtimeDir)) Add(dir);
+        return names;
+    }
+
+    /// <summary>
+    /// The metadata references for one index: the shared framework and the repository's
+    /// <c>bin/</c> assemblies read once, and the list each in-scope project compiles against.
+    ///
+    /// A project's own list comes from its <c>obj/project.assets.json</c> when that file exists. Its
+    /// <c>bin/</c> contribution is then only two things -- the output of a <c>type: project</c>
+    /// dependency that is out of scope (an in-scope one is supplied by its CompilationReference),
+    /// and a package whose compile asset is missing from disk -- both matched by simple name. A
+    /// project with no assets file keeps the historic global <c>bin/</c> walk.
+    ///
+    /// This is what stops the leak the one shared walk created: every compilation used to see every
+    /// assembly under every <c>bin/</c>, so a project bound a package a sibling app happened to copy
+    /// and it never referenced.
+    ///
+    /// <paramref name="indexRoot"/> owns the sources and the scope; <paramref name="binRoot"/> owns
+    /// the build output and the assets the references are read from. They differ only for review,
+    /// where a base revision is indexed in a worktree with no build output and must still compile
+    /// against the working tree's built reference set.
+    /// </summary>
+    private static ReferenceSets ReferenceSet(
+        string indexRoot, string binRoot, ProjectScope scope, out ReferenceReport report)
+    {
+        var sets = new ReferenceSets();
+        var tally = new ReferenceReport();
+
+        // The projects actually being compiled are shadowed: their assembly reaches the compilation
+        // from source, and loading their bin/ copy as well gives every type two identities and every
+        // extension method two candidates. A project the scope left out is not in the compilation at
+        // all, so its assembly in bin/ is the only way anything that calls into it can bind.
+        var shadow = new HashSet<string>(OwnAssemblyNames(scope.LiveDirectories), StringComparer.OrdinalIgnoreCase);
+        tally.Shadowed = shadow.Count;
+
+        var framework = new List<(string Name, MetadataReference Reference)>();
+        var frameworkNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddFrameworkDir(string dir, int cap)
         {
             if (!Directory.Exists(dir)) return;
             var count = 0;
             foreach (var dll in Directory.EnumerateFiles(dir, "*.dll"))
             {
                 var name = Path.GetFileName(dll);
-
-                // Deduplicate before reading the header: a shared framework and a bin/ copy of the
-                // same assembly are the same file twice, and the header read is the expensive part.
-                if (!seen.Add(name)) continue;
+                if (!frameworkNames.Add(name)) continue;
 
                 // The byte tally is the diagnosis for a cold reference set: how much metadata the
                 // run actually pulled through the file cache. A stat is not worth paying on every
@@ -843,19 +936,12 @@ public static partial class Indexer
 
                 try
                 {
-                    list.Add(MetadataReference.CreateFromFile(dll));
-                    if (runtime) tally.Runtime++; else tally.Output++;
+                    framework.Add((name, MetadataReference.CreateFromFile(dll)));
+                    tally.Runtime++;
                 }
-                catch
-                {
-                    tally.Failed++;
-                }
+                catch { tally.Failed++; }
 
-                if (++count >= cap)
-                {
-                    tally.Capped++;
-                    return;
-                }
+                if (++count >= cap) { tally.Capped++; return; }
             }
         }
 
@@ -876,45 +962,160 @@ public static partial class Indexer
         }
         else
         {
-            AddDir(runtimeDir, 400, runtime: true);
+            AddFrameworkDir(runtimeDir, 400);
 
             // The runtime directory is Microsoft.NETCore.App and nothing else. A web project's
             // ASP.NET Core types live in a sibling shared framework, and because the app is
             // framework-dependent they are never copied to bin/ either -- so without this they are
-            // absent from the compilation entirely.
-            //
-            // What that looks like from the outside is not an error. Roslyn still binds most of the
-            // file; it just cannot pick between overloads whose parameter types it has never seen, so
-            // it returns candidates and no symbol. The index comes out with high call-resolution and
-            // a pile of 'ambiguous-overload' concentrated in one project, which reads like a quirk of
-            // that project's code rather than a missing reference.
-            foreach (var dir in SiblingSharedFrameworks(runtimeDir))
-            {
-                AddDir(dir, 400, runtime: true);
-            }
+            // absent from the compilation entirely. What that looks like is not an error: Roslyn
+            // cannot pick between overloads whose parameter types it has never seen, so it returns
+            // candidates and no symbol.
+            foreach (var dir in SiblingSharedFrameworks(runtimeDir)) AddFrameworkDir(dir, 400);
         }
 
-        foreach (var bin in Directory.EnumerateDirectories(root, "bin", SearchOption.AllDirectories).Take(80))
+        // bin/ is walked once. For a project with an assets file it becomes a name index, for a
+        // project without one it is still the whole package source it always was.
+        var bin = new List<(string Name, string Path, MetadataReference Reference)>();
+        var binByName = new Dictionary<string, (string Path, MetadataReference Reference)>(StringComparer.OrdinalIgnoreCase);
+        var seenBin = new HashSet<string>(shadow, StringComparer.OrdinalIgnoreCase);
+        seenBin.UnionWith(frameworkNames);
+
+        foreach (var binDir in Directory.EnumerateDirectories(binRoot, "bin", SearchOption.AllDirectories).Take(80))
         {
             tally.OutputDirectories++;
 
             // Only the project's own chosen framework is read. A stale net8 tree next to a net10 one
             // is build history the solution does not compile against, and loading its assemblies can
             // shadow the current ones with the same simple name.
-            var chosen = ChosenFrameworkFor(root, bin);
+            var chosen = ChosenFrameworkFor(binRoot, binDir);
 
             var kept = 0;
-            foreach (var cfg in Directory.EnumerateDirectories(bin, "*", SearchOption.AllDirectories))
+            foreach (var cfg in Directory.EnumerateDirectories(binDir, "*", SearchOption.AllDirectories))
             {
-                if (chosen is not null && IsStaleFrameworkDirectory(cfg, bin, chosen)) continue;
+                if (chosen is not null && IsStaleFrameworkDirectory(cfg, binDir, chosen)) continue;
+                if (!Directory.Exists(cfg)) continue;
 
-                AddDir(cfg, 200, runtime: false);
+                var count = 0;
+                foreach (var dll in Directory.EnumerateFiles(cfg, "*.dll"))
+                {
+                    var name = Path.GetFileName(dll);
+                    if (!seenBin.Add(name)) continue;
+
+                    if (Timings.Enabled)
+                    {
+                        tally.Opened++;
+                        try { tally.Bytes += new FileInfo(dll).Length; } catch { /* a length was not available */ }
+                    }
+
+                    if (!IsManagedAssembly(dll)) { tally.Native++; continue; }
+
+                    try
+                    {
+                        var reference = MetadataReference.CreateFromFile(dll);
+                        bin.Add((name, dll, reference));
+                        if (!binByName.ContainsKey(name)) binByName[name] = (dll, reference);
+                    }
+                    catch { tally.Failed++; }
+
+                    if (++count >= 200) { tally.Capped++; break; }
+                }
+
                 if (++kept >= 20) break;
             }
         }
 
+        var global = new List<MetadataReference>(framework.Count + bin.Count);
+        foreach (var reference in framework) global.Add(reference.Reference);
+        foreach (var reference in bin) global.Add(reference.Reference);
+        sets.Global = global;
+
+        var inScopeRelative = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var directory in scope.LiveDirectories)
+        {
+            inScopeRelative.Add(Path.GetRelativePath(indexRoot, directory).Replace('\\', '/'));
+        }
+
+        var usedPackage = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usedBin = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var directory in scope.LiveDirectories)
+        {
+            var relative = Path.GetRelativePath(indexRoot, directory);
+            var assetsDirectory = Path.Combine(binRoot, relative);
+            var csproj = ProjectTfm.Single(directory);
+            var tfm = csproj is null ? null : ProjectTfm.Declared(csproj);
+
+            if (!ProjectAssets.TryRead(assetsDirectory, tfm, out var entry))
+            {
+                sets.ByProject[directory] = global;
+                foreach (var reference in bin) usedBin.Add(reference.Path);
+                continue;
+            }
+
+            var forProject = new List<MetadataReference>(framework.Count + entry.CompileFiles.Count + 4);
+            var names = new HashSet<string>(frameworkNames, StringComparer.OrdinalIgnoreCase);
+            foreach (var reference in framework) forProject.Add(reference.Reference);
+
+            foreach (var file in entry.CompileFiles)
+            {
+                if (!names.Add(Path.GetFileName(file))) continue;
+                try
+                {
+                    forProject.Add(MetadataReference.CreateFromFile(file));
+                    usedPackage.Add(file);
+                }
+                catch { /* unreadable: the name is left to the bin/ fallback below */ }
+            }
+
+            foreach (var dependency in entry.ProjectDependencies)
+            {
+                // An in-scope dependency is compiled from source and reached through its
+                // CompilationReference; loading its bin/ output too would duplicate its types.
+                var dependencyRelative = Path.GetRelativePath(binRoot, dependency.Directory).Replace('\\', '/');
+                if (inScopeRelative.Contains(dependencyRelative)) continue;
+
+                var assemblyFile = dependency.AssemblyName + ".dll";
+                if (binByName.TryGetValue(assemblyFile, out var found) && names.Add(assemblyFile))
+                {
+                    forProject.Add(found.Reference);
+                    usedBin.Add(found.Path);
+                }
+            }
+
+            // A package whose compile asset is missing on disk falls back to the bin/ copy a build
+            // may have made, matched by simple name.
+            foreach (var missing in entry.MissingAssemblyNames)
+            {
+                if (!names.Add(missing)) continue;
+                if (binByName.TryGetValue(missing, out var found))
+                {
+                    forProject.Add(found.Reference);
+                    usedBin.Add(found.Path);
+                }
+            }
+
+            sets.ByProject[directory] = forProject;
+        }
+
+        tally.Output = usedBin.Count;
+        tally.Total = framework.Count + usedBin.Count + usedPackage.Count;
         report = tally;
-        return list;
+        return sets;
+    }
+
+    /// <summary>
+    /// The metadata references for one index: the global set (shared framework and every bin/
+    /// assembly) and the per-project list a compilation is created against.
+    /// </summary>
+    private sealed class ReferenceSets
+    {
+        public List<MetadataReference> Global { get; set; } = [];
+
+        public Dictionary<string, List<MetadataReference>> ByProject { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The list for <paramref name="directory"/>, falling back to the global set.</summary>
+        public IReadOnlyList<MetadataReference> For(string directory) =>
+            ByProject.TryGetValue(directory, out var list) ? list : Global;
     }
 
     /// <summary>
@@ -1041,6 +1242,9 @@ public static partial class Indexer
     /// <summary>Where the reference set came from, and whether it was truncated.</summary>
     private sealed class ReferenceReport
     {
+        /// <summary>The distinct references the compilation(s) were created against.</summary>
+        public int Total;
+
         public int Runtime;
         public int Output;
         public int OutputDirectories;
@@ -1906,7 +2110,7 @@ public static partial class Indexer
                     if (SymbolEqualityComparer.Default.Equals(found, member)) continue;
 
                     // The implementation reached through a constructed interface can be a member of
-                    // a constructed base, SqlCommandRepositoryBase<UserBooking, DbContext>.AddAsync.
+                    // a constructed base, RepositoryBase<TAggregateRoot, TDbContext>.AddAsync.
                     // The graph declares the open member, so reduce before keying.
                     var implementation = found.OriginalDefinition;
                     var implKind = KindOf(implementation);
@@ -2764,7 +2968,7 @@ public static partial class Indexer
             // A dispatch carries the message and then only plumbing: a CancellationToken, a
             // configure lambda, a context. It never takes a host and a port.
             //
-            // TcpLogClient.SendAsync(Payload, _settings.Host, _settings.Port) got through the
+            // TransportClient.SendAsync(Payload, _settings.Host, _settings.Port) got through the
             // source-declared guard because Payload is declared in the repository, and was
             // reported as a message with no handler -- sending the reader looking for a consumer
             // that was never meant to exist. Same family as the HttpClient.SendAsync case, and

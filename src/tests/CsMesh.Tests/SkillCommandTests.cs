@@ -205,6 +205,72 @@ public sealed class SkillCommandTests : IDisposable
     }
 
     /// <summary>
+    /// install rewrites a file the user also owns, so it adopts that file's line endings instead of
+    /// imposing its own. Converting a CRLF rules file to LF on the first install is a full-file diff
+    /// the user never made.
+    /// </summary>
+    [Fact]
+    public void Install_keeps_the_line_endings_the_target_file_already_uses()
+    {
+        var agentsMd = Path.Combine(_root, "AGENTS.md");
+
+        File.WriteAllText(agentsMd, "# Rules\r\n\r\nKeep production up.\r\n");
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
+        AssertNoBareLf(File.ReadAllText(agentsMd));
+
+        File.WriteAllText(agentsMd, "# Rules\n\nKeep production up.\n");
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
+        Assert.DoesNotContain('\r', File.ReadAllText(agentsMd));
+    }
+
+    private static void AssertNoBareLf(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '\n') continue;
+            Assert.True(i > 0 && text[i - 1] == '\r', $"bare LF at index {i}");
+        }
+    }
+
+    /// <summary>
+    /// An --agent all run aims several agents at the same AGENTS.md. Without dedup each rewrites the
+    /// file and prints its own line, so one install reads as a repeated failure. Today mimo, codex
+    /// and opencode all resolve to the repository AGENTS.md, which is the one path that collapses.
+    /// </summary>
+    [Fact]
+    public void Each_target_path_is_written_once_even_when_several_agents_share_it()
+    {
+        var agentsMd = Path.Combine(_root, "AGENTS.md");
+        File.WriteAllText(agentsMd, "# Rules\n");
+
+        using var sw = new StringWriter();
+        var origOut = Console.Out;
+        try
+        {
+            Console.SetOut(sw);
+            Assert.Equal(Exit.Ok, SkillCommand.Install(_root, "all", isGlobal: false));
+        }
+        finally
+        {
+            Console.SetOut(origOut);
+        }
+
+        var writes = sw.ToString()
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.StartsWith("wrote ", StringComparison.Ordinal)
+                        || l.StartsWith("updated ", StringComparison.Ordinal))
+            .Select(l => l[(l.IndexOf(' ') + 1)..].Trim())
+            .ToList();
+
+        Assert.Equal(writes.Count, writes.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(1, writes.Count(p => p.Equals(agentsMd, StringComparison.OrdinalIgnoreCase)));
+
+        var content = File.ReadAllText(agentsMd);
+        Assert.Equal(1, content.Split(SkillBlock.StartTag).Length - 1);
+        Assert.Equal(1, content.Split(SkillBlock.EndTag).Length - 1);
+    }
+
+    /// <summary>
     /// Pins the bytes install writes, so extracting the wrapper into <see cref="SkillBlock.Render"/>
     /// cannot move a marker, a newline or the trailing line ending unnoticed. A refactor that is
     /// meant to change no output is the kind that changes output.
@@ -216,11 +282,26 @@ public sealed class SkillCommandTests : IDisposable
 
         Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
 
-        var expected = System.Text.Encoding.UTF8.GetBytes(
-            "<!-- csmesh-instructions -->\n"
-            + SkillText.Rules.Trim()
-            + "\n<!-- /csmesh-instructions -->\n");
+        var expected = System.Text.Encoding.UTF8.GetBytes(SkillBlock.Render(SkillText.Rules) + "\n");
 
         Assert.Equal(expected, File.ReadAllBytes(agentsMd));
+    }
+
+    /// <summary>
+    /// A brand-new target file has no ending to adopt, so it takes the render's: LF throughout. A
+    /// body that kept the checkout's CRLF would leave the markers in LF and the body in CRLF -- two
+    /// styles in one file, and a whole-file diff the first time anyone's editor normalizes it. The
+    /// existing-file path is the one that follows the target instead.
+    /// </summary>
+    [Fact]
+    public void A_new_target_file_has_one_line_ending_style()
+    {
+        var agentsMd = Path.Combine(_root, "AGENTS.md");
+
+        Assert.Equal(Exit.Ok, SkillCommand.Execute(_root, new Options(["--agent", "codex"]), SkillMode.Install));
+
+        var text = File.ReadAllText(agentsMd);
+        Assert.Contains('\n', text);
+        Assert.DoesNotContain('\r', text);
     }
 }

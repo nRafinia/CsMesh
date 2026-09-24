@@ -220,7 +220,7 @@ public static partial class Indexer
                 new[] { projectDir }));
         }
 
-        var references = ReferenceSet(root, scope, out _);
+        var references = ReferenceSet(root, root, scope, out _);
 
         var compilations = CreateCompilations(root, scope, ownedTrees, references);
 
@@ -284,7 +284,7 @@ public static partial class Indexer
         var freshPaths = freshStamps.Select(s => s.Path.Replace('\\', '/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var carried = previous.Files
             .Where(f => !freshPaths.Contains(f.Path.Replace('\\', '/')))
-            .Where(f => IsGeneratedTrackedPath(f.Path))
+            .Where(f => IsGeneratedTrackedPath(f.Path) || IsAssetsStamp(f.Path))
             .ToList();
 
         previous.Files = freshStamps.Concat(carried).ToList();

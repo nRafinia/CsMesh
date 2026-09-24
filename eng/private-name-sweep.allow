@@ -1,0 +1,11 @@
+# Terms eng/private-name-sweep.ps1 is allowed to ignore.
+#
+# A term is added here only after a person has reviewed the hit and decided it is a generic
+# convention name, not a private solution's name. Every term listed here already appears in a
+# tracked file of this repository, so listing it discloses nothing the repository does not
+# already contain.
+#
+# One term per line; blank lines and lines starting with '#' are ignored. Terms are matched as
+# whole identifier tokens.
+OrderId
+AddApplication

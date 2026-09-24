@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CsMesh.Analysis;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Skill;
@@ -119,9 +120,17 @@ public static class DoctorCommand
                                   ? "  -- none; the System namespace is missing and nothing will bind"
                                   : ""));
 
-            e.Line($"references      {graph.ReferenceCount} total"
-                              + $" -- {graph.RuntimeReferences} runtime,"
-                              + $" {graph.OutputReferences} from bin/"
+            // Provenance is recomputed from the tree, not read from the graph: the graph stores the
+            // counts, not which source supplied them, and a restore since the last index would make
+            // a stored answer wrong.
+            var (assetsReferences, unrestoredProjects, _) = Indexer.CountAssetsReferences(root);
+            var runtimeReferences = graph.RuntimeReferences;
+            var binReferences = graph.OutputReferences;
+
+            e.Line($"references      {runtimeReferences + assetsReferences + binReferences} total"
+                              + $" -- {runtimeReferences} runtime,"
+                              + $" {assetsReferences} assets,"
+                              + $" {binReferences} from bin/"
                               + (graph.ReferencesCapped ? " (a directory scan hit its cap)" : "")
                               + (graph.ReferencesFailed > 0 ? $", {graph.ReferencesFailed} could not be opened" : ""));
 
@@ -131,15 +140,20 @@ public static class DoctorCommand
                 e.Line("                and referencing them as well makes every extension method call ambiguous.");
             }
 
-            if (graph.OutputReferences == 0 && graph.UnresolvedCallSites > 0)
+            if (graph.UnresolvedCallSites > 0 && assetsReferences == 0 && binReferences == 0)
             {
-                e.Line("                NOTHING FROM bin/. The solution was not built when this index was made,");
+                e.Line("                NOTHING from bin/ or project.assets.json. The solution was not built or restored when this index was made,");
                 e.Line("                so every package type is unbound and the graph is missing edges.");
-                e.Line("                Run: dotnet build, then csmesh index");
+                e.Line("                Run: dotnet restore, then csmesh index");
             }
-            else if (graph.UnresolvedCallSites > 0 && graph.OutputReferences < graph.OutputDirectories)
+            else if (graph.UnresolvedCallSites > 0 && unrestoredProjects > 0)
             {
-                e.Line($"                {graph.OutputDirectories} bin/ director(ies) found but only {graph.OutputReferences} assembl(ies) loaded;");
+                e.Line($"                {unrestoredProjects} in-scope project(s) have no obj/project.assets.json;");
+                e.Line("                run 'dotnet restore' so their packages bind.");
+            }
+            else if (graph.UnresolvedCallSites > 0 && assetsReferences == 0 && binReferences < graph.OutputDirectories)
+            {
+                e.Line($"                {graph.OutputDirectories} bin/ director(ies) found but only {binReferences} assembl(ies) loaded;");
                 e.Line("                library projects may need CopyLocalLockFileAssemblies to emit package DLLs.");
             }
 
@@ -194,7 +208,7 @@ public static class DoctorCommand
         foreach (var path in StaleInstalledBlocks(root, home))
         {
             report.StaleInstructions.Add(path);
-            e.Line($"{path}: installed csmesh instructions differ from this build \u2192 csmesh install");
+            e.Line($"{path}: installed csmesh instructions differ from this build -> csmesh install");
         }
 
         var (caller, via) = CallerDetector.Detect();

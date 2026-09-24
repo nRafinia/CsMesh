@@ -308,19 +308,25 @@ public static class SkillCommand
             return Exit.Usage;
         }
 
+        // One write per path per install. Several agents in an --agent all run target the same
+        // AGENTS.md, and without this each rewrites it and prints its own line. The comparer is
+        // case-insensitive on Windows, where two spellings of one path name one file.
+        var written = new HashSet<string>(
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
         var actions = new Dictionary<string, Action>
         {
-            ["claude"] = () => InstallClaude(basePath, isGlobal),
-            ["cursor"] = () => InstallCursor(basePath),
-            ["antigravity"] = () => InstallAntigravity(basePath, isGlobal),
-            ["windsurf"] = () => InstallWindsurf(basePath, isGlobal),
-            ["cline"] = () => InstallCline(basePath, isGlobal),
-            ["copilot"] = () => InstallCopilot(basePath, isGlobal),
-            ["kilocode"] = () => InstallKilocode(basePath),
-            ["mimo"] = () => InstallMimo(basePath, isGlobal),
-            ["codex"] = () => InstallCodex(basePath, isGlobal),
-            ["gemini"] = () => InstallGemini(basePath, isGlobal),
-            ["opencode"] = () => InstallOpencode(basePath, isGlobal)
+            ["claude"] = () => InstallClaude(basePath, isGlobal, written),
+            ["cursor"] = () => InstallCursor(basePath, written),
+            ["antigravity"] = () => InstallAntigravity(basePath, isGlobal, written),
+            ["windsurf"] = () => InstallWindsurf(basePath, isGlobal, written),
+            ["cline"] = () => InstallCline(basePath, isGlobal, written),
+            ["copilot"] = () => InstallCopilot(basePath, isGlobal, written),
+            ["kilocode"] = () => InstallKilocode(basePath, written),
+            ["mimo"] = () => InstallMimo(basePath, isGlobal, written),
+            ["codex"] = () => InstallCodex(basePath, isGlobal, written),
+            ["gemini"] = () => InstallGemini(basePath, isGlobal, written),
+            ["opencode"] = () => InstallOpencode(basePath, isGlobal, written)
         };
 
         if (targetAgent is "all")
@@ -493,24 +499,24 @@ public static class SkillCommand
         Console.WriteLine("  Remove with: csmesh uninstall --mcp");
     }
 
-    private static void InstallClaude(string basePath, bool isGlobal)
+    private static void InstallClaude(string basePath, bool isGlobal, ISet<string> written)
     {
         if (isGlobal)
         {
             var claudeHome = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR") ?? Path.Combine(basePath, ".claude");
-            WriteFile(Path.Combine(claudeHome, "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
-            WriteOrUpdateBlock(Path.Combine(claudeHome, "CLAUDE.md"), SkillText.Rules);
+            WriteFile(Path.Combine(claudeHome, "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
+            WriteOrUpdateBlock(Path.Combine(claudeHome, "CLAUDE.md"), written, SkillText.Rules);
         }
         else
         {
-            WriteFile(Path.Combine(basePath, ".claude", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
+            WriteFile(Path.Combine(basePath, ".claude", "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
         }
     }
 
-    private static void InstallCursor(string basePath)
+    private static void InstallCursor(string basePath, ISet<string> written)
     {
         var mdcPath = Path.Combine(basePath, ".cursor", "rules", "csmesh.mdc");
-        WriteFile(mdcPath, SkillText.CursorMdc);
+        WriteFile(mdcPath, written, SkillText.CursorMdc);
 
         var oldMd = Path.Combine(basePath, ".cursor", "rules", "csmesh.md");
         if (File.Exists(oldMd))
@@ -519,96 +525,96 @@ public static class SkillCommand
         }
     }
 
-    private static void InstallAntigravity(string basePath, bool isGlobal)
+    private static void InstallAntigravity(string basePath, bool isGlobal, ISet<string> written)
     {
         if (isGlobal)
         {
-            WriteFile(Path.Combine(basePath, ".gemini", "config", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
-            WriteFile(Path.Combine(basePath, ".gemini", "config", "rules", "csmesh.md"), SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".gemini", "config", "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
+            WriteFile(Path.Combine(basePath, ".gemini", "config", "rules", "csmesh.md"), written, SkillText.Rules);
         }
         else
         {
-            WriteFile(Path.Combine(basePath, ".agents", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
-            WriteFile(Path.Combine(basePath, ".agents", "rules", "csmesh.md"), SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".agents", "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
+            WriteFile(Path.Combine(basePath, ".agents", "rules", "csmesh.md"), written, SkillText.Rules);
         }
     }
 
-    private static void InstallWindsurf(string basePath, bool isGlobal)
+    private static void InstallWindsurf(string basePath, bool isGlobal, ISet<string> written)
     {
         var path = isGlobal
             ? Path.Combine(basePath, ".codeium", "windsurf", "memories", "global_rules.md")
             : Path.Combine(basePath, ".windsurfrules");
-        WriteOrUpdateBlock(path, SkillText.Rules);
+        WriteOrUpdateBlock(path, written, SkillText.Rules);
     }
 
-    private static void InstallCline(string basePath, bool isGlobal)
+    private static void InstallCline(string basePath, bool isGlobal, ISet<string> written)
     {
         if (isGlobal)
         {
             var docs = Path.Combine(basePath, "Documents", "Cline", "Rules");
             var dir = Directory.Exists(docs) ? docs : Path.Combine(basePath, ".cline", "rules");
-            WriteFile(Path.Combine(dir, "csmesh.md"), SkillText.Rules);
+            WriteFile(Path.Combine(dir, "csmesh.md"), written, SkillText.Rules);
         }
         else
         {
             var clineDir = Path.Combine(basePath, ".clinerules");
             if (Directory.Exists(clineDir))
             {
-                WriteFile(Path.Combine(clineDir, "csmesh.md"), SkillText.Rules);
+                WriteFile(Path.Combine(clineDir, "csmesh.md"), written, SkillText.Rules);
             }
             else
             {
-                WriteOrUpdateBlock(clineDir, SkillText.Rules);
+                WriteOrUpdateBlock(clineDir, written, SkillText.Rules);
             }
         }
     }
 
-    private static void InstallCopilot(string basePath, bool isGlobal)
+    private static void InstallCopilot(string basePath, bool isGlobal, ISet<string> written)
     {
         if (isGlobal)
         {
             var copilotHome = Environment.GetEnvironmentVariable("COPILOT_HOME") ?? Path.Combine(basePath, ".copilot");
-            WriteOrUpdateBlock(Path.Combine(copilotHome, "copilot-instructions.md"), SkillText.Rules);
+            WriteOrUpdateBlock(Path.Combine(copilotHome, "copilot-instructions.md"), written, SkillText.Rules);
         }
         else
         {
-            WriteOrUpdateBlock(Path.Combine(basePath, ".github", "copilot-instructions.md"), SkillText.Rules);
+            WriteOrUpdateBlock(Path.Combine(basePath, ".github", "copilot-instructions.md"), written, SkillText.Rules);
         }
     }
 
-    private static void InstallKilocode(string basePath)
+    private static void InstallKilocode(string basePath, ISet<string> written)
     {
-        WriteFile(Path.Combine(basePath, ".kilocode", "rules", "csmesh.md"), SkillText.Rules);
+        WriteFile(Path.Combine(basePath, ".kilocode", "rules", "csmesh.md"), written, SkillText.Rules);
     }
 
-    private static void InstallMimo(string basePath, bool isGlobal)
+    private static void InstallMimo(string basePath, bool isGlobal, ISet<string> written)
     {
         if (isGlobal)
         {
-            WriteFile(Path.Combine(basePath, ".mimocode", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
-            WriteOrUpdateBlock(Path.Combine(basePath, ".mimo", "instructions.md"), SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".mimocode", "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
+            WriteOrUpdateBlock(Path.Combine(basePath, ".mimo", "instructions.md"), written, SkillText.Rules);
         }
         else
         {
-            WriteFile(Path.Combine(basePath, ".mimocode", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
-            WriteOrUpdateBlock(Path.Combine(basePath, "AGENTS.md"), SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".mimocode", "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
+            WriteOrUpdateBlock(Path.Combine(basePath, "AGENTS.md"), written, SkillText.Rules);
         }
     }
 
-    private static void InstallCodex(string basePath, bool isGlobal)
+    private static void InstallCodex(string basePath, bool isGlobal, ISet<string> written)
     {
         var path = isGlobal
             ? Path.Combine(Environment.GetEnvironmentVariable("CODEX_HOME") ?? Path.Combine(basePath, ".codex"), "AGENTS.md")
             : Path.Combine(basePath, "AGENTS.md");
-        WriteOrUpdateBlock(path, SkillText.Rules);
+        WriteOrUpdateBlock(path, written, SkillText.Rules);
     }
 
-    private static void InstallGemini(string basePath, bool isGlobal)
+    private static void InstallGemini(string basePath, bool isGlobal, ISet<string> written)
     {
         var path = isGlobal
             ? Path.Combine(basePath, ".gemini", "GEMINI.md")
             : Path.Combine(basePath, "GEMINI.md");
-        WriteOrUpdateBlock(path, SkillText.Rules);
+        WriteOrUpdateBlock(path, written, SkillText.Rules);
     }
 
     private const string OpencodeCommandContent = """
@@ -619,17 +625,17 @@ public static class SkillCommand
         $ARGUMENTS
         """;
 
-    private static void InstallOpencode(string basePath, bool isGlobal)
+    private static void InstallOpencode(string basePath, bool isGlobal, ISet<string> written)
     {
         if (isGlobal)
         {
             var configDir = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") ?? Path.Combine(basePath, ".config");
-            WriteOrUpdateBlock(Path.Combine(configDir, "opencode", "AGENTS.md"), SkillText.Rules);
-            WriteFile(Path.Combine(configDir, "opencode", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
-            WriteFile(Path.Combine(basePath, ".opencode", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
-            WriteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"), SkillText.Rules);
-            WriteFile(Path.Combine(configDir, "opencode", "commands", "csmesh.md"), OpencodeCommandContent);
-            WriteFile(Path.Combine(basePath, ".opencode", "commands", "csmesh.md"), OpencodeCommandContent);
+            WriteOrUpdateBlock(Path.Combine(configDir, "opencode", "AGENTS.md"), written, SkillText.Rules);
+            WriteFile(Path.Combine(configDir, "opencode", "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
+            WriteFile(Path.Combine(basePath, ".opencode", "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
+            WriteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"), written, SkillText.Rules);
+            WriteFile(Path.Combine(configDir, "opencode", "commands", "csmesh.md"), written, OpencodeCommandContent);
+            WriteFile(Path.Combine(basePath, ".opencode", "commands", "csmesh.md"), written, OpencodeCommandContent);
 
             var opencodeConfig = Path.Combine(configDir, "opencode", "opencode.json");
             AgentIntegration.RegisterOpencodeServer(opencodeConfig, repoRoot: null, out var outcome);
@@ -637,10 +643,10 @@ public static class SkillCommand
         }
         else
         {
-            WriteOrUpdateBlock(Path.Combine(basePath, "AGENTS.md"), SkillText.Rules);
-            WriteFile(Path.Combine(basePath, ".opencode", "skills", "csmesh", "SKILL.md"), SkillText.Markdown);
-            WriteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"), SkillText.Rules);
-            WriteFile(Path.Combine(basePath, ".opencode", "commands", "csmesh.md"), OpencodeCommandContent);
+            WriteOrUpdateBlock(Path.Combine(basePath, "AGENTS.md"), written, SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".opencode", "skills", "csmesh", "SKILL.md"), written, SkillText.Markdown);
+            WriteFile(Path.Combine(basePath, ".opencode", "rules", "csmesh.md"), written, SkillText.Rules);
+            WriteFile(Path.Combine(basePath, ".opencode", "commands", "csmesh.md"), written, OpencodeCommandContent);
 
             var opencodeConfig = Path.Combine(basePath, ".opencode", "opencode.json");
             AgentIntegration.RegisterOpencodeServer(opencodeConfig, repoRoot: basePath, out var outcome);
@@ -648,7 +654,19 @@ public static class SkillCommand
         }
     }
 
-    private static void WriteFile(string path, string content)
+    /// <summary>
+    /// Writes <paramref name="content"/> once per install. A path already written by an earlier
+    /// agent in the same run is skipped: the second writer would produce the same bytes (every
+    /// shared file carries <see cref="SkillText.Rules"/>), and the point of skipping is the line it
+    /// does not print and the rewrite it does not do.
+    /// </summary>
+    private static void WriteFile(string path, ISet<string> written, string content)
+    {
+        if (!written.Add(Path.GetFullPath(path))) return;
+        WriteFileCore(path, content);
+    }
+
+    private static void WriteFileCore(string path, string content)
     {
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir))
@@ -659,20 +677,43 @@ public static class SkillCommand
         Console.WriteLine($"wrote {path}");
     }
 
-    private static void WriteOrUpdateBlock(string filePath, string blockContent)
+    /// <summary>
+    /// The line ending the file already uses, so rewriting it does not convert its whole body. A
+    /// CRLF working tree on Windows turned into LF by the first install is a full-file diff no one
+    /// asked for.
+    /// </summary>
+    private static string NewlineOf(string text) =>
+        text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+
+    /// <summary>
+    /// Rewrites every line ending in <paramref name="text"/> to <paramref name="newline"/>. The body
+    /// of the block comes from <see cref="SkillText"/>, whose line endings follow the checkout, so
+    /// without this the wrapper and the body could disagree inside one file.
+    /// </summary>
+    private static string WithNewline(string text, string newline) =>
+        text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", newline);
+
+    private static void WriteOrUpdateBlock(string filePath, ISet<string> written, string blockContent)
     {
         const string startTag = SkillBlock.StartTag;
         const string endTag = SkillBlock.EndTag;
+
+        if (!written.Add(Path.GetFullPath(filePath))) return;
 
         var wrappedBlock = SkillBlock.Render(blockContent);
 
         if (!File.Exists(filePath))
         {
-            WriteFile(filePath, wrappedBlock + "\n");
+            // A new file keeps today's bytes: the rendered block verbatim plus one trailing newline.
+            // Its endings are the ones the checkout gives SkillText -- LF around the markers, and
+            // whatever the source uses inside the body -- because there is no file yet to read them
+            // from. A rewrite is the case that follows the target.
+            WriteFileCore(filePath, wrappedBlock + "\n");
             return;
         }
 
         var existing = File.ReadAllText(filePath);
+        var newline = NewlineOf(existing);
         var startIndex = existing.IndexOf(startTag, StringComparison.Ordinal);
         var endIndex = existing.IndexOf(endTag, StringComparison.Ordinal);
 
@@ -684,13 +725,13 @@ public static class SkillCommand
                 ? (string.IsNullOrEmpty(after) ? wrappedBlock : $"{wrappedBlock}\n\n{after}")
                 : (string.IsNullOrEmpty(after) ? $"{before}\n\n{wrappedBlock}" : $"{before}\n\n{wrappedBlock}\n\n{after}");
 
-            File.WriteAllText(filePath, updated + "\n");
+            File.WriteAllText(filePath, WithNewline(updated + "\n", newline));
             Console.WriteLine($"updated {filePath}");
         }
         else
         {
             var updated = existing.TrimEnd() + "\n\n" + wrappedBlock + "\n";
-            File.WriteAllText(filePath, updated);
+            File.WriteAllText(filePath, WithNewline(updated, newline));
             Console.WriteLine($"updated {filePath}");
         }
     }

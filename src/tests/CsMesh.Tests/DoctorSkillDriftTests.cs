@@ -80,6 +80,26 @@ public sealed class DoctorSkillDriftTests : IDisposable
             StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The drift line is read on a Windows console, where a non-ASCII glyph the code page lacks
+    /// renders as a control picture. Every other doctor line is ASCII, and this one names the same
+    /// remedy with the same ASCII arrow the rest of the output uses.
+    /// </summary>
+    [Fact]
+    public void TheDriftLineIsAscii()
+    {
+        File.WriteAllText(Path.Combine(_root, "AGENTS.md"), OldBudgetBlock());
+
+        var (exit, output) = RunDoctor("--no-telemetry");
+
+        Assert.Equal(Exit.Ok, exit);
+        var line = output
+            .Split('\n')
+            .Single(l => l.Contains("installed csmesh instructions differ", StringComparison.Ordinal));
+        Assert.All(line, c => Assert.True(c < 128, $"non-ASCII U+{(int)c:X4} in: {line}"));
+        Assert.Contains("-> csmesh install", line, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ABlockRewrittenWithCrlfIsNotReportedAsDrift()
     {
