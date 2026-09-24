@@ -97,18 +97,12 @@ them.
   prompt.
 - Their names, paths and symbol names never appear in anything tracked and
   are never printed in a report: placeholders and counts only.
-- Before the last commit, sweep every tracked file and every commit message
-  and author field of the series (`<base>..HEAD`) with a pattern built from
-  the private solutions' indexes: in-source short names that are compound
-  PascalCase (at least two capitalized words, `^I?[A-Z][a-z0-9]+[A-Z]`),
-  matched as whole identifier tokens. Subtract every name, or dotted
-  component of a name, that this repository declares when indexed with
-  `--all`, and every public type name or namespace component of an assembly
-  the private solution references, excluding that solution's own project
-  outputs. Add the literal list from `AGENTS.private.md` or the prompt.
-  Single-word names identify nothing and are left out. Hits must be zero:
-  any hit is a leak. Report the pattern size and the hit count, never the
-  pattern or any term, including assembly and project names.
+- Before the last commit, run `eng/private-name-sweep.ps1 -Base <series base>`.
+  It builds the pattern from the private solutions' indexes (roots and
+  literals from `AGENTS.private.md` or its parameters), sweeps every tracked
+  file and the series' commit messages and author fields, and exits zero only
+  when nothing hit. Report the pattern size and the hit count, never a term,
+  assembly or project name.
 - `--no-telemetry` on every csmesh invocation.
 
 ## Token economy
