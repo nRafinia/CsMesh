@@ -534,6 +534,7 @@ public static class HelpCommand
 
         OPTIONS:
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
+            --unranked         List every match in Node.Key order, with no ranking and no next hint
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -551,6 +552,10 @@ public static class HelpCommand
 
             The last line is the command to run next, already filled in.
 
+            --unranked drops the ranking and the next hint, and lists every match in the stable
+            Node.Key order instead. Use it when the ranked order is not the question -- diffing two
+            runs, or reading the full match set a ranked answer only samples.
+
             String literals, config values, TODOs and non-.cs files are not in the graph. Use grep
             for those.
 
@@ -560,6 +565,7 @@ public static class HelpCommand
         EXAMPLES:
             csmesh where discount
             csmesh where checkout refund --under src/Application
+            csmesh where discount --unranked
             csmesh find "POST /orders"
         """;
 

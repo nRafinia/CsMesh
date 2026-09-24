@@ -403,10 +403,11 @@ csmesh map --under src/Application --budget 400
 ```
 
 #### `csmesh where <term>` (alias: `find`)
-Finds the symbols a word belongs to, ranked by how many entrypoints reach them. Start here when the task is described in words rather than symbol names; the last line is the next command, already filled in.
+Finds the symbols a word belongs to, ranked by how many entrypoints reach them. Start here when the task is described in words rather than symbol names; the last line is the next command, already filled in. `--unranked` drops the ranking and the next hint and lists every match in stable `Node.Key` order, for diffing two runs or reading the full match set.
 ```bash
 csmesh where discount
 csmesh where checkout refund --under src/Application
+csmesh where discount --unranked
 csmesh find "POST /orders"
 ```
 

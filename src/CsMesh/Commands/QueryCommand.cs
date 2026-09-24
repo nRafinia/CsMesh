@@ -113,7 +113,7 @@ public static class QueryCommand
             }
 
             result.Query = string.Join(" ", opt.Positional);
-            exitCode = Queries.Where(graph, opt.Positional.ToArray(), under, writer, dirtySet);
+            exitCode = Queries.Where(graph, opt.Positional.ToArray(), under, writer, dirtySet, opt.Flag("unranked"));
         }
         else if (kind == "map")
         {
