@@ -286,14 +286,15 @@ public static class GraphStore
 
     /// <summary>
     /// A short identity of the reference set a base graph was compiled against: the indexer build,
-    /// the graph format, the shared framework, and the working tree's bin/ DLLs by name, size and
-    /// write time. The base cache is keyed on it because a base built by an older binary, or
-    /// against a bin/ that has since changed, would compile the same source against different
-    /// references -- unbound package types, dropped edges -- and review would report a false exit 5.
+    /// the graph format, the shared framework, the working tree's bin/ DLLs by name, size and write
+    /// time, and each in-scope project's obj/project.assets.json by path, size and write time. The
+    /// base cache is keyed on it because a base built by an older binary, or against references that
+    /// have since changed, would compile the same source against different references -- unbound
+    /// package types, dropped edges -- and review would report a false exit 5.
     ///
-    /// Cost is one walk and stat of the working tree's bin/ DLLs, tens of files, next to the full
-    /// index the base build already does; the write time is in the identity so a rebuilt DLL of the
-    /// same size still invalidates the cache.
+    /// Cost is one walk and stat of the working tree's bin/ DLLs and assets files, tens of files,
+    /// next to the full index the base build already does; the write time is in the identity so a
+    /// restored file of the same size still invalidates the cache.
     /// </summary>
     public static string ReferenceKeyFor(string root)
     {
@@ -311,6 +312,21 @@ public static class GraphStore
                 try { var info = new FileInfo(dll); size = info.Length; ticks = info.LastWriteTimeUtc.Ticks; }
                 catch { /* a stat was not available; the name still identifies it */ }
                 parts.Add($"{Path.GetFileName(dll)}|{size}|{ticks}");
+            }
+
+            // The assets files are the other reference input. A restore changes the package set the
+            // graph compiles against without touching bin/, so the same path, size and write time
+            // that stamp freshness belong in the cache identity too.
+            foreach (var directory in ProjectScope.Discover(root).LiveDirectories
+                         .OrderBy(p => p, StringComparer.Ordinal))
+            {
+                var assets = ProjectAssets.PathFor(directory);
+                if (!File.Exists(assets)) continue;
+
+                long size = 0, ticks = 0;
+                try { var info = new FileInfo(assets); size = info.Length; ticks = info.LastWriteTimeUtc.Ticks; }
+                catch { /* a stat was not available; the path still identifies it */ }
+                parts.Add($"{Path.GetRelativePath(root, assets).Replace('\\', '/')}|{size}|{ticks}");
             }
         }
 

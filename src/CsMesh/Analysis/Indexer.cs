@@ -575,6 +575,24 @@ public static partial class Indexer
             }
         }
 
+        // A project's package references come from its obj/project.assets.json, so a restore changes
+        // what the compilation binds against without moving a .cs file. Stamping the file puts it in
+        // the same freshness list as source; a change to it is what makes the next incremental pass
+        // decline and a full one run.
+        foreach (var directory in scope.LiveDirectories)
+        {
+            var assets = ProjectAssets.PathFor(directory);
+            if (!File.Exists(assets)) continue;
+
+            var assetsInfo = new FileInfo(assets);
+            stamps.Add(new FileStamp
+            {
+                Path = Path.GetRelativePath(root, assets),
+                Ticks = assetsInfo.LastWriteTimeUtc.Ticks,
+                Size = assetsInfo.Length
+            });
+        }
+
         // The repository root itself may gain a new source file without any tracked directory changing.
         if (!dirs.ContainsKey("."))
         {
@@ -787,6 +805,14 @@ public static partial class Indexer
             return project;
         }
     }
+
+    /// <summary>
+    /// Whether a freshness path is a project's <c>obj/project.assets.json</c>. A change to it moves
+    /// no .cs file, so no file can be rebound around it; the caller forces a full pass instead.
+    /// </summary>
+    internal static bool IsAssetsStamp(string relativePath) =>
+        relativePath.EndsWith("project.assets.json", StringComparison.OrdinalIgnoreCase) &&
+        relativePath.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The metadata references for one index: the shared framework and the repository's

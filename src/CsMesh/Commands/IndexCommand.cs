@@ -131,6 +131,14 @@ public static class IndexCommand
             return true;
         }
 
+        // An assets change moves no .cs file, so nothing can be rebound around it: the package set
+        // the whole graph was built against has changed, and only a full pass recomputes it.
+        if (dirty.Any(Indexer.IsAssetsStamp))
+        {
+            Dbg.Log("incremental skipped: a project.assets.json changed since the last index");
+            return false;
+        }
+
         var before = (Nodes: existing.Nodes.Count, Edges: existing.Edges.Count);
         var patched = Indexer.BuildIncremental(existing, dirty, message => Dbg.Log(message));
         if (patched == null) return false;
