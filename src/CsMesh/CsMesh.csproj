@@ -22,6 +22,8 @@
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>csharp;dotnet;roslyn;call-graph;code-analysis;agent;ai;static-analysis;cli;tool</PackageTags>
+    <!-- IL3000: Microsoft.CodeAnalysis.CommonCompiler.GetAssemblyLocation reads Assembly.Location.
+         IL2104: the single-warn trim summary for the Microsoft.CodeAnalysis assembly. -->
     <NoWarn>$(NoWarn);IL3000;IL2104</NoWarn>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
