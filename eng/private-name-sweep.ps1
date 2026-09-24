@@ -6,17 +6,19 @@
 .DESCRIPTION
     The pattern follows AGENTS.md:
 
-      * compound PascalCase type and interface names (at least two capitalized words) from the
-        private solutions' indexes, matched as whole identifier tokens;
+      * compound PascalCase short names (types, interfaces and members) from the private
+        solutions' indexes, matched as whole identifier tokens;
       * minus every name, or dotted component of a name, this repository declares when indexed
         with --all, every external type name the private solutions use, every package identifier
         they restore, and every public type or member name of the shared framework and of those
         packages, taken from the reference-pack and package XML documentation;
-      * plus the literal list from AGENTS.private.md or -Literal.
+      * plus the literal list from AGENTS.private.md or -Literal;
+      * minus the reviewed allow list in eng/private-name-sweep.allow.
 
-    Member names are not terms on their own: a private method or property named after a framework
-    or package member (SearchOption, AddAsync, ...) is a public name, and the subtraction above is
-    what separates those from a name that is actually the solution's own.
+    A private member named after a framework or package member (SearchOption, AddAsync, ...) is a
+    public name, and the reference-surface subtraction above is what separates those from a name
+    that is actually the solution's own. A name that survives that subtraction and is still wanted
+    goes in the allow list after review.
 
     Private roots and literals come from -PrivateRoot / -Literal or from AGENTS.private.md
     (lines "root: ..." and "literal: ..."; any other non-comment line is taken as a literal).
@@ -36,6 +38,10 @@
 
 .PARAMETER AgentsPrivate
     The private measurements file, relative to -Repo. Read when present.
+
+.PARAMETER AllowList
+    The reviewed allow list, one term per line. Defaults to eng/private-name-sweep.allow beside
+    this script.
 
 .PARAMETER PrivateRoot
     One or more private solution roots to index and draw names from.
@@ -57,6 +63,7 @@ param(
     [string]$AgentsPrivate = 'AGENTS.private.md',
     [string[]]$PrivateRoot = @(),
     [string[]]$Literal = @(),
+    [string]$AllowList = '',
     [switch]$NoIndex
 )
 
@@ -119,9 +126,6 @@ foreach ($root in $PrivateRoot) {
     if ($null -eq $graph) { continue }
 
     foreach ($node in @(Get-PropertyValue $graph 'nodes')) {
-        $kind = [string](Get-PropertyValue $node 'kind')
-        if ($kind -ne 'type' -and $kind -ne 'interface') { continue }
-
         foreach ($component in (Get-IdentifierComponents ([string](Get-PropertyValue $node 'short')))) {
             if ($compound.IsMatch($component)) { [void]$terms.Add($component) }
         }
@@ -212,6 +216,21 @@ if ($null -ne $repoGraph) {
 }
 
 foreach ($literal in $Literal) { [void]$terms.Add($literal) }
+
+# Reviewed allowances. A term lands here only after a person decided it is a generic convention
+# name, and every listed term already appears in a tracked file, so the file discloses nothing new.
+if ($AllowList.Length -eq 0) {
+    $allowDirectory = if ($PSScriptRoot) { $PSScriptRoot } else { Join-Path $Repo 'eng' }
+    $AllowList = Join-Path $allowDirectory 'private-name-sweep.allow'
+}
+if (Test-Path -LiteralPath $AllowList) {
+    foreach ($entry in (Get-Content -LiteralPath $AllowList)) {
+        $allowed = $entry.Trim()
+        if ($allowed.Length -eq 0 -or $allowed.StartsWith('#')) { continue }
+        [void]$declared.Add($allowed)
+    }
+}
+
 if ($declared.Count -gt 0) { $terms.ExceptWith($declared) }
 
 if ($terms.Count -eq 0) {
