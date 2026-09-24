@@ -815,6 +815,36 @@ public static partial class Indexer
         relativePath.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// The package references the tree supplies from <c>obj/project.assets.json</c> right now: the
+    /// distinct compile assets the in-scope projects resolve, how many in-scope projects are
+    /// unrestored, and how many are in scope. Doctor and the index warning report this instead of a
+    /// persisted count, so provenance is always the tree's current answer and nothing new is stored.
+    /// </summary>
+    internal static (int Assets, int Unrestored, int InScope) CountAssetsReferences(string root)
+    {
+        var scope = ProjectScope.Discover(root);
+        var assets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unrestored = 0;
+
+        foreach (var directory in scope.LiveDirectories)
+        {
+            var csproj = ProjectTfm.Single(directory);
+            var tfm = csproj is null ? null : ProjectTfm.Declared(csproj);
+
+            if (ProjectAssets.TryRead(directory, tfm, out var entry))
+            {
+                foreach (var file in entry.CompileFiles) assets.Add(file);
+            }
+            else
+            {
+                unrestored++;
+            }
+        }
+
+        return (assets.Count, unrestored, scope.LiveDirectories.Count);
+    }
+
+    /// <summary>
     /// The metadata references for one index: the shared framework and the repository's
     /// <c>bin/</c> assemblies read once, and the list each in-scope project compiles against.
     ///

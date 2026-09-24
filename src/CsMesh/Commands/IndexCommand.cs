@@ -210,10 +210,15 @@ public static class IndexCommand
                           $"against {graph.ReferenceCount} references{age}.");
 
         // Naming the build as the cause when bin/ already holds hundreds of assemblies is a wrong
-        // diagnosis stated with confidence, and it sent one investigation down the wrong path.
-        e.Line(graph.OutputReferences == 0
-            ? "         Nothing was loaded from bin/. Run 'dotnet build', then index again."
-            : "         Run 'csmesh doctor' for what the compiler said about them.");
+        // diagnosis stated with confidence, and it sent one investigation down the wrong path. The
+        // same is true now that packages come from the assets files: the fix is to restore, not to
+        // build, and neither message is honest until the tree has no package source at all.
+        var (assets, unrestored, _) = Indexer.CountAssetsReferences(graph.Root);
+        e.Line(assets == 0 && graph.OutputReferences == 0
+            ? "         Nothing was loaded from bin/ or project.assets.json. Run 'dotnet restore', then index again."
+            : unrestored > 0
+                ? $"         {unrestored} in-scope project(s) have no obj/project.assets.json; run 'dotnet restore', then index again."
+                : "         Run 'csmesh doctor' for what the compiler said about them.");
     }
 
     private static string Delta(int n) => n >= 0 ? $"+{n}" : n.ToString();
