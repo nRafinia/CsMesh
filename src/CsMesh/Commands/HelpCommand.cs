@@ -634,6 +634,10 @@ public static class HelpCommand
             reports why nothing enters or leaves it, including references that appear in source but
             never bound.
 
+            A selector whose name resolves but whose parameter list matches no overload is not
+            silence: the command lists the overloads that do exist, each with its selector, so one
+            can be pasted back. It still exits 1.
+
         EXIT CODES:
             0 when there was no silence to explain -- the path exists, or the symbol is connected.
             1 when the absence is real and explained.

@@ -129,7 +129,10 @@ public static class QueryCommand
                 return Exit.Usage;
             }
 
-            var origin = Single(graph, opt.Positional[0], projectFilter, writer, result, json, dirtySet, out var originExit);
+            // silence is the one command that, handed a selector naming no overload, lists the
+            // overloads that do exist so the caller can pick one.
+            var origin = Single(graph, opt.Positional[0], projectFilter, writer, result, json, dirtySet,
+                                out var originExit, overloadsWhenNoMatch: true);
             if (origin == null) return originExit;
 
             Models.Node? destination = null;
@@ -304,7 +307,8 @@ public static class QueryCommand
         QueryResult result,
         bool json,
         HashSet<string> dirty,
-        out int exitCode)
+        out int exitCode,
+        bool overloadsWhenNoMatch = false)
     {
         var selection = SymbolSelector.Analyze(graph, query);
         if (selection.Status == SymbolSelector.SelectorStatus.SyntaxError)
@@ -316,6 +320,14 @@ public static class QueryCommand
         var candidates = selection.Matches;
         if (candidates.Count == 0)
         {
+            if (overloadsWhenNoMatch && selection.Status == SymbolSelector.SelectorStatus.NoOverloadMatch)
+            {
+                Queries.Overloads(graph, selection.NamePart, selection.NameMatches, writer, dirty);
+                if (json) exitCode = EmitJson(result, writer, Exit.NotFound, null);
+                else { writer.Flush(); exitCode = Exit.NotFound; }
+                return null;
+            }
+
             exitCode = NotFound(graph, query, writer, result, json, dirty);
             return null;
         }

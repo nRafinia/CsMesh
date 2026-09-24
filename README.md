@@ -504,7 +504,7 @@ csmesh review --accept               # bless the current state as the new baseli
 ```
 
 #### `csmesh silence <symbol> [<target>]` (alias: `why-not`)
-Why a query came back empty. Exit `1` from any other command means the graph had nothing; it does not say whether the symbol was mistyped, lives in a package, was never bound because the solution was not built, or is reached only through a container scan. Those call for four different next actions.
+Why a query came back empty. Exit `1` from any other command means the graph had nothing; it does not say whether the symbol was mistyped, lives in a package, was never bound because the solution was not built, or is reached only through a container scan. Those call for four different next actions. Given a selector whose name resolves but whose parameter list matches no overload, it lists the overloads that exist, each with its selector, and still exits `1`.
 ```bash
 csmesh silence IPaymentGateway
 csmesh why-not OrderController.Post SqlOrderStore.Save
