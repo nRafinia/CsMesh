@@ -485,7 +485,7 @@ csmesh usage --tail 10 # Last 10 raw invocations
 ```
 
 #### `csmesh doctor`
-Diagnoses index freshness, dirty files, caller attribution, and agent skill configurations.
+Diagnoses index freshness, dirty files, caller attribution, and agent skill configurations. It warns when a project's compilation reports CS8795 — a source generator whose output is not on disk — naming the project, the count, and the `EmitCompilerGeneratedFiles=true` build that fixes it.
 ```bash
 csmesh doctor
 ```

@@ -79,8 +79,24 @@ public sealed class DoctorReport
     /// </summary>
     public List<string> StaleInstructions { get; set; } = [];
 
+    /// <summary>
+    /// Projects whose compilation reported CS8795, the signature of source-generator output that
+    /// never reached disk. A warning: the graph still answers, but every member the generator would
+    /// have declared is absent from it.
+    /// </summary>
+    public List<GeneratedOutputFinding> MissingGeneratedOutput { get; set; } = [];
+
     /// <summary>The report as a terminal would have shown it.</summary>
     public List<string> Text { get; set; } = [];
+}
+
+/// <summary>One project whose compilation reported CS8795, with how many times.</summary>
+public sealed class GeneratedOutputFinding
+{
+    /// <summary>The project file, relative to the repository root.</summary>
+    public string Project { get; set; } = string.Empty;
+
+    public int Count { get; set; }
 }
 
 /// <summary>

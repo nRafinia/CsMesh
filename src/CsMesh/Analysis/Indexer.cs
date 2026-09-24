@@ -716,6 +716,13 @@ public static partial class Indexer
     }
 
     /// <summary>
+    /// The declaration error a source generator that did not run leaves on a partial method.
+    /// <see cref="CaptureDiagnostics"/> keeps it even when the per-project cut would drop it, and
+    /// 'doctor' warns on it; sharing the id keeps the exemption and the warning from drifting apart.
+    /// </summary>
+    internal const string MissingGeneratorDiagnosticId = "CS8795";
+
+    /// <summary>
     /// What the compiler thinks is wrong, per project.
     ///
     /// The indexer treats diagnostics as advisory and indexes whatever binds, which is the right
@@ -729,6 +736,11 @@ public static partial class Indexer
     /// about one project's references, and a flat list mixed eight projects' errors into one pile.
     /// Each project keeps its own top eight by count; doctor decides how many to show.
     ///
+    /// The cut is on distinct ids, not occurrences, and CS8795 is exempt from it. CS8795 is a
+    /// generator that did not run, and it is often a single occurrence against a project whose real
+    /// errors repeat -- so a count-ordered top eight drops it exactly when it is the actionable
+    /// thing. It is kept unconditionally with its full count; every other id keeps the cut.
+    ///
     /// Declaration diagnostics only: method bodies produce thousands and none of them are about
     /// references.
     /// </summary>
@@ -738,11 +750,16 @@ public static partial class Indexer
         {
             try
             {
-                var interesting = compilation.GetDeclarationDiagnostics()
+                var groups = compilation.GetDeclarationDiagnostics()
                     .Where(d => d.Severity == DiagnosticSeverity.Error)
                     .GroupBy(d => d.Id)
+                    .ToList();
+
+                var interesting = groups
+                    .Where(g => g.Key != MissingGeneratorDiagnosticId)
                     .OrderByDescending(x => x.Count())
-                    .Take(8);
+                    .Take(8)
+                    .Concat(groups.Where(g => g.Key == MissingGeneratorDiagnosticId));
 
                 foreach (var group in interesting)
                 {

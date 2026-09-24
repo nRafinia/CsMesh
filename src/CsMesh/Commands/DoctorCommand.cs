@@ -183,6 +183,8 @@ public static class DoctorCommand
                 e.Line("  bindings from these are inferred, not named -- they carry a ?score in output.");
             }
 
+            MissingGeneratedOutputWarnings(root, graph, report, e);
+
             Quality(graph, e);
         }
 
@@ -233,6 +235,46 @@ public static class DoctorCommand
         }
 
         return Exit.Ok;
+    }
+
+    /// <summary>
+    /// CS8795 -- a partial method with accessibility modifiers and no implementation part -- is what
+    /// a source generator that never ran leaves behind. The indexer already captured each project's
+    /// declaration diagnostics into <see cref="Graph.Diagnostics"/> at index time, so doctor reads
+    /// that capture rather than compiling the projects itself: a second full bind for a fact the
+    /// index already holds is exactly the cost the index exists to avoid. The capture keeps a
+    /// project's top eight error ids by count, so CS8795 is reported when it makes that cut and
+    /// absent when it does not -- the same limit the "compiler said" list below already carries.
+    /// </summary>
+    private static void MissingGeneratedOutputWarnings(string root, Graph graph, DoctorReport report, Emit e)
+    {
+        foreach (var group in graph.Diagnostics
+                     .Where(d => d.Id == Indexer.MissingGeneratorDiagnosticId)
+                     .GroupBy(d => d.Project, StringComparer.Ordinal)
+                     .OrderBy(g => g.Key, StringComparer.Ordinal))
+        {
+            var project = ProjectFileFor(root, group.Key);
+            var count = group.Sum(d => d.Count);
+
+            report.MissingGeneratedOutput.Add(new GeneratedOutputFinding { Project = project, Count = count });
+            e.Line($"generators      {project}: {count} CS8795 -- source-generator output is not on disk; "
+                 + "set EmitCompilerGeneratedFiles=true in the project, then build");
+        }
+    }
+
+    /// <summary>
+    /// A compilation's project label is the project directory relative to the root, not the csproj.
+    /// Named to the file so the warning points at the csproj a reader has to edit; falls back to the
+    /// label when the directory holds no csproj, which is the only way it can be missing.
+    /// </summary>
+    private static string ProjectFileFor(string root, string label)
+    {
+        var directory = string.IsNullOrEmpty(label) || label == "." ? root : Path.Combine(root, label);
+        var csproj = Directory.Exists(directory) ? ProjectTfm.Single(directory) : null;
+
+        return csproj is null
+            ? (string.IsNullOrEmpty(label) ? "." : label)
+            : Path.GetRelativePath(root, csproj).Replace('\\', '/');
     }
 
     /// <summary>
