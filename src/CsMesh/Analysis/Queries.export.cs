@@ -111,8 +111,8 @@ public static partial class Queries
             if (!includedIds.Contains(e.From) || !includedIds.Contains(e.To)) { testEdges++; continue; }
             if (e.Kind == EdgeKind.TypeUse && !req.IncludeTypeUse) { typeUseEdges++; continue; }
 
-            // A node with no namespace of its own is not placed in a bucket; an edge that would land
-            // on one has nowhere to point.
+            // A node with no namespace of its own (a tuple-typed synthetic node, say) is not placed
+            // in a bucket at any level; an edge that lands on one has nowhere to point here.
             if (identityOf(g.ById(e.From)!) is not { } fromIdentity) continue;
             if (identityOf(g.ById(e.To)!) is not { } toIdentity) continue;
 
@@ -341,7 +341,7 @@ public static partial class Queries
         foreach (var edge in edges)
         {
             var arrow = IsDashed(edge) ? "-.->" : "-->";
-            var label = edge.Score < Edge.TrustThreshold ? $"|?{edge.Score:0.00}|" : "";
+            var label = EdgeLabel(edge);
             lines.Add($"  {ids[edge.FromIdentity]} {arrow}{label} {ids[edge.ToIdentity]}");
         }
 
@@ -361,7 +361,8 @@ public static partial class Queries
         {
             var attributes = new List<string>();
             if (IsDashed(edge)) attributes.Add("style=dashed");
-            if (edge.Score < Edge.TrustThreshold) attributes.Add($"label=\"?{edge.Score:0.00}\"");
+            var label = RawEdgeLabel(edge);
+            if (label.Length > 0) attributes.Add($"label=\"{label}\"");
             var suffix = attributes.Count == 0 ? "" : " [" + string.Join(", ", attributes) + "]";
             lines.Add($"  \"{EscapeDot(ids[edge.FromIdentity])}\" -> \"{EscapeDot(ids[edge.ToIdentity])}\"{suffix};");
         }
@@ -372,6 +373,38 @@ public static partial class Queries
 
     private static bool IsDashed(DrawnEdge edge) =>
         (edge.Role is { } role && (role & EdgeRole.Write) != 0) || edge.Score < Edge.TrustThreshold;
+
+    /// <summary>
+    /// A Call edge is the ordinary arrow and stays unlabelled; every other kind carries its short
+    /// name so parallel edges of different kinds are distinguishable (ADR 0004). A low-confidence
+    /// edge appends its score.
+    /// </summary>
+    private static string RawEdgeLabel(DrawnEdge edge)
+    {
+        var parts = new List<string>();
+        var kind = KindLabel(edge.Kind);
+        if (kind.Length > 0) parts.Add(kind);
+        if (edge.Score < Edge.TrustThreshold) parts.Add($"?{edge.Score:0.00}");
+        return string.Join(" ", parts);
+    }
+
+    private static string EdgeLabel(DrawnEdge edge)
+    {
+        var raw = RawEdgeLabel(edge);
+        return raw.Length == 0 ? "" : $"|{raw}|";
+    }
+
+    private static string KindLabel(EdgeKind kind) => kind switch
+    {
+        EdgeKind.Interface => "iface",
+        EdgeKind.Override => "override",
+        EdgeKind.Mediatr => "mediatr",
+        EdgeKind.DiBinding => "di",
+        EdgeKind.Construct => "construct",
+        EdgeKind.TypeUse => "typeuse",
+        EdgeKind.Route => "route",
+        _ => ""
+    };
 
     /// <summary>Mermaid label text: quoted by the caller, so only a quote needs its entity.</summary>
     internal static string EscapeMermaid(string text) => text.Replace("\"", "#quot;", StringComparison.Ordinal);

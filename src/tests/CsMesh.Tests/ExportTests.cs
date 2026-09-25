@@ -114,6 +114,33 @@ public sealed class ExportTests : IDisposable
     }
 
     [Fact]
+    public void A_node_with_no_namespace_lands_in_the_global_bucket_not_a_guessed_one()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes =
+            [
+                new Node { Id = 0, Name = "Real.Ns.T", Short = "T", Kind = "type", Project = "P", Key = "k0" },
+                new Node { Id = 1, Name = "Probe.Ns.X", Short = "x", Kind = "field", Project = "P", Key = "k1" }
+            ],
+            Edges = [new Edge { From = 1, To = 0, Kind = EdgeKind.TypeUse }]
+        };
+        graph.Freeze();
+
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, true));
+        var text = string.Join("\n", result.Lines);
+
+        // The field has no owning type, so its display-name prefix is not a namespace. It lands in
+        // the global bucket; "Probe.Ns" is a member of the type path, not a namespace.
+        Assert.Equal(2, result.Nodes);
+        Assert.Contains("[\"Real.Ns\"]", text);
+        Assert.Contains("[\"\"]", text);
+        Assert.DoesNotContain("Probe.Ns", text);
+    }
+
+    [Fact]
     public void Project_level_dot_renders_the_golden_text()
     {
         var graph = BuildAppReferencingLib();
@@ -226,8 +253,6 @@ public sealed class ExportTests : IDisposable
         Assert.Equal(1, result.TypeUseEdgesWithheld);
     }
 
-    // ------------------------------------------------------------------ namespace
-
     [Fact]
     public void A_namespace_bucket_comes_from_the_name_not_the_ownership_edge()
     {
@@ -252,29 +277,39 @@ public sealed class ExportTests : IDisposable
         Assert.Equal("Real.Ns", of(graph.Nodes[2]));
     }
 
+    // ------------------------------------------------------------------ edge kinds
+
     [Fact]
-    public void A_node_with_no_namespace_lands_in_the_global_bucket_not_a_guessed_one()
+    public void Non_call_edge_kinds_are_labelled()
     {
         var graph = new Graph
         {
             Root = "/tmp",
             Nodes =
             [
-                new Node { Id = 0, Name = "Real.Ns.T", Short = "T", Kind = "type", Project = "P", Key = "k0" },
-                new Node { Id = 1, Name = "Probe.Ns.X", Short = "x", Kind = "field", Project = "P", Key = "k1" }
+                new Node { Id = 0, Name = "P.A", Short = "A", Kind = "type", Project = "P", Key = "p|A|type" },
+                new Node { Id = 1, Name = "P.B", Short = "B", Kind = "type", Project = "P", Key = "p|B|type" }
             ],
-            Edges = [new Edge { From = 1, To = 0, Kind = EdgeKind.TypeUse }]
+            Edges = Enum.GetValues<EdgeKind>()
+                .Select(k => new Edge { From = 0, To = 1, Kind = k })
+                .ToList()
         };
         graph.Freeze();
 
-        var result = Queries.RenderExport(
-            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, true));
-        var text = string.Join("\n", result.Lines);
+        var mermaid = string.Join("\n", Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "project", null, 1, "both", false, true)).Lines);
+        var dot = string.Join("\n", Queries.RenderExport(
+            graph, new Queries.ExportRequest("dot", "project", null, 1, "both", false, true)).Lines);
 
-        Assert.Equal(2, result.Nodes);
-        Assert.Contains("[\"Real.Ns\"]", text);
-        Assert.Contains("[\"\"]", text);
-        Assert.DoesNotContain("Probe.Ns", text);
+        foreach (var label in new[] { "iface", "override", "mediatr", "di", "construct", "typeuse", "route" })
+        {
+            Assert.Contains($"|{label}|", mermaid);
+            Assert.Contains($"label=\"{label}\"", dot);
+        }
+
+        // A Call edge is the ordinary arrow and must not gain a kind label.
+        Assert.Contains("-->", mermaid);
+        Assert.DoesNotContain("|call|", mermaid);
     }
 
     // ------------------------------------------------------------------ neighbourhood
@@ -480,6 +515,13 @@ public sealed class ExportTests : IDisposable
         Assert.Contains("INCOMPLETE", text);
         Assert.Contains("--out", text);
         Assert.Contains("--level", text);
+    }
+
+    [Fact]
+    public void The_default_budget_is_the_one_the_docs_promise()
+    {
+        Assert.Equal(1500, ExportCommand.DefaultBudget);
+        Assert.Contains("default: 1500", HelpCommand.ExportHelp, StringComparison.Ordinal);
     }
 
     [Fact]
