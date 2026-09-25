@@ -43,6 +43,8 @@ public static partial class Queries
         int TestEdgesWithheld,
         int TypeUseEdgesWithheld,
         int InternalEdgesWithheld,
+        int SyntheticNodesWithheld,
+        int SyntheticEdgesWithheld,
         int NodesBeyondDepth,
         int EdgesBeyondDepth);
 
@@ -51,7 +53,8 @@ public static partial class Queries
     private readonly record struct DrawnEdge(string FromIdentity, string ToIdentity, EdgeKind Kind, EdgeRole? Role, double Score);
 
     /// <summary>The raw counts of everything the diagram's filters removed.</summary>
-    private readonly record struct Withheld(int TestNodes, int TestEdges, int TypeUseEdges, int InternalEdges);
+    private readonly record struct Withheld(
+        int TestNodes, int TestEdges, int TypeUseEdges, int InternalEdges, int SyntheticNodes, int SyntheticEdges);
 
     /// <summary>A level's filtered graph plus what a depth limit left out of it.</summary>
     private readonly record struct LevelResult(
@@ -77,7 +80,8 @@ public static partial class Queries
 
         return new ExportResult(lines, level.Nodes.Count, level.Edges.Count,
             level.Withheld.TestNodes, level.Withheld.TestEdges, level.Withheld.TypeUseEdges,
-            level.Withheld.InternalEdges, level.BeyondNodes, level.BeyondEdges);
+            level.Withheld.InternalEdges, level.Withheld.SyntheticNodes, level.Withheld.SyntheticEdges,
+            level.BeyondNodes, level.BeyondEdges);
     }
 
     private static string PrefixFor(string level) => level switch
@@ -98,25 +102,34 @@ public static partial class Queries
     {
         var includedIds = new HashSet<int>();
         var testNodes = 0;
+        var syntheticNodes = 0;
 
         foreach (var n in g.Nodes)
         {
             if (!req.IncludeTests && IsWithheld(n, testProjects)) { testNodes++; continue; }
+            if (IsSynthetic(n)) { syntheticNodes++; continue; }
             includedIds.Add(n.Id);
         }
 
         var testEdges = 0;
         var typeUseEdges = 0;
         var internalEdges = 0;
+        var syntheticEdges = 0;
         var collapsed = new Dictionary<(string From, string To, EdgeKind Kind), (EdgeRole? Role, double Score)>();
 
         foreach (var e in g.Edges)
         {
-            if (!includedIds.Contains(e.From) || !includedIds.Contains(e.To)) { testEdges++; continue; }
+            if (!includedIds.Contains(e.From) || !includedIds.Contains(e.To))
+            {
+                if (IsSynthetic(g.ById(e.From)!) || IsSynthetic(g.ById(e.To)!)) syntheticEdges++;
+                else testEdges++;
+                continue;
+            }
+
             if (e.Kind == EdgeKind.TypeUse && !req.IncludeTypeUse) { typeUseEdges++; continue; }
 
-            // A node with no namespace of its own (a tuple-typed synthetic node, say) is not placed
-            // in a bucket at any level; an edge that lands on one has nowhere to point here.
+            // A node with no namespace of its own is not placed in a bucket at any level; an edge
+            // that lands on one has nowhere to point here.
             if (identityOf(g.ById(e.From)!) is not { } fromIdentity) continue;
             if (identityOf(g.ById(e.To)!) is not { } toIdentity) continue;
 
@@ -147,7 +160,8 @@ public static partial class Queries
             .Select(x => new DrawnEdge(x.Key.From, x.Key.To, x.Key.Kind, x.Value.Role, x.Value.Score))
             .ToList();
 
-        return new LevelResult(nodes, edges, new Withheld(testNodes, testEdges, typeUseEdges, internalEdges), 0, 0);
+        return new LevelResult(nodes, edges,
+            new Withheld(testNodes, testEdges, typeUseEdges, internalEdges, syntheticNodes, syntheticEdges), 0, 0);
     }
 
     /// <summary>
@@ -165,20 +179,29 @@ public static partial class Queries
 
         var includedIds = new HashSet<int>();
         var testNodes = 0;
+        var syntheticNodes = 0;
 
         foreach (var n in g.Nodes)
         {
             if (!req.IncludeTests && IsWithheld(n, testProjects)) { testNodes++; continue; }
+            if (IsSynthetic(n)) { syntheticNodes++; continue; }
             includedIds.Add(n.Id);
         }
 
         var testEdges = 0;
         var typeUseEdges = 0;
+        var syntheticEdges = 0;
         var traversed = new Dictionary<(int From, int To, EdgeKind Kind), (EdgeRole? Role, double Score)>();
 
         foreach (var e in g.Edges)
         {
-            if (!includedIds.Contains(e.From) || !includedIds.Contains(e.To)) { testEdges++; continue; }
+            if (!includedIds.Contains(e.From) || !includedIds.Contains(e.To))
+            {
+                if (IsSynthetic(g.ById(e.From)!) || IsSynthetic(g.ById(e.To)!)) syntheticEdges++;
+                else testEdges++;
+                continue;
+            }
+
             if (e.Kind == EdgeKind.TypeUse && !req.IncludeTypeUse) { typeUseEdges++; continue; }
         }
 
@@ -252,7 +275,8 @@ public static partial class Queries
             .ThenBy(x => x.Kind)
             .ToList();
 
-        return new LevelResult(nodes, drawn, new Withheld(testNodes, testEdges, typeUseEdges, 0), beyond.Count, beyondEdges);
+        return new LevelResult(nodes, drawn,
+            new Withheld(testNodes, testEdges, typeUseEdges, 0, syntheticNodes, syntheticEdges), beyond.Count, beyondEdges);
     }
 
     /// <summary>
@@ -283,6 +307,21 @@ public static partial class Queries
     /// </summary>
     private static bool IsWithheld(Node n, HashSet<string> testProjects) =>
         IsTest(n) || (n.Project.Length > 0 && testProjects.Contains(n.Project));
+
+    /// <summary>
+    /// Whether a node is synthetic: the compiler-generated tuple or anonymous type a name refers to,
+    /// or a member of one, whose display name is a tuple type (<c>(int a, int b)</c>) or an anonymous
+    /// type (<c>&lt;anonymous type: ...&gt;</c>).
+    ///
+    /// The graph records no <c>IsTupleType</c>/<c>IsAnonymousType</c> flag, no synthetic tag and no
+    /// dedicated file marker for these: the only signal is the node's own display name (and the key,
+    /// which embeds the same text). So the rule reads that text. A real declaration's name can
+    /// neither begin with <c>(</c> nor contain <c>&lt;anonymous</c>, so the test does not catch a
+    /// generic type or member, whose name is a valid qualified identifier around <c>&lt;...&gt;</c>.
+    /// </summary>
+    internal static bool IsSynthetic(Node n) =>
+        n.Name.Contains("<anonymous", StringComparison.Ordinal) ||
+        n.Name.StartsWith("(", StringComparison.Ordinal);
 
     private static HashSet<string> TestProjectPaths(Graph g)
     {

@@ -150,7 +150,8 @@ public sealed class ExportTests : IDisposable
             Nodes =
             [
                 new Node { Id = 0, Name = "A.T", Short = "T", Kind = "type", Project = "", Key = "k0" },
-                new Node { Id = 1, Name = "(int a, int b)", Short = "b", Kind = "field", Project = "", Key = "k1" }
+                // A real type in the global namespace, not a synthetic one.
+                new Node { Id = 1, Name = "GlobalThing", Short = "GlobalThing", Kind = "type", Project = "", Key = "k1" }
             ]
         };
         graph.Freeze();
@@ -471,6 +472,77 @@ public sealed class ExportTests : IDisposable
         Assert.Equal(Exit.Ambiguous, exit);
     }
 
+    // ------------------------------------------------------------------ synthetic
+
+    [Fact]
+    public void Synthetic_tuple_and_anonymous_nodes_are_withheld()
+    {
+        Write("Fixture.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" +
+            "<ImplicitUsings>enable</ImplicitUsings><Nullable>disable</Nullable></PropertyGroup></Project>");
+        Write("Code.cs", """
+            public class GlobalThing
+            {
+                public int Value() => 1;
+            }
+
+            namespace Real.Ns
+            {
+                public class Holder
+                {
+                    public (int a, int b) Pair = (1, 2);
+
+                    public int Sum() => Pair.a + Pair.b;
+
+                    public object Make() => new { Id = 1, Name = "x" };
+
+                    public string Describe() => Make().ToString();
+                }
+            }
+            """);
+
+        var graph = Indexer.Build(_root);
+        graph.Freeze();
+
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, false));
+        var text = string.Join("\n", result.Lines);
+
+        Assert.True(result.SyntheticNodesWithheld >= 1, "the anonymous type must contribute a node");
+        Assert.DoesNotContain("<anonymous", text);
+        // A real global-namespace type keeps the global bucket alive.
+        Assert.Contains("(global)", text);
+    }
+
+    [Fact]
+    public void Withholding_synthetic_nodes_empties_the_no_project_bucket()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes =
+            [
+                // A synthetic node has no project and no namespace.
+                new Node { Id = 0, Name = "(int a, int b).Item1", Short = "Item1", Kind = "field", Project = "", Key = "k0" },
+                // A real type in the global namespace, owned by project P.
+                new Node { Id = 1, Name = "GlobalThing", Short = "GlobalThing", Kind = "type", Project = "P", Key = "k1" }
+            ]
+        };
+        graph.Freeze();
+
+        var project = string.Join("\n", Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "project", null, 1, "both", false, false)).Lines);
+        var ns = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, false));
+        var nsText = string.Join("\n", ns.Lines);
+
+        Assert.Equal(1, ns.SyntheticNodesWithheld);
+        Assert.DoesNotContain("(no project)", project);
+        // The real global-namespace type keeps the global bucket; the synthetic node is gone.
+        Assert.Contains("(global)", nsText);
+        Assert.DoesNotContain("(int a, int b)", nsText);
+    }
+
     // ------------------------------------------------------------------ external validation
 
     private IEnumerable<(string Level, string Format, IReadOnlyList<string> Lines)> FixtureRenders()
@@ -680,7 +752,7 @@ public sealed class ExportTests : IDisposable
     public void Overflow_exits_two_and_names_both_remedies()
     {
         var lines = Enumerable.Range(0, 80).Select(i => $"  p{i} --> q{i}").ToList();
-        var result = new Queries.ExportResult(lines, 80, 80, 0, 0, 0, 0, 0, 0);
+        var result = new Queries.ExportResult(lines, 80, 80, 0, 0, 0, 0, 0, 0, 0, 0);
 
         var exit = ExportCommand.Write(result, budget: 200, level: "project", out var writer);
         var text = string.Join("\n", writer.Lines);
