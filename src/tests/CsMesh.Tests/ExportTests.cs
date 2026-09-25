@@ -619,10 +619,44 @@ public sealed class ExportTests : IDisposable
         var outside = Path.Combine(Directory.GetParent(_root)!.FullName, name);
 
         var (exit, _) = Capture(() => ExportCommand.Execute(_root,
-            new Options(["--out", "..\\" + name])));
+            new Options(["--out", Path.Combine("..", name)])));
 
         Assert.Equal(Exit.Usage, exit);
         Assert.False(File.Exists(outside));
+    }
+
+    [Fact]
+    public void Out_cannot_escape_the_repository_root_to_an_absolute_path()
+    {
+        BuildAppReferencingLib();
+        var name = "csmesh-escaped-" + Guid.NewGuid().ToString("N")[..8] + ".mmd";
+        var outside = Path.Combine(Path.GetTempPath(), name);
+
+        var (exit, _) = Capture(() => ExportCommand.Execute(_root,
+            new Options(["--out", outside])));
+
+        Assert.Equal(Exit.Usage, exit);
+        Assert.False(File.Exists(outside));
+    }
+
+    [Fact]
+    public void Out_cannot_write_into_a_sibling_whose_name_starts_with_the_root_name()
+    {
+        BuildAppReferencingLib();
+        var sibling = _root + "2";
+        Directory.CreateDirectory(sibling);
+        try
+        {
+            var (exit, _) = Capture(() => ExportCommand.Execute(_root,
+                new Options(["--out", Path.Combine(sibling, "x.mmd")])));
+
+            Assert.Equal(Exit.Usage, exit);
+            Assert.False(File.Exists(Path.Combine(sibling, "x.mmd")));
+        }
+        finally
+        {
+            try { Directory.Delete(sibling, recursive: true); } catch { /* temp dir */ }
+        }
     }
 
     [Fact]
