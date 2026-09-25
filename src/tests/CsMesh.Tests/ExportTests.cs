@@ -136,8 +136,39 @@ public sealed class ExportTests : IDisposable
         // the global bucket; "Probe.Ns" is a member of the type path, not a namespace.
         Assert.Equal(2, result.Nodes);
         Assert.Contains("[\"Real.Ns\"]", text);
-        Assert.Contains("[\"\"]", text);
+        Assert.Contains("[\"(global)\"]", text);
         Assert.DoesNotContain("Probe.Ns", text);
+        Assert.DoesNotContain("[\"\"]", text);
+    }
+
+    [Fact]
+    public void The_empty_bucket_is_named_in_both_formats()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes =
+            [
+                new Node { Id = 0, Name = "A.T", Short = "T", Kind = "type", Project = "", Key = "k0" },
+                new Node { Id = 1, Name = "(int a, int b)", Short = "b", Kind = "field", Project = "", Key = "k1" }
+            ]
+        };
+        graph.Freeze();
+
+        var projectMermaid = string.Join("\n", Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "project", null, 1, "both", false, false)).Lines);
+        var projectDot = string.Join("\n", Queries.RenderExport(
+            graph, new Queries.ExportRequest("dot", "project", null, 1, "both", false, false)).Lines);
+        var namespaceMermaid = string.Join("\n", Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, false)).Lines);
+        var namespaceDot = string.Join("\n", Queries.RenderExport(
+            graph, new Queries.ExportRequest("dot", "namespace", null, 1, "both", false, false)).Lines);
+
+        Assert.Contains("[\"(no project)\"]", projectMermaid);
+        Assert.Contains("label=\"(no project)\"", projectDot);
+        Assert.Contains("[\"(global)\"]", namespaceMermaid);
+        Assert.Contains("label=\"(global)\"", namespaceDot);
+        Assert.DoesNotContain("[\"\"]", projectMermaid + namespaceMermaid);
     }
 
     [Fact]

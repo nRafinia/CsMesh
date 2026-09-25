@@ -129,7 +129,7 @@ public static partial class Queries
             .Select(x => x!)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(x => x, StringComparer.Ordinal)
-            .Select(x => new Bucket(x, x))
+            .Select(x => new Bucket(x, x.Length > 0 ? x : EmptyLabel(req.Level)))
             .ToList();
 
         var edges = collapsed
@@ -258,6 +258,13 @@ public static partial class Queries
     }
 
     private static string ProjectOf(Node n) => n.Project;
+
+    /// <summary>
+    /// The label for the bucket that holds nodes with no project or no namespace. It is a named
+    /// bucket, not an empty string: Mermaid cannot parse a node whose label is <c>""</c>, and an
+    /// empty label says nothing about what the bucket means.
+    /// </summary>
+    private static string EmptyLabel(string level) => level == "project" ? "(no project)" : "(global)";
 
     /// <summary>
     /// The namespace bucket a node belongs to, derived from names alone rather than from a graph
