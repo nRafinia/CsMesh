@@ -42,6 +42,8 @@ them.
 - A commit on your branch that you did not make: report its hash and files
   under deviations. Do not drop, squash or rebase it away.
 - `.csmesh/` is never committed.
+- Uncommitted changes you did not make: report the file and `git diff --stat`, then stop.
+  Never restore, stash or discard them
 
 ## Code
 
