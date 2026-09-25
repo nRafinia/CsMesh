@@ -1,3 +1,6 @@
+using System.Text.Json;
+using CsMesh.Common;
+using CsMesh.Models;
 using CsMesh.Telemetry;
 using TelemetryApi = CsMesh.Telemetry.Telemetry;
 using Xunit;
@@ -59,5 +62,39 @@ public sealed class TelemetrySchemaTests : IDisposable
         Assert.Single(list);
         Assert.Equal(Invocation.LegacySchemaVersion, list[0].SchemaVersion);
         Assert.Equal("2020-01-01T00:00:00Z", list[0].Ts);
+    }
+
+    [Fact]
+    public void A_pascal_case_line_binds_case_insensitively()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".csmesh"));
+        File.WriteAllText(TelemetryApi.LogPath(_root),
+            "{\"Ts\":\"2024-05-05T00:00:00Z\",\"Cmd\":\"impl\",\"Caller\":\"human\"}");
+
+        var list = TelemetryApi.Read(_root);
+
+        // Case-insensitive matching reconciles the casing of a name, and nothing else: a single-word
+        // PascalCase key binds to its snake_case field. An old multi-word key (OutTokens,
+        // CallerVia) differs by underscore, not case, and is left at its default -- the old release
+        // did not write those under snake_case, and no alias is kept.
+        Assert.Single(list);
+        Assert.Equal("2024-05-05T00:00:00Z", list[0].Ts);
+        Assert.Equal("impl", list[0].Cmd);
+        Assert.Equal("human", list[0].Caller);
+    }
+
+    [Fact]
+    public void Pascal_case_graph_keys_are_ignored_as_before()
+    {
+        // The loosened read is telemetry-scoped; the graph context keeps case-sensitive snake_case,
+        // so a graph written with PascalCase keys binds nothing.
+        var graph = JsonSerializer.Deserialize(
+            "{\"FormatVersion\":99,\"Nodes\":[{\"Id\":0,\"Key\":\"x\"}],\"Edges\":[]}",
+            AppJsonContext.Default.Graph);
+
+        Assert.NotNull(graph);
+        Assert.Empty(graph!.Nodes);
+        Assert.Empty(graph.Edges);
+        Assert.Equal(Graph.CurrentFormatVersion, graph.FormatVersion);
     }
 }
