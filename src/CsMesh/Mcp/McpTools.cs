@@ -101,6 +101,12 @@ public static class McpTools
             + "separated. The first call in an unfamiliar repository.",
             null, Depth: false),
 
+        new("export", "export",
+            "Render the graph as a Mermaid or DOT diagram: the project graph, the namespace graph, or "
+            + "the neighbourhood around one symbol. A large render goes to 'out' (inside the "
+            + "repository) and only a summary is returned.",
+            "symbol"),
+
         new("doctor", "doctor",
             "Health of the index itself: whether one exists, whether it is behind the working tree, "
             + "whether it was built by this version, and how well references resolved. Run this "
@@ -132,8 +138,10 @@ public static class McpTools
 
                 // Only the tools that cannot answer anything without a subject demand one.
                 // entrypoints, unresolved, index and review all have a meaningful bare form --
-                // review's bare form is the merge base with the default branch.
-                if (tool.Kind is not ("entrypoints" or "unresolved" or "review")) schema.Required = [tool.Argument];
+                // review's bare form is the merge base with the default branch, and export's is
+                // the project level, which takes no symbol at all.
+                if (tool.Kind is not ("entrypoints" or "unresolved" or "review" or "export"))
+                    schema.Required = [tool.Argument];
             }
 
             if (tool.SecondArgument != null)
@@ -173,6 +181,30 @@ public static class McpTools
                         Type = "string",
                         Description = "Pick one project when a name repeats across assemblies, e.g. src/Payments. Shown in ambiguous output. Two overloads in one project cannot be separated this way; pass the parameter list in 'symbol' instead."
                     };
+
+                    if (tool.Kind == "export")
+                    {
+                        schema.Properties["format"] = new JsonSchemaProperty
+                        {
+                            Type = "string",
+                            Description = "mermaid (default) or dot."
+                        };
+                        schema.Properties["level"] = new JsonSchemaProperty
+                        {
+                            Type = "string",
+                            Description = "project (default), namespace, or neighbourhood (implied by 'symbol')."
+                        };
+                        schema.Properties["direction"] = new JsonSchemaProperty
+                        {
+                            Type = "string",
+                            Description = "in, out, or both (default). Neighbourhood only."
+                        };
+                        schema.Properties["out"] = new JsonSchemaProperty
+                        {
+                            Type = "string",
+                            Description = "Write the whole render to this file, under the repository root; only the summary is returned."
+                        };
+                    }
                 }
             }
 
@@ -276,6 +308,10 @@ public static class McpTools
 
         if (Text(arguments, "under") is { Length: > 0 } under) argv.AddRange(["--under", under]);
         if (Text(arguments, "project") is { Length: > 0 } project) argv.AddRange(["--project", project]);
+        if (Text(arguments, "format") is { Length: > 0 } format) argv.AddRange(["--format", format]);
+        if (Text(arguments, "level") is { Length: > 0 } level) argv.AddRange(["--level", level]);
+        if (Text(arguments, "direction") is { Length: > 0 } direction) argv.AddRange(["--direction", direction]);
+        if (Text(arguments, "out") is { Length: > 0 } outPath) argv.AddRange(["--out", outPath]);
         if (Boolean(arguments, "full")) argv.Add("--full");
         if (Boolean(arguments, "writes")) argv.Add("--writes");
 
@@ -297,6 +333,7 @@ public static class McpTools
                 // does not participate in QueryCommand's --heal/auto-index path, so this call
                 // never triggers a second index of the same tree.
                 "review" => ReviewCommand.Execute(effectiveRoot, opt),
+                "export" => ExportCommand.Execute(effectiveRoot, opt),
                 _ => QueryCommand.Execute(effectiveRoot, opt, tool.Kind)
             };
         }

@@ -588,6 +588,13 @@ const commands = [
   "  StripeGateway  [class, di:scoped]  Infra/StripeGateway.cs:12",
   "  SandboxGateway  [class]  Infra/SandboxGateway.cs:9",
   "  FakePaymentGateway  [class]  Tests/Fakes/FakePaymentGateway.cs:7"]},
+ {label:"export", line:"csmesh export --level namespace --format mermaid", exit:"exit 0",
+  desc:"Renders the project, namespace or symbol-neighbourhood graph as Mermaid or DOT. Node ids are hashed from stable identity, so an unrelated change does not renumber the diagram. --out writes the whole render to a file inside the repository and returns only a summary.",
+  out:[
+  "flowchart LR",
+  "  ns1a2b3c4d[\"Acme.Domain\"]",
+  "  ns5e6f7a8b[\"Acme.Infrastructure\"]",
+  "  ns1a2b3c4d --> ns5e6f7a8b"]},
  {label:"impl", line:"csmesh impl IPaymentGateway --budget 600", exit:"exit 0",
   desc:"Lists every implementation of an interface, with the container-registered one ranked first and tagged by lifetime.",
   out:[

@@ -350,14 +350,14 @@ csmesh entrypoints orders
 | `--under <PATH>` | Restrict the answer to a subtree, e.g. `--under src/Api`. Narrow before raising the budget. |
 | `--project <PATH>` | Pick one project when a name repeats across assemblies, e.g. `--project src/Api`. Exit `3` lists each candidate's project. Two overloads in one project need the parameter list instead, e.g. `Type.Member(int, string)`. |
 | `--budget <N>` | Hard token limit for stdout. Exits code `2` on overflow. Defaults per command below. |
-| `--depth <N>` | Traversal depth limit (`trace` 6, `blast-radius` 3, `context` 3, `path` 12, `diff` 3) |
+| `--depth <N>` | Traversal depth limit (`trace` 6, `blast-radius` 3, `context` 3, `path` 12, `diff` 3, `export` neighbourhood 1) |
 | `--heal` | Re-bind changed files before answering, instead of marking rows `[STALE]` |
 | `--json` | Output results in structured JSON format |
 | `--debug` | Print verbose diagnostics to stderr |
 | `--no-telemetry` | Skip recording the invocation in local usage metrics |
 | `-h, --help` | Display command help and usage examples |
 
-Default budgets: `impl` 600, `path` 500, `where`/`trace` 600, `unresolved` 700, `silence` 300, `entrypoints` 800, `map` 850, `context` 900, everything else 800.
+Default budgets: `impl` 600, `path` 500, `where`/`trace` 600, `unresolved` 700, `silence` 300, `entrypoints` 800, `map` 850, `context` 900, `export` 1500, everything else 800.
 
 ---
 
@@ -369,6 +369,16 @@ Where the weight is: which projects lean on which, where the entrypoints cluster
 csmesh map
 csmesh map --under src/Application --budget 400
 ```
+
+#### `csmesh export [<symbol>]`
+Renders the graph as a **Mermaid** or **DOT** diagram: the project graph (default), the namespace graph (`--level namespace`), or the neighbourhood around a symbol (`--depth`, `--direction in|out|both`). The symbol is resolved exactly as `trace` resolves it, overload selector included. Test-tagged nodes and `TypeUse` edges are withheld by default and named in the counts. Node ids are the first 8 hex digits of SHA-256 of each node's stable identity, so a diagram committed to a design doc does not renumber when an unrelated symbol is added.
+```bash
+csmesh export
+csmesh export --level namespace --format dot
+csmesh export OrderService.Process --depth 2 --direction out
+csmesh export --level namespace --out docs/deps.mmd
+```
+Without `--out` the render goes to stdout under the budget: overflow exits `2` and names both remedies (`--out`, a coarser `--level`). With `--out` the whole render is written by temp file and rename, and stdout carries only a budgeted summary (path, format, level, node/edge counts, withheld counts). The path must stay inside the repository root and under an existing directory — otherwise exit `64`; a write failure is exit `70`.
 
 #### `csmesh where <term>` (alias: `find`)
 Finds the symbols a word belongs to, ranked by how many entrypoints reach them. Start here when the task is described in words rather than symbol names; the last line is the next command, already filled in. `--unranked` drops the ranking and the next hint and lists every match in stable `Node.Key` order, for diffing two runs or reading the full match set.

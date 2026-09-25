@@ -370,6 +370,37 @@ public sealed class ExportTests : IDisposable
         Assert.Equal(Exit.Ambiguous, exit);
     }
 
+    // ------------------------------------------------------------------ external validation
+
+    [RequiresGraphviz]
+    public void Graphviz_accepts_the_dot_render()
+    {
+        var graph = BuildAppReferencingLib();
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("dot", "project", null, 1, "both", false, false));
+
+        var input = Path.Combine(_root, "project.dot");
+        var output = Path.Combine(_root, "project.svg");
+        File.WriteAllLines(input, result.Lines);
+
+        Assert.True(ExternalTool.TryRun("dot", $"-Tsvg \"{input}\" -o \"{output}\"", out var log), log);
+        Assert.True(File.Exists(output));
+    }
+
+    [RequiresMermaidCli]
+    public void Mermaid_cli_accepts_the_mermaid_render()
+    {
+        var graph = BuildAppReferencingLib();
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "project", null, 1, "both", false, false));
+
+        var input = Path.Combine(_root, "project.mmd");
+        var output = Path.Combine(_root, "project.svg");
+        File.WriteAllLines(input, result.Lines);
+
+        Assert.True(ExternalTool.TryRun("mmdc", $"-i \"{input}\" -o \"{output}\"", out var log), log);
+    }
+
     // ------------------------------------------------------------------ --out
 
     [Fact]

@@ -21,7 +21,7 @@ public static class UsageCommand
 
     private static readonly string[] QueryCommands =
     {
-        "map", "trace", "impl", "blast-radius", "entrypoints", "context",
+        "map", "export", "trace", "impl", "blast-radius", "entrypoints", "context",
         "path", "cycles", "unresolved", "diff", "changes", "silence"
     };
 
