@@ -59,11 +59,13 @@ public static partial class Queries
 
     public static ExportResult RenderExport(Graph g, ExportRequest req)
     {
+        var testProjects = TestProjectPaths(g);
+
         LevelResult level = req.Level switch
         {
-            "project" => Collapse(g, req, ProjectOf),
-            "namespace" => Collapse(g, req, NamespaceResolver(g)),
-            "neighbourhood" => Neighbourhood(g, req),
+            "project" => Collapse(g, req, ProjectOf, testProjects),
+            "namespace" => Collapse(g, req, NamespaceResolver(g), testProjects),
+            "neighbourhood" => Neighbourhood(g, req, testProjects),
             _ => throw new ArgumentOutOfRangeException(nameof(req), req.Level)
         };
 
@@ -92,14 +94,14 @@ public static partial class Queries
     /// are included, and distinct (from, to, kind) triples become one drawn edge; a self-edge counts
     /// once, as the ADR measures it.
     /// </summary>
-    private static LevelResult Collapse(Graph g, ExportRequest req, Func<Node, string?> identityOf)
+    private static LevelResult Collapse(Graph g, ExportRequest req, Func<Node, string?> identityOf, HashSet<string> testProjects)
     {
         var includedIds = new HashSet<int>();
         var testNodes = 0;
 
         foreach (var n in g.Nodes)
         {
-            if (!req.IncludeTests && IsTest(n)) { testNodes++; continue; }
+            if (!req.IncludeTests && IsWithheld(n, testProjects)) { testNodes++; continue; }
             includedIds.Add(n.Id);
         }
 
@@ -157,7 +159,7 @@ public static partial class Queries
     /// <c>--out</c> summary reports. The walk itself is bounded by the visited set, so a cycle
     /// terminates.
     /// </summary>
-    private static LevelResult Neighbourhood(Graph g, ExportRequest req)
+    private static LevelResult Neighbourhood(Graph g, ExportRequest req, HashSet<string> testProjects)
     {
         var start = req.Start ?? throw new ArgumentException("neighbourhood needs a start node", nameof(req));
 
@@ -166,7 +168,7 @@ public static partial class Queries
 
         foreach (var n in g.Nodes)
         {
-            if (!req.IncludeTests && IsTest(n)) { testNodes++; continue; }
+            if (!req.IncludeTests && IsWithheld(n, testProjects)) { testNodes++; continue; }
             includedIds.Add(n.Id);
         }
 
@@ -271,6 +273,36 @@ public static partial class Queries
     /// empty label says nothing about what the bucket means.
     /// </summary>
     private static string EmptyLabel(string level) => level == "project" ? "(no project)" : "(global)";
+
+    /// <summary>
+    /// Whether the export withholds a node as test code. The indexer's <c>test</c> tag is a
+    /// name-and-attribute heuristic; it misses helper types and members in a test project whose
+    /// names carry no test convention. A project whose nodes are mostly tagged test is a test
+    /// project (the same rule <c>map</c> uses to separate test projects), and everything in it is
+    /// test code regardless of the tag.
+    /// </summary>
+    private static bool IsWithheld(Node n, HashSet<string> testProjects) =>
+        IsTest(n) || (n.Project.Length > 0 && testProjects.Contains(n.Project));
+
+    private static HashSet<string> TestProjectPaths(Graph g)
+    {
+        var testProjects = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var group in g.Nodes.Where(n => n.Project.Length > 0).GroupBy(n => n.Project, StringComparer.Ordinal))
+        {
+            var total = 0;
+            var tagged = 0;
+            foreach (var n in group)
+            {
+                total++;
+                if (IsTest(n)) tagged++;
+            }
+
+            if (tagged * 2 > total) testProjects.Add(group.Key);
+        }
+
+        return testProjects;
+    }
 
     /// <summary>
     /// The namespace bucket a node belongs to, derived from names alone rather than from a graph

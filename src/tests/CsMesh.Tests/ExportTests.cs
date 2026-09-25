@@ -566,6 +566,37 @@ public sealed class ExportTests : IDisposable
         }
     }
 
+    [Fact]
+    public void A_whole_test_project_is_withheld_even_when_a_helper_is_untagged()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes =
+            [
+                // A helper in a test project whose name carries no test convention and which has no
+                // test attribute: the tag heuristic misses it, so it is not tagged "test".
+                new Node { Id = 0, Name = "Tns.Helper", Short = "Helper", Kind = "type", Project = "T", Key = "k0" },
+                new Node { Id = 1, Name = "Tns.FooTests", Short = "FooTests", Kind = "type", Project = "T", Tags = ["test"], Key = "k1" },
+                new Node { Id = 2, Name = "Tns.FooTests.M", Short = "FooTests.M", Kind = "method", Project = "T", Tags = ["test"], Key = "k2" },
+                new Node { Id = 3, Name = "Tns.FooTests.N", Short = "FooTests.N", Kind = "method", Project = "T", Tags = ["test"], Key = "k3" },
+                new Node { Id = 4, Name = "Pns.Prod", Short = "Prod", Kind = "type", Project = "P", Key = "k4" }
+            ]
+        };
+        graph.Freeze();
+
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, false));
+        var text = string.Join("\n", result.Lines);
+
+        // The project is mostly tagged test, so its untagged helper is test code too and no test
+        // namespace bucket survives.
+        Assert.Equal(1, result.Nodes);
+        Assert.Equal(4, result.TestNodesWithheld);
+        Assert.Contains("Pns", text);
+        Assert.DoesNotContain("Tns", text);
+    }
+
     // ------------------------------------------------------------------ namespace rule
 
     /// <summary>
