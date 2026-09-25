@@ -370,6 +370,70 @@ public sealed class ExportTests : IDisposable
         Assert.Equal(Exit.Ambiguous, exit);
     }
 
+    // ------------------------------------------------------------------ --out
+
+    [Fact]
+    public void Out_writes_the_whole_render_and_prints_only_a_summary()
+    {
+        BuildAppReferencingLib();
+
+        var (exit, output) = Capture(() => ExportCommand.Execute(_root,
+            new Options(["--level", "project", "--out", "diagram.mmd"])));
+
+        Assert.Equal(Exit.Ok, exit);
+
+        var file = Path.Combine(_root, "diagram.mmd");
+        Assert.True(File.Exists(file));
+        Assert.StartsWith("flowchart LR", File.ReadAllText(file));
+
+        Assert.Contains("project mermaid -> diagram.mmd", output);
+        Assert.Contains("nodes: 2, edges: 1", output);
+        Assert.Contains("withheld:", output);
+        Assert.Contains("TypeUse", output);
+    }
+
+    [Fact]
+    public void Out_cannot_escape_the_repository_root_through_dot_dot()
+    {
+        BuildAppReferencingLib();
+        var name = "csmesh-escaped-" + Guid.NewGuid().ToString("N")[..8] + ".mmd";
+        var outside = Path.Combine(Directory.GetParent(_root)!.FullName, name);
+
+        var (exit, _) = Capture(() => ExportCommand.Execute(_root,
+            new Options(["--out", "..\\" + name])));
+
+        Assert.Equal(Exit.Usage, exit);
+        Assert.False(File.Exists(outside));
+    }
+
+    [Fact]
+    public void Out_with_a_missing_parent_is_a_usage_error()
+    {
+        BuildAppReferencingLib();
+
+        var (exit, _) = Capture(() => ExportCommand.Execute(_root,
+            new Options(["--out", "no-such-directory/diagram.mmd"])));
+
+        Assert.Equal(Exit.Usage, exit);
+    }
+
+    [Fact]
+    public void Out_write_failure_is_internal()
+    {
+        // Windows will not rename over a destination another handle holds without share-delete;
+        // Unix rename() does not consult handles, so the failure is a Windows-only path.
+        if (!OperatingSystem.IsWindows()) return;
+
+        BuildAppReferencingLib();
+        var target = Path.Combine(_root, "held.mmd");
+
+        using (new FileStream(target, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+        {
+            var (exit, _) = Capture(() => ExportCommand.Execute(_root, new Options(["--out", "held.mmd"])));
+            Assert.Equal(Exit.Internal, exit);
+        }
+    }
+
     // ------------------------------------------------------------------ budget and exits
 
     [Fact]

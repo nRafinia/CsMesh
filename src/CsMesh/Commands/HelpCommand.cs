@@ -622,6 +622,8 @@ public static class HelpCommand
             --direction <D>    in | out | both (default: both; neighbourhood only)
             --include-tests    Draw test-tagged nodes instead of withholding them
             --all-edges        Include TypeUse edges instead of withholding them
+            --out <FILE>       Write the complete render to FILE (must be inside the repository)
+                               and print a budgeted summary in its place
             --budget <N>       Maximum output tokens (default: 1500, exits code 2 on overflow)
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -635,15 +637,19 @@ public static class HelpCommand
             same exit 1 and exit 3 answers apply. Test nodes and TypeUse edges are withheld by
             default and named in the counts.
 
+            Without --out an over-budget render truncates and exits 2, naming both remedies. With
+            --out the file holds the whole render and only the summary is budgeted.
+
         EXIT CODES:
             0 rendered   1 symbol not found   2 over budget   3 ambiguous symbol   4 no index
-            64 bad option
+            64 bad option or an --out path outside the repository   70 could not write --out
 
         EXAMPLES:
             csmesh export
             csmesh export --level namespace
             csmesh export --level namespace --format dot
             csmesh export OrderService.Process --depth 2
+            csmesh export --level namespace --out docs/deps.mmd
         """;
 
     public const string SilenceHelp =

@@ -57,7 +57,101 @@ public static class ExportCommand
 
         var result = Queries.RenderExport(graph, request);
 
+        if (opt.Value("out") is { Length: > 0 } outPath)
+        {
+            if (!TryResolveOutPath(root, outPath, out var fullPath, out var pathError))
+            {
+                Console.Error.WriteLine(pathError);
+                return Exit.Usage;
+            }
+
+            return WriteFile(result, fullPath, outPath, format, level, budget);
+        }
+
         return WriteStdout(result, budget, level);
+    }
+
+    /// <summary>
+    /// A file destination must stay inside the repository and under an existing directory: a
+    /// typo that would drop a diagram beside the checkout, or into a directory that is not there,
+    /// is a usage error rather than a write that half-succeeds. The check is on the resolved path,
+    /// so <c>..</c> cannot walk out.
+    /// </summary>
+    internal static bool TryResolveOutPath(string root, string outPath, out string fullPath, out string? error)
+    {
+        fullPath = "";
+        error = null;
+
+        try
+        {
+            var rootFull = Path.GetFullPath(root);
+            fullPath = Path.GetFullPath(outPath, rootFull);
+
+            var relative = Path.GetRelativePath(rootFull, fullPath);
+            if (relative == ".."
+                || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || Path.IsPathRooted(relative))
+            {
+                error = $"--out '{outPath}' is outside the repository root";
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            error = $"--out '{outPath}' is not a usable path: {ex.Message}";
+            return false;
+        }
+
+        var parent = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrEmpty(parent) || !Directory.Exists(parent))
+        {
+            error = $"--out '{outPath}' has no existing parent directory";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes the complete render to a file by temp-plus-rename, as <see cref="GraphStore"/> writes
+    /// the graph, so a reader never sees a half-written diagram; stdout gets only a budgeted
+    /// summary, because the file is an artifact rather than answer text (ADR 0004). Any I/O failure
+    /// is exit 70: the summary was not produced, and that is an internal fault, not a bad option.
+    /// </summary>
+    internal static int WriteFile(
+        Queries.ExportResult result, string fullPath, string givenPath, string format, string level, int budget)
+    {
+        var temp = fullPath + ".tmp-" + Environment.ProcessId + "-" + Environment.CurrentManagedThreadId;
+
+        try
+        {
+            File.WriteAllLines(temp, result.Lines);
+            File.Move(temp, fullPath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            try { if (File.Exists(temp)) File.Delete(temp); }
+            catch (Exception cleanup) { Dbg.Log($"could not clean export temp file: {cleanup.Message}"); }
+
+            Console.Error.WriteLine($"csmesh: could not write '{givenPath}': {ex.Message}");
+            return Exit.Internal;
+        }
+
+        var writer = new BudgetWriter(budget, BudgetWriter.CompletionMarkerReserve);
+        writer.Force($"{level} {format} -> {givenPath}");
+        writer.Force($"nodes: {result.Nodes}, edges: {result.Edges}");
+
+        var withheld = new List<string>();
+        if (result.TestNodesWithheld > 0 || result.TestEdgesWithheld > 0)
+            withheld.Add($"test code {result.TestNodesWithheld} node(s), {result.TestEdgesWithheld} edge(s)");
+        if (result.TypeUseEdgesWithheld > 0)
+            withheld.Add($"TypeUse {result.TypeUseEdgesWithheld} edge(s)");
+        if (result.NodesBeyondDepth > 0 || result.EdgesBeyondDepth > 0)
+            withheld.Add($"beyond depth {result.NodesBeyondDepth} node(s), {result.EdgesBeyondDepth} edge(s)");
+        if (withheld.Count > 0) writer.Force("withheld: " + string.Join("; ", withheld));
+
+        writer.Flush();
+        return Exit.Ok;
     }
 
     /// <summary>
