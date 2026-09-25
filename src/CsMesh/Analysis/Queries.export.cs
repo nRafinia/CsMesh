@@ -270,14 +270,10 @@ public static partial class Queries
     /// The namespace bucket a node belongs to, derived from names alone rather than from a graph
     /// edge.
     ///
-    /// <see cref="Node.Name"/> is fully qualified, so a type's bucket is everything before its last
-    /// segment and a member's bucket is everything before its declaring type. A nested type keeps
-    /// its containing type as part of the bucket (<c>Ns.Outer.Inner</c> -&gt; <c>Ns.Outer</c>), the
-    /// same collapse the ADR measured: one node per namespace and one per nested-type container.
-    ///
-    /// The previous implementation walked the TypeUse ownership edge instead. That edge exists only
-    /// for a declared member of a named type, so interface members and synthetic nodes had none and
-    /// were dropped or bucketed globally, and the namespace set came out smaller than the ADR's.
+    /// A bucket is always a namespace, never a type. A type's bucket is the namespace of the
+    /// outermost type that contains it: <c>Ns.Outer.Inner</c> lands in <c>Ns</c>, and so does a
+    /// member of <c>Inner</c>. A synthetic node whose declaring type cannot be determined belongs to
+    /// none (the global bucket) rather than to a bucket invented from its display name.
     /// </summary>
     internal static Func<Node, string?> NamespaceResolver(Graph g)
     {
@@ -285,6 +281,20 @@ public static partial class Queries
             .Where(n => n.Kind is "type" or "interface" or "enum" or "struct" or "delegate")
             .Select(n => n.Name)
             .ToHashSet(StringComparer.Ordinal);
+
+        // Strip trailing segments while each remaining prefix is itself a declared type; the first
+        // prefix that is not a type is the namespace of the outermost containing type.
+        string NamespaceOfType(string typeName)
+        {
+            var current = typeName;
+            while (true)
+            {
+                var parent = StripLastSegment(current);
+                if (parent.Length == 0) return "";
+                if (!typeNames.Contains(parent)) return parent;
+                current = parent;
+            }
+        }
 
         string? DeclaringTypeOf(string name)
         {
@@ -304,18 +314,10 @@ public static partial class Queries
 
         return n =>
         {
-            // A declared type groups under its own containing segment: a top-level type under its
-            // namespace, a nested type under its containing type. A member groups under its
-            // declaring type's name. This is the collapse the ADR measured -- one bucket per
-            // namespace and one per nested-type container.
-            if (n.Kind is "type" or "interface" or "enum" or "struct" or "delegate") return StripLastSegment(n.Name);
+            if (n.Kind is "type" or "interface" or "enum" or "struct" or "delegate") return NamespaceOfType(n.Name);
 
             var declaring = DeclaringTypeOf(n.Name);
-            if (declaring is not null) return StripLastSegment(declaring);
-
-            // A synthetic node with no declaring type in the graph has no namespace; it belongs to
-            // none rather than to a namespace invented from its display name.
-            return "";
+            return declaring is null ? "" : NamespaceOfType(declaring);
         };
     }
 

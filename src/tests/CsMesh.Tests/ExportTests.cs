@@ -534,11 +534,11 @@ public sealed class ExportTests : IDisposable
     // ------------------------------------------------------------------ namespace rule
 
     /// <summary>
-    /// The namespace level buckets by declaring type, not by the parent prefix of a name: a
-    /// namespace no symbol declares is not drawn; a nested type keeps its containing type; an
-    /// interface member lands under its interface; and a node whose declaring type cannot be
-    /// determined (a tuple-typed synthetic node) has no namespace rather than a bucket invented from
-    /// its display name.
+    /// The namespace level buckets by the outermost containing type's namespace, never by a type
+    /// name: a namespace no symbol declares is not drawn; a nested type and its members land in the
+    /// outer namespace; an interface member lands under its interface; and a node whose declaring
+    /// type cannot be determined (a tuple-typed synthetic node) has no namespace rather than a
+    /// bucket invented from its display name.
     /// </summary>
     [Fact]
     public void The_namespace_level_counts_declared_buckets_not_name_prefixes()
@@ -581,8 +581,10 @@ public sealed class ExportTests : IDisposable
 
         // A declared namespace is a bucket.
         Assert.Equal("A.B.C", of(Find("A.B.C.Outer")));
-        // A nested type keeps its containing type as its bucket.
-        Assert.Equal("A.B.C.Outer", of(Find("A.B.C.Outer.Inner")));
+        // A nested type lands in the outer namespace; no type name is ever a bucket.
+        Assert.Equal("A.B.C", of(Find("A.B.C.Outer.Inner")));
+        Assert.Equal("A.B.C", of(Find("A.B.C.Outer.Inner.Nested")));
+        Assert.DoesNotContain(graph.Nodes.Select(of), ns => ns == "A.B.C.Outer");
         // An interface member lands under its interface's namespace.
         Assert.Equal("A.B.C", of(Find("A.B.C.IThing.Do")));
         // A synthetic node is not given a namespace invented from its display name.
