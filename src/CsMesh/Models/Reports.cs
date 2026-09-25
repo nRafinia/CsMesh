@@ -120,6 +120,34 @@ public sealed class GeneratedOutputFinding
 }
 
 /// <summary>
+/// One solution file that was found but did not fully decide scope: some of its project paths
+/// matched nothing on disk, it listed no project path at all, or it could not be read. The partial
+/// case still decided scope, so the finding records how many paths matched rather than claiming the
+/// solution was ignored.
+/// </summary>
+public sealed class SolutionScopeFinding
+{
+    /// <summary>The solution file, relative to the repository root.</summary>
+    public string Solution { get; set; } = string.Empty;
+
+    /// <summary>Project paths the solution listed.</summary>
+    public int Named { get; set; }
+
+    /// <summary>Of those, how many named a project that exists on disk.</summary>
+    public int Matched { get; set; }
+
+    /// <summary>
+    /// The first listed path that matched nothing, verbatim as the solution wrote it. Shown so a
+    /// separator or a typo is visible at a glance; null when every listed path matched or none was
+    /// listed.
+    /// </summary>
+    public string? FirstUnmatched { get; set; }
+
+    /// <summary>Why the file could not be read. Null when it parsed.</summary>
+    public string? ParseError { get; set; }
+}
+
+/// <summary>
 /// What an index run did. Mirrors DoctorReport's split: the numbers a caller branches on, plus
 /// the lines it would have read.
 /// </summary>
