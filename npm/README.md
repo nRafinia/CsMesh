@@ -591,10 +591,10 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 
 ## 📊 Telemetry & Audit Logging
 
-Every invocation records an audit log entry in `.csmesh/usage.jsonl` (local to the repository, never sent to external servers):
+Every invocation records an audit log entry in `.csmesh/usage.jsonl` (local to the repository, never sent to external servers). Keys are `snake_case`; `schema_version` is `2` for the current record format, and a line written before the field existed reads as `1`:
 
 ```json
-{"ts":"2026-09-03T15:15:42Z","caller":"claude-code","caller_via":"env:CLAUDECODE","tty":false,"cmd":"trace","args":"PaymentController.Post --budget 600","exit":0,"ms":84,"budget":600,"out_tokens":125,"nodes":160,"edges":380}
+{"schema_version":2,"ts":"2026-09-03T15:15:42Z","caller":"claude-code","caller_via":"env:CLAUDECODE","tty":false,"cmd":"trace","args":"PaymentController.Post --budget 600","budget":600,"exit":0,"ms":84,"out_tokens":125,"would_be_tokens":125,"reserved_tokens":0,"files_referenced":3,"nodes":160,"edges":380}
 ```
 
 Caller detection automatically attributes queries based on environment variables and process trees (`claude-code`, `cursor`, `windsurf`, `cline`, `antigravity`, `terminal-human`).

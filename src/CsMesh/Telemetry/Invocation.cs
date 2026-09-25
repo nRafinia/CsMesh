@@ -8,6 +8,22 @@ namespace CsMesh.Telemetry;
 /// </summary>
 public sealed class Invocation
 {
+    /// <summary>
+    /// The record format this build writes. A line with no <c>schema_version</c> was written before
+    /// the field existed and reads as <see cref="LegacySchemaVersion"/>.
+    /// </summary>
+    public const int CurrentSchemaVersion = 2;
+
+    /// <summary>The schema assumed for a record written before the field existed.</summary>
+    public const int LegacySchemaVersion = 1;
+
+    /// <summary>
+    /// The record format. Defaults to <see cref="LegacySchemaVersion"/> so a line parsed without it
+    /// is not mistaken for current; <see cref="Telemetry.End"/> stamps
+    /// <see cref="CurrentSchemaVersion"/> on every line it writes.
+    /// </summary>
+    public int SchemaVersion { get; set; } = LegacySchemaVersion;
+
     public string Ts { get; set; } = string.Empty;
     public string Cmd { get; set; } = string.Empty;
     public string Args { get; set; } = string.Empty;

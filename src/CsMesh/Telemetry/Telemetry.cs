@@ -35,6 +35,7 @@ public static class Telemetry
 
         Current.Exit = exit;
         Current.Ms = Clock.ElapsedMilliseconds;
+        Current.SchemaVersion = Invocation.CurrentSchemaVersion;
 
         try
         {
