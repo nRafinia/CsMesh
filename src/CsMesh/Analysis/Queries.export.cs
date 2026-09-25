@@ -52,26 +52,29 @@ public static partial class Queries
     /// <summary>The raw counts of everything the diagram's filters removed.</summary>
     private readonly record struct Withheld(int TestNodes, int TestEdges, int TypeUseEdges);
 
+    /// <summary>A level's filtered graph plus what a depth limit left out of it.</summary>
+    private readonly record struct LevelResult(
+        List<Bucket> Nodes, List<DrawnEdge> Edges, Withheld Withheld, int BeyondNodes, int BeyondEdges);
+
     public static ExportResult RenderExport(Graph g, ExportRequest req)
     {
-        var namespaceOf = NamespaceResolver(g);
-        var identityOf = req.Level switch
+        LevelResult level = req.Level switch
         {
-            "project" => (Func<Node, string?>)ProjectOf,
-            "namespace" => namespaceOf,
+            "project" => Collapse(g, req, ProjectOf),
+            "namespace" => Collapse(g, req, NamespaceResolver(g)),
+            "neighbourhood" => Neighbourhood(g, req),
             _ => throw new ArgumentOutOfRangeException(nameof(req), req.Level)
         };
 
-        var (nodes, edges, withheld) = Collapse(g, req, identityOf);
-
-        var ids = AssignIds(nodes.Select(n => n.Identity).ToList(), Sha256Hex, PrefixFor(req.Level));
+        var ids = AssignIds(level.Nodes.Select(n => n.Identity).ToList(), Sha256Hex, PrefixFor(req.Level));
 
         var lines = req.Format == "dot"
-            ? RenderDot(nodes, ids, edges)
-            : RenderMermaid(nodes, ids, edges);
+            ? RenderDot(level.Nodes, ids, level.Edges)
+            : RenderMermaid(level.Nodes, ids, level.Edges);
 
-        return new ExportResult(lines, nodes.Count, edges.Count,
-            withheld.TestNodes, withheld.TestEdges, withheld.TypeUseEdges, 0, 0);
+        return new ExportResult(lines, level.Nodes.Count, level.Edges.Count,
+            level.Withheld.TestNodes, level.Withheld.TestEdges, level.Withheld.TypeUseEdges,
+            level.BeyondNodes, level.BeyondEdges);
     }
 
     private static string PrefixFor(string level) => level switch
@@ -81,24 +84,23 @@ public static partial class Queries
         _ => "p"
     };
 
+    // ------------------------------------------------------------------ levels
+
     /// <summary>
     /// Collapses the graph to project or namespace buckets. An edge is kept only when both endpoints
     /// are included, and distinct (from, to, kind) triples become one drawn edge; a self-edge counts
     /// once, as the ADR measures it.
     /// </summary>
-    private static (List<Bucket> Nodes, List<DrawnEdge> Edges, Withheld Withheld) Collapse(
-        Graph g, ExportRequest req, Func<Node, string?> identityOf)
+    private static LevelResult Collapse(Graph g, ExportRequest req, Func<Node, string?> identityOf)
     {
-        var included = new List<Node>();
+        var includedIds = new HashSet<int>();
         var testNodes = 0;
 
         foreach (var n in g.Nodes)
         {
             if (!req.IncludeTests && IsTest(n)) { testNodes++; continue; }
-            included.Add(n);
+            includedIds.Add(n.Id);
         }
-
-        var includedIds = included.Select(n => n.Id).ToHashSet();
 
         var testEdges = 0;
         var typeUseEdges = 0;
@@ -109,13 +111,10 @@ public static partial class Queries
             if (!includedIds.Contains(e.From) || !includedIds.Contains(e.To)) { testEdges++; continue; }
             if (e.Kind == EdgeKind.TypeUse && !req.IncludeTypeUse) { typeUseEdges++; continue; }
 
-            var from = g.ById(e.From)!;
-            var to = g.ById(e.To)!;
-
             // A node with no namespace of its own is not placed in a bucket; an edge that would land
             // on one has nowhere to point.
-            if (identityOf(from) is not { } fromIdentity) continue;
-            if (identityOf(to) is not { } toIdentity) continue;
+            if (identityOf(g.ById(e.From)!) is not { } fromIdentity) continue;
+            if (identityOf(g.ById(e.To)!) is not { } toIdentity) continue;
 
             var key = (fromIdentity, toIdentity, e.Kind);
             collapsed[key] = collapsed.TryGetValue(key, out var existing)
@@ -123,7 +122,8 @@ public static partial class Queries
                 : (e.Role, e.Score);
         }
 
-        var nodes = included
+        var nodes = includedIds
+            .Select(id => g.ById(id)!)
             .Select(identityOf)
             .Where(x => x != null)
             .Select(x => x!)
@@ -139,7 +139,122 @@ public static partial class Queries
             .Select(x => new DrawnEdge(x.Key.From, x.Key.To, x.Key.Kind, x.Value.Role, x.Value.Score))
             .ToList();
 
-        return (nodes, edges, new Withheld(testNodes, testEdges, typeUseEdges));
+        return new LevelResult(nodes, edges, new Withheld(testNodes, testEdges, typeUseEdges), 0, 0);
+    }
+
+    /// <summary>
+    /// The undirected (or one-way) ring around one symbol, its induced subgraph at
+    /// <see cref="ExportRequest.Depth"/> and the counts a deeper walk would have added.
+    ///
+    /// BFS records every node's distance, so the depth limit is applied after the walk rather than
+    /// during it: that is what lets the summary say how much lies beyond the depth, which the ADR's
+    /// <c>--out</c> summary reports. The walk itself is bounded by the visited set, so a cycle
+    /// terminates.
+    /// </summary>
+    private static LevelResult Neighbourhood(Graph g, ExportRequest req)
+    {
+        var start = req.Start ?? throw new ArgumentException("neighbourhood needs a start node", nameof(req));
+
+        var includedIds = new HashSet<int>();
+        var testNodes = 0;
+
+        foreach (var n in g.Nodes)
+        {
+            if (!req.IncludeTests && IsTest(n)) { testNodes++; continue; }
+            includedIds.Add(n.Id);
+        }
+
+        var testEdges = 0;
+        var typeUseEdges = 0;
+        var traversed = new Dictionary<(int From, int To, EdgeKind Kind), (EdgeRole? Role, double Score)>();
+
+        foreach (var e in g.Edges)
+        {
+            if (!includedIds.Contains(e.From) || !includedIds.Contains(e.To)) { testEdges++; continue; }
+            if (e.Kind == EdgeKind.TypeUse && !req.IncludeTypeUse) { typeUseEdges++; continue; }
+        }
+
+        var distance = new Dictionary<int, int>();
+        if (includedIds.Contains(start.Id))
+        {
+            distance[start.Id] = 0;
+            var frontier = new List<int> { start.Id };
+            var next = new List<int>();
+
+            while (frontier.Count > 0)
+            {
+                next.Clear();
+                foreach (var id in frontier)
+                {
+                    if (req.Direction is "out" or "both")
+                        foreach (var e in g.Out(id))
+                            Visit(id, e, e.To);
+                    if (req.Direction is "in" or "both")
+                        foreach (var e in g.In(id))
+                            Visit(id, e, e.From);
+                }
+
+                (frontier, next) = (next, frontier);
+            }
+
+            void Visit(int current, Edge e, int neighbourId)
+            {
+                if (!includedIds.Contains(neighbourId)) return;
+                if (e.Kind == EdgeKind.TypeUse && !req.IncludeTypeUse) return;
+
+                var key = (e.From, e.To, e.Kind);
+                traversed[key] = traversed.TryGetValue(key, out var existing)
+                    ? (Or(existing.Role, e.Role), Math.Min(existing.Score, e.Score))
+                    : (e.Role, e.Score);
+
+                if (distance.TryAdd(neighbourId, distance[current] + 1)) next.Add(neighbourId);
+            }
+        }
+
+        var within = distance.Where(x => x.Value <= req.Depth).Select(x => x.Key).ToHashSet();
+        var beyond = distance.Where(x => x.Value > req.Depth).Select(x => x.Key).ToList();
+
+        var nodes = within
+            .Select(id => g.ById(id)!)
+            .Select(n => LabelFor(g, n))
+            .OrderBy(n => n.Identity, StringComparer.Ordinal)
+            .ToList();
+
+        var drawn = new List<DrawnEdge>();
+        var beyondEdges = 0;
+        foreach (var (key, value) in traversed)
+        {
+            var from = g.ById(key.From);
+            var to = g.ById(key.To);
+            if (from == null || to == null) continue;
+
+            if (within.Contains(key.From) && within.Contains(key.To))
+            {
+                drawn.Add(new DrawnEdge(from.Key, to.Key, key.Kind, value.Role, value.Score));
+            }
+            else
+            {
+                beyondEdges++;
+            }
+        }
+
+        drawn = drawn
+            .OrderBy(x => x.FromIdentity, StringComparer.Ordinal)
+            .ThenBy(x => x.ToIdentity, StringComparer.Ordinal)
+            .ThenBy(x => x.Kind)
+            .ToList();
+
+        return new LevelResult(nodes, drawn, new Withheld(testNodes, testEdges, typeUseEdges), beyond.Count, beyondEdges);
+    }
+
+    /// <summary>
+    /// A symbol's label: its short name, except where the name is overloaded, in which case the
+    /// selector the exit-3 answer prints so a diagram and a query speak the same name.
+    /// </summary>
+    private static Bucket LabelFor(Graph g, Node n)
+    {
+        var overloaded = g.Nodes.Count(other => other.Name == n.Name) > 1;
+        return new Bucket(n.Key, overloaded ? SymbolSelector.SelectorFor(n) : n.Short);
     }
 
     private static string ProjectOf(Node n) => n.Project;
@@ -225,8 +340,7 @@ public static partial class Queries
 
         foreach (var edge in edges)
         {
-            var dashed = IsDashed(edge);
-            var arrow = dashed ? "-.->" : "-->";
+            var arrow = IsDashed(edge) ? "-.->" : "-->";
             var label = edge.Score < Edge.TrustThreshold ? $"|?{edge.Score:0.00}|" : "";
             lines.Add($"  {ids[edge.FromIdentity]} {arrow}{label} {ids[edge.ToIdentity]}");
         }

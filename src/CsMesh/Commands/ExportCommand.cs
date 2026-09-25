@@ -1,5 +1,6 @@
 using CsMesh.Analysis;
 using CsMesh.Common;
+using CsMesh.Models;
 using CsMesh.Storage;
 
 namespace CsMesh.Commands;
@@ -25,12 +26,6 @@ public static class ExportCommand
             return Exit.Usage;
         }
 
-        if (level == "neighbourhood")
-        {
-            Console.Error.WriteLine("--level neighbourhood is not implemented");
-            return Exit.Usage;
-        }
-
         var graph = GraphStore.Load(root, out var problem);
         if (graph == null)
         {
@@ -38,13 +33,31 @@ public static class ExportCommand
             return Exit.NoIndex;
         }
 
+        var budget = opt.Int("budget", DefaultBudget);
+
+        Node? start = null;
+        if (level == "neighbourhood")
+        {
+            // Exactly the resolution trace uses, selector included: exit 1 and 3 mean here what
+            // they mean there, and the candidate list is the same text.
+            var resolver = new BudgetWriter(budget, BudgetWriter.CompletionMarkerReserve);
+            var resolution = new QueryResult();
+            start = QueryCommand.Single(graph, opt.Positional[0], opt.Value("project"),
+                resolver, resolution, json: false, [], out var resolveExit);
+            if (start == null)
+            {
+                resolver.Flush();
+                return resolveExit;
+            }
+        }
+
         var request = new Queries.ExportRequest(
-            format, level, null, depth, direction,
+            format, level, start, depth, direction,
             opt.Flag("include-tests"), opt.Flag("all-edges"));
 
         var result = Queries.RenderExport(graph, request);
 
-        return WriteStdout(result, opt.Int("budget", DefaultBudget), level);
+        return WriteStdout(result, budget, level);
     }
 
     /// <summary>

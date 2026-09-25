@@ -611,9 +611,17 @@ public static class HelpCommand
         USAGE:
             csmesh export [<symbol>] [OPTIONS]
 
+        ARGUMENTS:
+            [<symbol>]         Start of a neighbourhood; omit for project or namespace
+
         OPTIONS:
-            --level <L>        project | namespace | neighbourhood (default: project)
+            --level <L>        project | namespace | neighbourhood (default: project, or
+                               neighbourhood when a <symbol> is given)
             --format <F>       mermaid | dot (default: mermaid)
+            --depth <N>        Neighbourhood rings to walk (default: 1)
+            --direction <D>    in | out | both (default: both; neighbourhood only)
+            --include-tests    Draw test-tagged nodes instead of withholding them
+            --all-edges        Include TypeUse edges instead of withholding them
             --budget <N>       Maximum output tokens (default: 1500, exits code 2 on overflow)
             --repo <PATH>      Repository root
             -h, --help         Print help information
@@ -623,12 +631,19 @@ public static class HelpCommand
             output, because node ids are a hash of each node's stable identity, not a rank that
             shifts when a symbol is added.
 
+            A symbol is resolved exactly as 'trace' resolves it, overload selector included; the
+            same exit 1 and exit 3 answers apply. Test nodes and TypeUse edges are withheld by
+            default and named in the counts.
+
         EXIT CODES:
-            0 rendered   2 over budget   4 no index   64 bad option
+            0 rendered   1 symbol not found   2 over budget   3 ambiguous symbol   4 no index
+            64 bad option
 
         EXAMPLES:
             csmesh export
-            csmesh export --level project
+            csmesh export --level namespace
+            csmesh export --level namespace --format dot
+            csmesh export OrderService.Process --depth 2
         """;
 
     public const string SilenceHelp =

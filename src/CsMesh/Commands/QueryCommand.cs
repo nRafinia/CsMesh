@@ -299,7 +299,7 @@ public static class QueryCommand
     /// answers the single-symbol commands give. Returns null when the caller should stop, with the
     /// exit code already decided.
     /// </summary>
-    private static Models.Node? Single(
+    internal static Models.Node? Single(
         Models.Graph graph,
         string query,
         string? projectFilter,

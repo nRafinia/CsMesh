@@ -2,6 +2,7 @@ using CsMesh.Analysis;
 using CsMesh.Commands;
 using CsMesh.Common;
 using CsMesh.Models;
+using CsMesh.Storage;
 using Xunit;
 
 namespace CsMesh.Tests;
@@ -46,11 +47,29 @@ public sealed class ExportTests : IDisposable
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework>" +
             "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup>" +
             "<ItemGroup><ProjectReference Include=\"../Lib/Lib.csproj\" /></ItemGroup></Project>");
-        Write("App/Use.cs", "namespace App { public class Use { public void Run(Lib.Thing t) => t.Go(); } }");
+        Write("App/Use.cs",
+            "namespace App { public class Use { public void Run(Lib.Thing t) => t.Go(); } " +
+            "public class Use2 { public void Run() { } } }");
 
         var graph = Indexer.Build(_root);
         graph.Freeze();
+        GraphStore.Save(graph);
         return graph;
+    }
+
+    private static (int Exit, string Output) Capture(Func<int> run)
+    {
+        var original = Console.Out;
+        var buffer = new StringWriter();
+        try
+        {
+            Console.SetOut(buffer);
+            return (run(), buffer.ToString());
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
     }
 
     // ------------------------------------------------------------------ golden
@@ -256,6 +275,99 @@ public sealed class ExportTests : IDisposable
         Assert.Contains("[\"Real.Ns\"]", text);
         Assert.Contains("[\"\"]", text);
         Assert.DoesNotContain("Probe.Ns", text);
+    }
+
+    // ------------------------------------------------------------------ neighbourhood
+
+    private static Graph Chain()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes =
+            [
+                new Node { Id = 0, Name = "N.A", Short = "A", Kind = "type", Project = "P", Key = "n|A|type" },
+                new Node { Id = 1, Name = "N.B", Short = "B", Kind = "method", Project = "P", Key = "n|B()|method" },
+                new Node { Id = 2, Name = "N.C", Short = "C", Kind = "method", Project = "P", Key = "n|C()|method" },
+                new Node { Id = 3, Name = "N.D", Short = "D", Kind = "method", Project = "P", Key = "n|D()|method" }
+            ],
+            Edges =
+            [
+                new Edge { From = 1, To = 2, Kind = EdgeKind.Call },
+                new Edge { From = 2, To = 3, Kind = EdgeKind.Call }
+            ]
+        };
+        graph.Freeze();
+        return graph;
+    }
+
+    [Fact]
+    public void Neighbourhood_depth_limits_the_ring_and_reports_what_lies_beyond_it()
+    {
+        var graph = Chain();
+        var start = graph.Nodes.First(n => n.Name == "N.B");
+
+        var one = Queries.RenderExport(graph,
+            new Queries.ExportRequest("mermaid", "neighbourhood", start, 1, "both", false, false));
+        var two = Queries.RenderExport(graph,
+            new Queries.ExportRequest("mermaid", "neighbourhood", start, 2, "both", false, false));
+
+        Assert.Equal(2, one.Nodes);
+        Assert.Equal(1, one.Edges);
+        Assert.Equal(1, one.NodesBeyondDepth);
+        Assert.Equal(1, one.EdgesBeyondDepth);
+
+        Assert.Equal(3, two.Nodes);
+        Assert.Equal(2, two.Edges);
+        Assert.Equal(0, two.NodesBeyondDepth);
+    }
+
+    [Fact]
+    public void Neighbourhood_direction_in_excludes_the_outgoing_side()
+    {
+        var graph = Chain();
+        var start = graph.Nodes.First(n => n.Name == "N.B");
+
+        var incoming = Queries.RenderExport(graph,
+            new Queries.ExportRequest("mermaid", "neighbourhood", start, 3, "in", false, false));
+        var outgoing = Queries.RenderExport(graph,
+            new Queries.ExportRequest("mermaid", "neighbourhood", start, 1, "out", false, false));
+
+        Assert.Equal(1, incoming.Nodes);
+        Assert.Equal(0, incoming.Edges);
+        Assert.Equal(2, outgoing.Nodes);
+        Assert.Equal(1, outgoing.Edges);
+    }
+
+    [Fact]
+    public void A_selector_resolves_one_overload_for_the_neighbourhood_start()
+    {
+        BuildAppReferencingLib();
+
+        var (exit, output) = Capture(() => ExportCommand.Execute(_root, new Options(["App.Use2.Run()"])));
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.Contains("[\"Use2.Run\"]", output);
+    }
+
+    [Fact]
+    public void An_unknown_symbol_exits_one()
+    {
+        BuildAppReferencingLib();
+
+        var (exit, _) = Capture(() => ExportCommand.Execute(_root, new Options(["No.Such.Thing"])));
+
+        Assert.Equal(Exit.NotFound, exit);
+    }
+
+    [Fact]
+    public void An_ambiguous_symbol_exits_three()
+    {
+        BuildAppReferencingLib();
+
+        var (exit, _) = Capture(() => ExportCommand.Execute(_root, new Options(["Run"])));
+
+        Assert.Equal(Exit.Ambiguous, exit);
     }
 
     // ------------------------------------------------------------------ budget and exits
