@@ -22,7 +22,7 @@ public static partial class Queries
     /// service method that fills it both match "discount"; only one of them is reached by three
     /// routes.
     /// </summary>
-    public static int Where(Graph g, string[] terms, string? under, BudgetWriter w, HashSet<string> dirty)
+    public static int Where(Graph g, string[] terms, string? under, BudgetWriter w, HashSet<string> dirty, bool unranked = false)
     {
         var query = string.Join(" ", terms);
         var scope = string.IsNullOrWhiteSpace(under) ? null : under.Replace('\\', '/').Trim('/');
@@ -98,6 +98,8 @@ public static partial class Queries
             return Exit.NotFound;
         }
 
+        if (unranked) return WhereUnranked(candidates, query, w, dirty);
+
         // Reach is measured per candidate, so it is measured on a shortlist. A bare term in a large
         // solution can match hundreds of names and walking backwards from all of them would cost
         // more than the search saves.
@@ -159,6 +161,40 @@ public static partial class Queries
     private const int WhereRowCap = 8;
     private const int WhereReachDepth = 4;
     private const int WhereReachCap = 600;
+
+    /// <summary>
+    /// The same candidates in the one order that does not depend on the index: <see cref="Node.Key"/>,
+    /// ordinal. The ranked order is the point of 'where', but reach is a guess -- it depends on what
+    /// the indexer managed to bind -- and a re-index can reorder a list the caller read as stable.
+    /// --unranked answers the different question "what did the search actually match", with the list
+    /// the ranked mode is a reordering of. No reach column and no next-command hint: both are
+    /// products of the ranking that is not being done.
+    /// </summary>
+    private static int WhereUnranked(
+        List<Candidate> candidates, string query, BudgetWriter w, HashSet<string> dirty)
+    {
+        var ordered = candidates.OrderBy(c => c.Node.Key, StringComparer.Ordinal).ToList();
+
+        w.Force($"{query} -- {ordered.Count} match(es), unranked (Node.Key order)");
+
+        var shown = 0;
+        foreach (var c in ordered)
+        {
+            var row = Row(c.Node, 1, "match", c.Why, dirty);
+            row.Source = c.Why;
+
+            var line = $"  {c.Node.Short}{TagSuffix(c.Node)}{Loc(c.Node)}  [{c.Why}]{StaleTag(c.Node, dirty)}";
+            if (!w.Add(line, row))
+            {
+                w.AddMarker(IncompleteMarker(w, "narrow with --under, or raise --budget", shown, ordered.Count));
+                return Exit.OverBudget;
+            }
+
+            shown++;
+        }
+
+        return Exit.Ok;
+    }
 
     private sealed class Candidate(Node node, int lexical, string why)
     {

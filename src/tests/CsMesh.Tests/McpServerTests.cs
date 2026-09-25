@@ -191,6 +191,16 @@ public sealed class McpServerTests
         Assert.Contains("Thing.Go", text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AnExportCallRendersThroughTheCommand()
+    {
+        using var sandbox = new Sandbox();
+
+        var text = Call(sandbox.Root, "export", """{"level":"project","format":"mermaid"}""");
+
+        Assert.Contains("flowchart LR", text, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// Clients are inconsistent about whether an integer arrives as a number or a string, and a
     /// budget silently dropped would look like csmesh ignoring the caller.

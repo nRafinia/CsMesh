@@ -24,6 +24,45 @@ public static partial class Queries
             : ExplainPath(g, from, to, depth, w, dirty);
     }
 
+    /// <summary>
+    /// A selector whose name resolves but whose parameter list matches no overload. The useful
+    /// answer is not why the symbol is silent -- it is not -- but the overloads that do exist, each
+    /// with the selector that names it, so the caller can paste one back. Writes through the
+    /// BudgetWriter; the caller keeps exit 1.
+    /// </summary>
+    public static void Overloads(Graph g, string namePart, IReadOnlyList<Node> nameMatches, BudgetWriter w, HashSet<string> dirty)
+    {
+        var overloads = nameMatches
+            .Where(n => n.Kind == "method")
+            .OrderBy(n => n.Name, StringComparer.Ordinal)
+            .ThenBy(n => n.Key, StringComparer.Ordinal)
+            .ToList();
+
+        if (overloads.Count == 0)
+        {
+            w.Force($"'{namePart}' has no method overloads to pick from.");
+            return;
+        }
+
+        var selectors = SymbolSelector.SelectorsFor(overloads);
+
+        w.Force($"no overload of '{namePart}' matches that parameter list; {overloads.Count} exist(s):");
+
+        for (var i = 0; i < overloads.Count; i++)
+        {
+            var row = Row(overloads[i], 1, "overload", selectors[i], dirty);
+            row.Selector = selectors[i];
+
+            if (!w.Add($"  {selectors[i]}{Loc(overloads[i])}", row))
+            {
+                w.AddMarker(IncompleteMarker(w, "raise --budget, or narrow with --under"));
+                return;
+            }
+        }
+
+        w.Force("re-run with one of these selectors, quoted if it contains a space.");
+    }
+
     // ------------------------------------------------------------------ a path that is not there
 
     private static int ExplainPath(Graph g, Node from, Node to, int depth, BudgetWriter w, HashSet<string> dirty)

@@ -198,4 +198,15 @@ public sealed class DocumentedContractTests
     {
         Assert.Contains("--writes", HelpCommand.BlastRadiusHelp, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// --unranked is the second output contract 'where' has: the same matches in Node.Key order,
+    /// with no reach ranking and no next-command hint. An agent reading help has to be able to
+    /// discover it.
+    /// </summary>
+    [Fact]
+    public void The_where_help_names_the_unranked_mode()
+    {
+        Assert.Contains("--unranked", HelpCommand.WhereHelp, StringComparison.Ordinal);
+    }
 }

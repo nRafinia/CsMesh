@@ -35,6 +35,7 @@ public static class Telemetry
 
         Current.Exit = exit;
         Current.Ms = Clock.ElapsedMilliseconds;
+        Current.SchemaVersion = Invocation.CurrentSchemaVersion;
 
         try
         {
@@ -62,7 +63,7 @@ public static class Telemetry
             if (string.IsNullOrWhiteSpace(line)) continue;
             try
             {
-                var invocation = JsonSerializer.Deserialize(line, AppJsonContext.Default.Invocation);
+                var invocation = JsonSerializer.Deserialize(line, TelemetryReadContext.Default.Invocation);
                 if (invocation != null) list.Add(invocation);
             }
             catch

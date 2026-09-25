@@ -12,7 +12,7 @@
     <ToolCommandName>csmesh</ToolCommandName>
     <AssemblyName>csmesh</AssemblyName>
     <PackageId>CsMesh</PackageId>
-    <Version>0.7.1</Version>
+    <Version>0.8.0</Version>
 
     <ToolPackageRuntimeIdentifiers>win-x64;linux-x64;osx-arm64;osx-x64;linux-arm64;win-arm64;any</ToolPackageRuntimeIdentifiers>
     <Authors>Vali (naser) Rafinia</Authors>
@@ -22,6 +22,8 @@
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>csharp;dotnet;roslyn;call-graph;code-analysis;agent;ai;static-analysis;cli;tool</PackageTags>
+    <!-- IL3000: Microsoft.CodeAnalysis.CommonCompiler.GetAssemblyLocation reads Assembly.Location.
+         IL2104: the single-warn trim summary for the Microsoft.CodeAnalysis assembly. -->
     <NoWarn>$(NoWarn);IL3000;IL2104</NoWarn>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>

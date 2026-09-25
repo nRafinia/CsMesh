@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using CsMesh.Analysis;
 using CsMesh.Common;
 using CsMesh.Models;
@@ -183,6 +184,9 @@ public static class DoctorCommand
                 e.Line("  bindings from these are inferred, not named -- they carry a ?score in output.");
             }
 
+            MissingGeneratedOutputWarnings(root, graph, report, e);
+            ProjectPackageReferenceWarnings(root, graph, report, e);
+
             Quality(graph, e);
         }
 
@@ -234,6 +238,146 @@ public static class DoctorCommand
 
         return Exit.Ok;
     }
+
+    /// <summary>
+    /// CS8795 -- a partial method with accessibility modifiers and no implementation part -- is what
+    /// a source generator that never ran leaves behind. The indexer already captured each project's
+    /// declaration diagnostics into <see cref="Graph.Diagnostics"/> at index time, so doctor reads
+    /// that capture rather than compiling the projects itself: a second full bind for a fact the
+    /// index already holds is exactly the cost the index exists to avoid. The capture keeps a
+    /// project's top eight error ids by count, so CS8795 is reported when it makes that cut and
+    /// absent when it does not -- the same limit the "compiler said" list below already carries.
+    /// </summary>
+    private static void MissingGeneratedOutputWarnings(string root, Graph graph, DoctorReport report, Emit e)
+    {
+        foreach (var group in graph.Diagnostics
+                     .Where(d => d.Id == Indexer.MissingGeneratorDiagnosticId)
+                     .GroupBy(d => d.Project, StringComparer.Ordinal)
+                     .OrderBy(g => g.Key, StringComparer.Ordinal))
+        {
+            var project = ProjectFileFor(root, group.Key);
+            var count = group.Sum(d => d.Count);
+
+            report.MissingGeneratedOutput.Add(new GeneratedOutputFinding { Project = project, Count = count });
+            e.Line($"generators      {project}: {count} CS8795 -- source-generator output is not on disk; "
+                 + "set EmitCompilerGeneratedFiles=true in the project, then build");
+        }
+    }
+
+    /// <summary>
+    /// A compilation's project label is the project directory relative to the root, not the csproj.
+    /// Named to the file so the warning points at the csproj a reader has to edit; falls back to the
+    /// label when the directory holds no csproj, which is the only way it can be missing.
+    /// </summary>
+    private static string ProjectFileFor(string root, string label)
+    {
+        var directory = string.IsNullOrEmpty(label) || label == "." ? root : Path.Combine(root, label);
+        var csproj = Directory.Exists(directory) ? ProjectTfm.Single(directory) : null;
+
+        return csproj is null
+            ? (string.IsNullOrEmpty(label) ? "." : label)
+            : Path.GetRelativePath(root, csproj).Replace('\\', '/');
+    }
+
+    /// <summary>
+    /// A PackageReference whose Include names a project in this scope instead of a package. The
+    /// package is never restored, so the referenced project's types are not bound through it and
+    /// every call into them is unbound -- while the same sources sit right there, one element away
+    /// from the ProjectReference that would bind them. Read as raw XML per the no-MSBuild rule;
+    /// Condition attributes are ignored, exactly as <see cref="ProjectScope"/> ignores them when it
+    /// decides what is in scope.
+    /// </summary>
+    private static void ProjectPackageReferenceWarnings(string root, Graph graph, DoctorReport report, Emit e)
+    {
+        var scope = graph.IndexedAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
+
+        // LiveDirectories are the in-scope project directories; a directory with no csproj has no
+        // package id to compare against, so it is dropped rather than guessed at.
+        var projects = scope.LiveDirectories
+            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+            .Select(ProjectTfm.Single)
+            .Where(csproj => csproj is not null)
+            .Select(csproj => Path.GetFullPath(csproj!))
+            .ToList();
+
+        if (projects.Count < 2) return;
+
+        var byPackageId = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var references = new List<(string From, string Include)>();
+
+        foreach (var project in projects)
+        {
+            var id = PackageIdOf(project);
+            if (!byPackageId.TryGetValue(id, out var owners)) byPackageId[id] = owners = [];
+            owners.Add(project);
+
+            foreach (var include in PackageReferencesOf(project)) references.Add((project, include));
+        }
+
+        var findings = new List<ProjectPackageFinding>();
+        foreach (var (from, include) in references)
+        {
+            if (!byPackageId.TryGetValue(include, out var targets)) continue;
+
+            foreach (var target in targets)
+            {
+                // A project cannot reference itself as a package; the match names no other project.
+                if (string.Equals(target, from, StringComparison.OrdinalIgnoreCase)) continue;
+
+                findings.Add(new ProjectPackageFinding
+                {
+                    ReferencedFrom = RelativeUrl(root, from),
+                    PackageId = include,
+                    ReferencedProject = RelativeUrl(root, target)
+                });
+            }
+        }
+
+        foreach (var finding in findings
+                     .OrderBy(f => f.ReferencedFrom, StringComparer.Ordinal)
+                     .ThenBy(f => f.ReferencedProject, StringComparer.Ordinal))
+        {
+            report.PackageReferencesToProjects.Add(finding);
+            e.Line($"package ref     {finding.ReferencedProject}: referenced as PackageReference "
+                 + $"'{finding.PackageId}' by {finding.ReferencedFrom} -- that project's types are not "
+                 + "bound through the package; use a ProjectReference");
+        }
+    }
+
+    /// <summary>
+    /// The project's package id: the &lt;PackageId&gt; element when the csproj sets one, otherwise the
+    /// project file name, which is the SDK default. A value naming an MSBuild property is not
+    /// evaluated and is treated as unset, the same choice <see cref="ProjectScope"/> makes.
+    /// </summary>
+    private static string PackageIdOf(string csproj)
+    {
+        var declared = ElementText(csproj, "PackageId");
+        return !string.IsNullOrWhiteSpace(declared) && !declared.Contains('$')
+            ? declared.Trim()
+            : Path.GetFileNameWithoutExtension(csproj);
+    }
+
+    private static List<string> PackageReferencesOf(string csproj) =>
+        Elements(csproj, "PackageReference")
+            .Select(element => element.Attribute("Include")?.Value)
+            .Where(include => !string.IsNullOrWhiteSpace(include))
+            .Select(include => include!.Trim())
+            .ToList();
+
+    private static string? ElementText(string csproj, string name) =>
+        Elements(csproj, name).FirstOrDefault()?.Value.Trim();
+
+    private static IEnumerable<XElement> Elements(string csproj, string name)
+    {
+        XDocument document;
+        try { document = XDocument.Parse(File.ReadAllText(csproj)); }
+        catch { return []; }
+
+        return document.Descendants().Where(x => x.Name.LocalName == name).ToList();
+    }
+
+    private static string RelativeUrl(string root, string path) =>
+        Path.GetRelativePath(root, path).Replace('\\', '/');
 
     /// <summary>
     /// Installed blocks, one path per file, whose bytes differ from what this build would write.

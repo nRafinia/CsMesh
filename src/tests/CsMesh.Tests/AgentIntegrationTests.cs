@@ -68,7 +68,7 @@ public sealed class AgentIntegrationTests : IDisposable
         Assert.True(AgentIntegration.RegisterServer(Mcp, _root, out var second));
 
         Assert.Equal("updated", second);
-        Assert.Equal(1, Read(Mcp).GetProperty("mcpServers").EnumerateObject().Count());
+        Assert.Single(Read(Mcp).GetProperty("mcpServers").EnumerateObject());
     }
 
     [Fact]

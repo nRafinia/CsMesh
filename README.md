@@ -380,16 +380,16 @@ csmesh entrypoints orders
 |:---|:---|
 | `--repo <PATH>` | Target repository root (default: nearest `.sln`, `.slnx`, or `.git` above cwd) |
 | `--under <PATH>` | Restrict the answer to a subtree, e.g. `--under src/Api`. Narrow before raising the budget. |
-| `--project <PATH>` | Pick one project when a name repeats across assemblies, e.g. `--project src/Api`. Exit `3` lists each candidate's project. |
+| `--project <PATH>` | Pick one project when a name repeats across assemblies, e.g. `--project src/Api`. Exit `3` lists each candidate's project. Two overloads in one project need the parameter list instead, e.g. `Type.Member(int, string)`. |
 | `--budget <N>` | Hard token limit for stdout. Exits code `2` on overflow. Defaults per command below. |
-| `--depth <N>` | Traversal depth limit (`trace` 6, `blast-radius` 3, `context` 3, `path` 12, `diff` 3) |
+| `--depth <N>` | Traversal depth limit (`trace` 6, `blast-radius` 3, `context` 3, `path` 12, `diff` 3, `export` neighbourhood 1) |
 | `--heal` | Re-bind changed files before answering, instead of marking rows `[STALE]` |
 | `--json` | Output results in structured JSON format |
 | `--debug` | Print verbose diagnostics to stderr |
 | `--no-telemetry` | Skip recording the invocation in local usage metrics |
 | `-h, --help` | Display command help and usage examples |
 
-Default budgets: `impl` 600, `path` 500, `where`/`trace` 600, `unresolved` 700, `silence` 300, `entrypoints` 800, `map` 850, `context` 900, everything else 800.
+Default budgets: `impl` 600, `path` 500, `where`/`trace` 600, `unresolved` 700, `silence` 300, `entrypoints` 800, `map` 850, `context` 900, `export` 1500, everything else 800.
 
 ---
 
@@ -402,11 +402,22 @@ csmesh map
 csmesh map --under src/Application --budget 400
 ```
 
+#### `csmesh export [<symbol>]`
+Renders the graph as a **Mermaid** or **DOT** diagram: the project graph (default), the namespace graph (`--level namespace`), or the neighbourhood around a symbol (`--depth`, `--direction in|out|both`). The symbol is resolved exactly as `trace` resolves it, overload selector included. Test-tagged nodes and `TypeUse` edges are withheld by default and named in the counts. Node ids are the first 8 hex digits of SHA-256 of each node's stable identity, so a diagram committed to a design doc does not renumber when an unrelated symbol is added.
+```bash
+csmesh export
+csmesh export --level namespace --format dot
+csmesh export OrderService.Process --depth 2 --direction out
+csmesh export --level namespace --out docs/deps.mmd
+```
+Without `--out` the render goes to stdout under the budget: overflow exits `2` and names both remedies (`--out`, a coarser `--level`). With `--out` the whole render is written by temp file and rename, and stdout carries only a budgeted summary (path, format, level, node/edge counts, withheld counts). The path must stay inside the repository root and under an existing directory — otherwise exit `64`; a write failure is exit `70`.
+
 #### `csmesh where <term>` (alias: `find`)
-Finds the symbols a word belongs to, ranked by how many entrypoints reach them. Start here when the task is described in words rather than symbol names; the last line is the next command, already filled in.
+Finds the symbols a word belongs to, ranked by how many entrypoints reach them. Start here when the task is described in words rather than symbol names; the last line is the next command, already filled in. `--unranked` drops the ranking and the next hint and lists every match in stable `Node.Key` order, for diffing two runs or reading the full match set.
 ```bash
 csmesh where discount
 csmesh where checkout refund --under src/Application
+csmesh where discount --unranked
 csmesh find "POST /orders"
 ```
 
@@ -503,7 +514,7 @@ csmesh review --accept               # bless the current state as the new baseli
 ```
 
 #### `csmesh silence <symbol> [<target>]` (alias: `why-not`)
-Why a query came back empty. Exit `1` from any other command means the graph had nothing; it does not say whether the symbol was mistyped, lives in a package, was never bound because the solution was not built, or is reached only through a container scan. Those call for four different next actions.
+Why a query came back empty. Exit `1` from any other command means the graph had nothing; it does not say whether the symbol was mistyped, lives in a package, was never bound because the solution was not built, or is reached only through a container scan. Those call for four different next actions. Given a selector whose name resolves but whose parameter list matches no overload, it lists the overloads that exist, each with its selector, and still exits `1`.
 ```bash
 csmesh silence IPaymentGateway
 csmesh why-not OrderController.Post SqlOrderStore.Save
@@ -525,7 +536,7 @@ csmesh usage --tail 10 # Last 10 raw invocations
 ```
 
 #### `csmesh doctor`
-Diagnoses index freshness, dirty files, caller attribution, and agent skill configurations.
+Diagnoses index freshness, dirty files, caller attribution, and agent skill configurations. It warns when a project's compilation reports CS8795 — a source generator whose output is not on disk — naming the project, the count, and the `EmitCompilerGeneratedFiles=true` build that fixes it. It also warns when a `PackageReference` names an in-scope project's package id: that project's types are not bound through the package, and a `ProjectReference` is the fix.
 ```bash
 csmesh doctor
 ```
@@ -610,7 +621,7 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 | `0` | **Success** | Complete answer returned within budget. | Parse output directly. |
 | `1` | **Not Found** | Symbol does not exist in repository. | Check spelling or verify namespace. |
 | `2` | **Over Budget** | Answer exists but exceeds `--budget`. | Re-run with narrower `--depth` or query a specific callee. |
-| `3` | **Ambiguous** | Multiple symbols match query, including the same name declared in more than one project. | Re-run with qualified `Type.Member`, or with `--project <path>` taken from the candidate list. |
+| `3` | **Ambiguous** | Multiple symbols match query, including the same name declared in more than one project. | Re-run with qualified `Type.Member`, or with `--project <path>` taken from the candidate list. Two overloads in one project defeat `--project`: use the selector each candidate row prints, e.g. `Type.Member(int, string)`. |
 | `4` | **No Index** | No usable graph: not generated, or (for `review`) the index predates HEAD. | Execute `csmesh index` and retry. |
 | `5` | **Changed** (`review` only) | Unaccepted structural change vs. the base revision. | Review the finding, then `csmesh review --accept` if it's fine to keep. |
 | `64`| **Usage Error** | Invalid flags, syntax, or arguments, including `review --accept` while the index predates HEAD. | Run `csmesh <cmd> --help`. |
@@ -621,10 +632,10 @@ A symbol graph is not a replacement for text search or reading code; it is a rep
 
 ## 📊 Telemetry & Audit Logging
 
-Every invocation records an audit log entry in `.csmesh/usage.jsonl` (local to the repository, never sent to external servers):
+Every invocation records an audit log entry in `.csmesh/usage.jsonl` (local to the repository, never sent to external servers). Keys are `snake_case`; `schema_version` is `2` for the current record format, and a line written before the field existed reads as `1`:
 
 ```json
-{"ts":"2026-09-03T15:15:42Z","caller":"claude-code","caller_via":"env:CLAUDECODE","tty":false,"cmd":"trace","args":"PaymentController.Post --budget 600","exit":0,"ms":84,"budget":600,"out_tokens":125,"nodes":160,"edges":380}
+{"schema_version":2,"ts":"2026-09-03T15:15:42Z","caller":"claude-code","caller_via":"env:CLAUDECODE","tty":false,"cmd":"trace","args":"PaymentController.Post --budget 600","budget":600,"exit":0,"ms":84,"out_tokens":125,"would_be_tokens":125,"reserved_tokens":0,"files_referenced":3,"nodes":160,"edges":380}
 ```
 
 Caller detection automatically attributes queries based on environment variables and process trees (`claude-code`, `cursor`, `windsurf`, `cline`, `antigravity`, `terminal-human`).

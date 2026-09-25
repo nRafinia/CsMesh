@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -111,6 +112,66 @@ public sealed class ReleasePublishGateTests
 
         foreach (var buildJob in new[] { "build-aot", "pack-pointer" })
             Assert.Contains("test", Needs(jobs.Single(job => job.Name == buildJob)));
+    }
+
+    /// <summary>
+    /// A dispatch input and the event payload are attacker-controlled once a workflow is
+    /// dispatched, and GitHub splices them into the script text before the shell runs. A
+    /// value like <c>"; rm -rf / #</c> then executes. Binding them through a step-level
+    /// <c>env:</c> variable keeps the value data, not code: the shell reads it as <c>$TAG_NAME</c>.
+    /// This fails the moment a <c>run:</c> block interpolates either context again.
+    /// </summary>
+    [Fact]
+    public void No_run_block_interpolates_dispatch_inputs_or_the_event_payload()
+    {
+        var lines = File.ReadAllLines(RepoFile(Path.Combine(".github", "workflows", "release.yml")));
+        var offenders = new List<string>();
+
+        foreach (var job in ParseJobs(lines))
+        foreach (var step in job.Steps)
+        {
+            var script = ExtractRunScript(step.Body);
+            if (script == null) continue;
+            if (script.Contains("${{ inputs.", StringComparison.Ordinal)
+                || script.Contains("${{ github.event.", StringComparison.Ordinal))
+                offenders.Add($"{job.Name}/{step.Name}");
+        }
+
+        Assert.Empty(offenders);
+    }
+
+    /// <summary>Returns the text of a step's <c>run:</c> script, inline or block scalar.</summary>
+    private static string? ExtractRunScript(IReadOnlyList<string> body)
+    {
+        for (var i = 0; i < body.Count; i++)
+        {
+            var line = body[i];
+            var trimmed = line.TrimStart();
+            if (!trimmed.StartsWith("run:", StringComparison.Ordinal)) continue;
+
+            var indent = line.Length - trimmed.Length;
+            var inline = trimmed["run:".Length..].Trim();
+            if (inline.Length > 0 && inline != "|" && inline != ">")
+                return inline;
+
+            var script = new StringBuilder();
+            for (var j = i + 1; j < body.Count; j++)
+            {
+                var next = body[j];
+                if (next.Trim().Length == 0)
+                {
+                    script.AppendLine(next);
+                    continue;
+                }
+
+                if (next.Length - next.TrimStart().Length <= indent) break;
+                script.AppendLine(next);
+            }
+
+            return script.ToString();
+        }
+
+        return null;
     }
 
     private static IReadOnlyList<string> Needs(Job job)

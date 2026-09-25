@@ -24,6 +24,7 @@ public static class HelpCommand
             "review" => ReviewHelp,
             "silence" or "why-not" => SilenceHelp,
             "map" => MapHelp,
+            "export" => ExportHelp,
             "where" or "find" => WhereHelp,
             "usage" => UsageHelp,
             "doctor" => DoctorHelp,
@@ -47,6 +48,7 @@ public static class HelpCommand
 
         COMMANDS:
             map            Where the weight is: projects, entrypoints, hotspots
+            export         Render the graph as Mermaid or DOT
             where          Find the symbols a word belongs to, ranked by what reaches them
             index          Build or refresh the symbol graph for the repository
             trace          Trace execution paths through DI, MediatR, and interfaces
@@ -215,6 +217,7 @@ public static class HelpCommand
 
         ARGUMENTS:
             <Type.Member>      Target member to trace (e.g. PaymentController.Post)
+                               Overloads: add the parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
@@ -260,6 +263,7 @@ public static class HelpCommand
 
         ARGUMENTS:
             <Type.Member>      Target member to analyze (e.g. Order.Status)
+                               Overloads: add the parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 800, exits code 2 on overflow)
@@ -311,6 +315,7 @@ public static class HelpCommand
 
         ARGUMENTS:
             <Type.Member>      Target symbol (e.g. PaymentService.Process)
+                               Overloads: add the parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 900, exits code 2 on overflow)
@@ -341,6 +346,7 @@ public static class HelpCommand
         ARGUMENTS:
             <From>             Where the request starts (e.g. PaymentController.Post)
             <To>               Where you want to know it arrives (e.g. StripeGateway.Authorize)
+            Either may be an overload: add its parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --budget <N>       Maximum output tokens (default: 500, exits code 2 on overflow)
@@ -534,6 +540,7 @@ public static class HelpCommand
 
         OPTIONS:
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
+            --unranked         List every match in Node.Key order, with no ranking and no next hint
             --budget <N>       Maximum output tokens (default: 600, exits code 2 on overflow)
             --json             Output as a structured JSON envelope
             --repo <PATH>      Repository root
@@ -551,6 +558,10 @@ public static class HelpCommand
 
             The last line is the command to run next, already filled in.
 
+            --unranked drops the ranking and the next hint, and lists every match in the stable
+            Node.Key order instead. Use it when the ranked order is not the question -- diffing two
+            runs, or reading the full match set a ranked answer only samples.
+
             String literals, config values, TODOs and non-.cs files are not in the graph. Use grep
             for those.
 
@@ -560,6 +571,7 @@ public static class HelpCommand
         EXAMPLES:
             csmesh where discount
             csmesh where checkout refund --under src/Application
+            csmesh where discount --unranked
             csmesh find "POST /orders"
         """;
 
@@ -592,6 +604,54 @@ public static class HelpCommand
             csmesh map --under src/Application --budget 400
         """;
 
+    public const string ExportHelp =
+        """
+        csmesh export - Render the graph as Mermaid or DOT
+
+        USAGE:
+            csmesh export [<symbol>] [OPTIONS]
+
+        ARGUMENTS:
+            [<symbol>]         Start of a neighbourhood; omit for project or namespace
+
+        OPTIONS:
+            --level <L>        project | namespace | neighbourhood (default: project, or
+                               neighbourhood when a <symbol> is given)
+            --format <F>       mermaid | dot (default: mermaid)
+            --depth <N>        Neighbourhood rings to walk (default: 1)
+            --direction <D>    in | out | both (default: both; neighbourhood only)
+            --include-tests    Draw test-tagged nodes instead of withholding them
+            --all-edges        Include TypeUse edges instead of withholding them
+            --out <FILE>       Write the complete render to FILE (must be inside the repository)
+                               and print a budgeted summary in its place
+            --budget <N>       Maximum output tokens (default: 1500, exits code 2 on overflow)
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            The rendering is deterministic: two indexes of an unchanged tree produce byte-identical
+            output, because node ids are a hash of each node's stable identity, not a rank that
+            shifts when a symbol is added.
+
+            A symbol is resolved exactly as 'trace' resolves it, overload selector included; the
+            same exit 1 and exit 3 answers apply. Test nodes and TypeUse edges are withheld by
+            default and named in the counts.
+
+            Without --out an over-budget render truncates and exits 2, naming both remedies. With
+            --out the file holds the whole render and only the summary is budgeted.
+
+        EXIT CODES:
+            0 rendered   1 symbol not found   2 over budget   3 ambiguous symbol   4 no index
+            64 bad option or an --out path outside the repository   70 could not write --out
+
+        EXAMPLES:
+            csmesh export
+            csmesh export --level namespace
+            csmesh export --level namespace --format dot
+            csmesh export OrderService.Process --depth 2
+            csmesh export --level namespace --out docs/deps.mmd
+        """;
+
     public const string SilenceHelp =
         """
         csmesh silence - Why a query came back empty
@@ -603,6 +663,7 @@ public static class HelpCommand
         ARGUMENTS:
             <symbol>           The symbol the answer was expected about
             [<target>]         Optional. With two symbols, explains a missing path between them
+            An overload: pass the parameter list, e.g. foo.Bar(int, string)
 
         OPTIONS:
             --depth <N>        How far to walk before giving up (default: 12)
@@ -622,6 +683,10 @@ public static class HelpCommand
             each dead end, and checks whether the route exists in the other direction. With one it
             reports why nothing enters or leaves it, including references that appear in source but
             never bound.
+
+            A selector whose name resolves but whose parameter list matches no overload is not
+            silence: the command lists the overloads that do exist, each with its selector, so one
+            can be pasted back. It still exits 1.
 
         EXIT CODES:
             0 when there was no silence to explain -- the path exists, or the symbol is connected.

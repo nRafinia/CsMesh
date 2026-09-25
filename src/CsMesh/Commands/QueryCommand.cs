@@ -113,7 +113,7 @@ public static class QueryCommand
             }
 
             result.Query = string.Join(" ", opt.Positional);
-            exitCode = Queries.Where(graph, opt.Positional.ToArray(), under, writer, dirtySet);
+            exitCode = Queries.Where(graph, opt.Positional.ToArray(), under, writer, dirtySet, opt.Flag("unranked"));
         }
         else if (kind == "map")
         {
@@ -129,7 +129,10 @@ public static class QueryCommand
                 return Exit.Usage;
             }
 
-            var origin = Single(graph, opt.Positional[0], projectFilter, writer, result, json, dirtySet, out var originExit);
+            // silence is the one command that, handed a selector naming no overload, lists the
+            // overloads that do exist so the caller can pick one.
+            var origin = Single(graph, opt.Positional[0], projectFilter, writer, result, json, dirtySet,
+                                out var originExit, overloadsWhenNoMatch: true);
             if (origin == null) return originExit;
 
             Models.Node? destination = null;
@@ -208,7 +211,13 @@ public static class QueryCommand
                 return Exit.Usage;
             }
 
-            var candidates = graph.Resolve(query);
+            // A selector names one overload of a member the name alone leaves ambiguous; a plain
+            // name resolves exactly as before.
+            var selection = SymbolSelector.Analyze(graph, query);
+            if (selection.Status == SymbolSelector.SelectorStatus.SyntaxError)
+                return SelectorUsage(result, writer, json, selection.Error!);
+
+            var candidates = selection.Matches;
             if (candidates.Count == 0) return NotFound(graph, query, writer, result, json, dirtySet);
 
             var wanted = kind == "impl"
@@ -290,7 +299,7 @@ public static class QueryCommand
     /// answers the single-symbol commands give. Returns null when the caller should stop, with the
     /// exit code already decided.
     /// </summary>
-    private static Models.Node? Single(
+    internal static Models.Node? Single(
         Models.Graph graph,
         string query,
         string? projectFilter,
@@ -298,11 +307,27 @@ public static class QueryCommand
         QueryResult result,
         bool json,
         HashSet<string> dirty,
-        out int exitCode)
+        out int exitCode,
+        bool overloadsWhenNoMatch = false)
     {
-        var candidates = graph.Resolve(query);
+        var selection = SymbolSelector.Analyze(graph, query);
+        if (selection.Status == SymbolSelector.SelectorStatus.SyntaxError)
+        {
+            exitCode = SelectorUsage(result, writer, json, selection.Error!);
+            return null;
+        }
+
+        var candidates = selection.Matches;
         if (candidates.Count == 0)
         {
+            if (overloadsWhenNoMatch && selection.Status == SymbolSelector.SelectorStatus.NoOverloadMatch)
+            {
+                Queries.Overloads(graph, selection.NamePart, selection.NameMatches, writer, dirty);
+                if (json) exitCode = EmitJson(result, writer, Exit.NotFound, null);
+                else { writer.Flush(); exitCode = Exit.NotFound; }
+                return null;
+            }
+
             exitCode = NotFound(graph, query, writer, result, json, dirty);
             return null;
         }
@@ -354,6 +379,17 @@ public static class QueryCommand
         if (json) return EmitJson(result, writer, Exit.NotFound, null, keepRows: true);
         writer.Flush();
         return Exit.NotFound;
+    }
+
+    /// <summary>
+    /// The exit-64 answer for a malformed selector, on the same path the other usage errors take:
+    /// stderr in text mode, the envelope's note under --json.
+    /// </summary>
+    private static int SelectorUsage(QueryResult result, BudgetWriter writer, bool json, string message)
+    {
+        if (json) return EmitJson(result, writer, Exit.Usage, message);
+        Console.Error.WriteLine(message);
+        return Exit.Usage;
     }
 
     private static int NotFound(
@@ -482,13 +518,20 @@ public static class QueryCommand
     {
         writer.Force($"ambiguous: {candidates.Count} matches for '{query}'");
 
-        foreach (var candidate in candidates.Take(12))
+        // Selectors are computed over the whole candidate set, not the twelve that fit, so a
+        // printed one stays unique against every candidate and not just the visible ones.
+        var selectors = SymbolSelector.SelectorsFor(candidates);
+
+        for (var i = 0; i < candidates.Count && i < 12; i++)
         {
+            var candidate = candidates[i];
+            var selector = selectors[i];
+
             // Budget-guarded: a bare member name in a large solution can match hundreds of symbols.
             // The project leads the location so a repeated name -- every linked type, every
             // top-level Program -- can be told apart and pasted into --project.
             var project = candidate.Project.Length > 0 ? $"{candidate.Project}  " : "";
-            if (!writer.Add($"  {candidate.Name}  ({candidate.Kind})  {project}{candidate.File}:{candidate.Line}"))
+            if (!writer.Add($"  {selector}  ({candidate.Kind})  {project}{candidate.File}:{candidate.Line}"))
                 break;
 
             result.Rows.Add(new QueryRow
@@ -497,6 +540,7 @@ public static class QueryCommand
                 Kind = candidate.Kind,
                 Relation = "candidate",
                 Note = candidate.Name,
+                Selector = selector,
                 Project = candidate.Project.Length > 0 ? candidate.Project : null,
                 File = candidate.File.Length > 0 ? candidate.File : null,
                 Line = candidate.Line,
@@ -504,7 +548,13 @@ public static class QueryCommand
             });
         }
 
-        writer.Force("pick one with --project <name> (shown above), or re-run with a qualified Type.Member name.");
+        // Every candidate one member's overloads -- same name, same project -- means --project
+        // cannot separate them, so the footer points at a selector instead.
+        var sameName = candidates.Select(c => c.Name).Distinct(StringComparer.Ordinal).Count() == 1;
+        var sameProject = candidates.Select(c => c.Project).Distinct(StringComparer.Ordinal).Count() == 1;
+        writer.Force(sameName && sameProject && SymbolSelector.HasList(selectors[0])
+            ? $"pick one with its selector, quoted: \"{selectors[0]}\""
+            : "pick one with --project <name> (shown above), or re-run with a qualified Type.Member name.");
 
         if (json) return EmitJson(result, writer, Exit.Ambiguous, null, keepRows: true);
 

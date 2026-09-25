@@ -395,6 +395,32 @@ public static class GraphStore
     }
 
     /// <summary>
+    /// Deletes the base graphs for the revision just written that carry another reference key.
+    ///
+    /// The cache key is (revision, reference set), so one commit can have several files: review it
+    /// again from a tree whose bin/ or assets moved and the old file can never be reused by the run
+    /// that just wrote the new one. The count rule would hold those as dead weight against files for
+    /// other revisions, so this is scoped to the same revision only -- a file for a different sha is
+    /// left to <see cref="PruneBaseGraphs"/>. Best effort: another csmesh reviewing the same
+    /// repository can hold a base graph open on Windows, and that must not turn a review that
+    /// already succeeded into a failure.
+    /// </summary>
+    public static void PruneBaseGraphsForRevision(string root, string sha, string referenceKey)
+    {
+        var dir = DirFor(root);
+        if (!Directory.Exists(dir)) return;
+
+        var current = Path.GetFileName(BaseGraphPathFor(root, sha, referenceKey));
+        foreach (var path in Directory.EnumerateFiles(dir, $"base-{sha}-*.json"))
+        {
+            if (string.Equals(Path.GetFileName(path), current, StringComparison.OrdinalIgnoreCase)) continue;
+
+            try { File.Delete(path); }
+            catch (Exception ex) { Dbg.Log($"could not prune stale base graph '{Path.GetFileName(path)}': {ex.Message}"); }
+        }
+    }
+
+    /// <summary>
     /// Whether this graph was written by a different csmesh build than the one now running.
     ///
     /// Deliberately not a load failure. The file is readable and its answers are the answers the
