@@ -49,36 +49,40 @@ public static partial class Queries
 
     private readonly record struct DrawnEdge(string FromIdentity, string ToIdentity, EdgeKind Kind, EdgeRole? Role, double Score);
 
+    /// <summary>The raw counts of everything the diagram's filters removed.</summary>
+    private readonly record struct Withheld(int TestNodes, int TestEdges, int TypeUseEdges);
+
     public static ExportResult RenderExport(Graph g, ExportRequest req)
     {
-        if (req.Format == "dot") return RenderDotLevel(g, req);
-
-        // Mermaid is the default; the caller has already validated the value.
-        var (nodes, edges, counts) = req.Level switch
+        var (nodes, edges, withheld) = req.Level switch
         {
             "project" => Collapse(g, req),
             _ => throw new ArgumentOutOfRangeException(nameof(req), req.Level)
         };
 
-        var ids = AssignIds(nodes.Select(n => n.Identity).ToList(), Sha256Hex, "p");
+        var ids = AssignIds(nodes.Select(n => n.Identity).ToList(), Sha256Hex, PrefixFor(req.Level));
 
-        var lines = new List<string> { "flowchart LR" };
-        foreach (var node in nodes)
-        {
-            lines.Add($"  {ids[node.Identity]}[\"{EscapeMermaid(node.Label)}\"]");
-        }
-
-        foreach (var edge in edges)
-        {
-            lines.Add(MermaidEdge(ids[edge.FromIdentity], ids[edge.ToIdentity], edge));
-        }
+        var lines = req.Format == "dot"
+            ? RenderDot(nodes, ids, edges)
+            : RenderMermaid(nodes, ids, edges);
 
         return new ExportResult(lines, nodes.Count, edges.Count,
-            counts.TestNodes, counts.TestEdges, counts.TypeUseEdges, 0, 0);
+            withheld.TestNodes, withheld.TestEdges, withheld.TypeUseEdges, 0, 0);
     }
 
-    private static (List<Bucket> Nodes, List<DrawnEdge> Edges, (int TestNodes, int TestEdges, int TypeUseEdges)) Collapse(
-        Graph g, ExportRequest req)
+    private static string PrefixFor(string level) => level switch
+    {
+        "namespace" => "ns",
+        "neighbourhood" => "s",
+        _ => "p"
+    };
+
+    /// <summary>
+    /// Collapses the graph to project buckets. An edge is kept only when both endpoints are
+    /// included, and distinct (from, to, kind) triples become one drawn edge; a self-edge counts
+    /// once, as the ADR measures it.
+    /// </summary>
+    private static (List<Bucket> Nodes, List<DrawnEdge> Edges, Withheld Withheld) Collapse(Graph g, ExportRequest req)
     {
         var included = new List<Node>();
         var testNodes = 0;
@@ -104,23 +108,16 @@ public static partial class Queries
             var to = g.ById(e.To)!;
             var key = (ProjectOf(from), ProjectOf(to), e.Kind);
 
-            if (collapsed.TryGetValue(key, out var existing))
-            {
-                collapsed[key] = (Or(existing.Role, e.Role), Math.Min(existing.Score, e.Score));
-            }
-            else
-            {
-                collapsed[key] = (e.Role, e.Score);
-            }
+            collapsed[key] = collapsed.TryGetValue(key, out var existing)
+                ? (Or(existing.Role, e.Role), Math.Min(existing.Score, e.Score))
+                : (e.Role, e.Score);
         }
 
-        var labels = included
-            .GroupBy(ProjectOf, StringComparer.Ordinal)
-            .ToDictionary(x => x.Key, x => x.Key, StringComparer.Ordinal);
-
-        var nodes = labels.Keys
+        var nodes = included
+            .Select(ProjectOf)
+            .Distinct(StringComparer.Ordinal)
             .OrderBy(x => x, StringComparer.Ordinal)
-            .Select(x => new Bucket(x, labels[x]))
+            .Select(x => new Bucket(x, x))
             .ToList();
 
         var edges = collapsed
@@ -130,11 +127,8 @@ public static partial class Queries
             .Select(x => new DrawnEdge(x.Key.From, x.Key.To, x.Key.Kind, x.Value.Role, x.Value.Score))
             .ToList();
 
-        return (nodes, edges, (testNodes, testEdges, typeUseEdges));
+        return (nodes, edges, new Withheld(testNodes, testEdges, typeUseEdges));
     }
-
-    private static ExportResult RenderDotLevel(Graph g, ExportRequest req) =>
-        throw new ArgumentOutOfRangeException(nameof(req), req.Level);
 
     private static string ProjectOf(Node n) => n.Project;
 
@@ -147,16 +141,61 @@ public static partial class Queries
             ({ } x, { } y) => x | y
         };
 
-    private static string MermaidEdge(string fromId, string toId, DrawnEdge edge)
+    // ------------------------------------------------------------------ formats
+
+    private static List<string> RenderMermaid(List<Bucket> nodes, Dictionary<string, string> ids, List<DrawnEdge> edges)
     {
-        var dashed = (edge.Role is { } role && (role & EdgeRole.Write) != 0) || edge.Score < Edge.TrustThreshold;
-        var arrow = dashed ? "-.->" : "-->";
-        var label = edge.Score < Edge.TrustThreshold ? $"|?{edge.Score:0.00}|" : "";
-        return $"  {fromId} {arrow}{label} {toId}";
+        var lines = new List<string> { "flowchart LR" };
+
+        foreach (var node in nodes)
+        {
+            lines.Add($"  {ids[node.Identity]}[\"{EscapeMermaid(node.Label)}\"]");
+        }
+
+        foreach (var edge in edges)
+        {
+            var dashed = IsDashed(edge);
+            var arrow = dashed ? "-.->" : "-->";
+            var label = edge.Score < Edge.TrustThreshold ? $"|?{edge.Score:0.00}|" : "";
+            lines.Add($"  {ids[edge.FromIdentity]} {arrow}{label} {ids[edge.ToIdentity]}");
+        }
+
+        return lines;
     }
+
+    private static List<string> RenderDot(List<Bucket> nodes, Dictionary<string, string> ids, List<DrawnEdge> edges)
+    {
+        var lines = new List<string> { "digraph G {" };
+
+        foreach (var node in nodes)
+        {
+            lines.Add($"  \"{EscapeDot(ids[node.Identity])}\" [label=\"{EscapeDot(node.Label)}\"];");
+        }
+
+        foreach (var edge in edges)
+        {
+            var attributes = new List<string>();
+            if (IsDashed(edge)) attributes.Add("style=dashed");
+            if (edge.Score < Edge.TrustThreshold) attributes.Add($"label=\"?{edge.Score:0.00}\"");
+            var suffix = attributes.Count == 0 ? "" : " [" + string.Join(", ", attributes) + "]";
+            lines.Add($"  \"{EscapeDot(ids[edge.FromIdentity])}\" -> \"{EscapeDot(ids[edge.ToIdentity])}\"{suffix};");
+        }
+
+        lines.Add("}");
+        return lines;
+    }
+
+    private static bool IsDashed(DrawnEdge edge) =>
+        (edge.Role is { } role && (role & EdgeRole.Write) != 0) || edge.Score < Edge.TrustThreshold;
 
     /// <summary>Mermaid label text: quoted by the caller, so only a quote needs its entity.</summary>
     internal static string EscapeMermaid(string text) => text.Replace("\"", "#quot;", StringComparison.Ordinal);
+
+    /// <summary>DOT ids and labels are quoted, so a quote and a backslash have to be escaped.</summary>
+    internal static string EscapeDot(string text) =>
+        text.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+
+    // ------------------------------------------------------------------ ids
 
     /// <summary>
     /// Assigns a diagram id to every identity: the level prefix plus a hex prefix of SHA-256 of the

@@ -31,12 +31,6 @@ public static class ExportCommand
             return Exit.Usage;
         }
 
-        if (format != "mermaid")
-        {
-            Console.Error.WriteLine("--format dot is not implemented");
-            return Exit.Usage;
-        }
-
         var graph = GraphStore.Load(root, out var problem);
         if (graph == null)
         {

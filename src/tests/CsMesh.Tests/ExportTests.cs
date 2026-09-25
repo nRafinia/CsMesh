@@ -79,6 +79,46 @@ public sealed class ExportTests : IDisposable
     }
 
     [Fact]
+    public void Project_level_dot_renders_the_golden_text()
+    {
+        var graph = BuildAppReferencingLib();
+
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("dot", "project", null, 1, "both", false, false));
+
+        Assert.Equal(
+            "digraph G {\n" +
+            "  \"p0d04bfeb\" [label=\"App\"];\n" +
+            "  \"p8b737b68\" [label=\"Lib\"];\n" +
+            "  \"p0d04bfeb\" -> \"p8b737b68\";\n" +
+            "}",
+            string.Join("\n", result.Lines));
+    }
+
+    [Fact]
+    public void Dot_escapes_quotes_and_backslashes_in_ids_and_labels()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes = [new Node { Id = 0, Name = "T", Short = "T", Kind = "type", Project = "a\"b\\c", Key = "k|T|type" }]
+        };
+        graph.Freeze();
+
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("dot", "project", null, 1, "both", false, false));
+        var text = string.Join("\n", result.Lines);
+
+        Assert.Contains("label=\"a\\\"b\\\\c\"", text);
+    }
+
+    [Fact]
+    public void Mermaid_renders_a_quote_as_the_quot_entity()
+    {
+        Assert.Equal("a#quot;b", Queries.EscapeMermaid("a\"b"));
+    }
+
+    [Fact]
     public void Rendering_the_same_graph_twice_is_byte_identical()
     {
         var graph = BuildAppReferencingLib();
