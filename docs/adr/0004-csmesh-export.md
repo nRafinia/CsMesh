@@ -16,23 +16,23 @@ A throwaway PowerShell script over each solution's `.csmesh/graph.json` (dev bui
 
 | level | solution | nodes | collapsed edges | Mermaid chars | Mermaid tokens | DOT chars | DOT tokens |
 |---|---|---|---|---|---|---|---|
-| project | CsMesh | 3 | 4 | 221 | 59 | 291 | 76 |
-| project | S | 21 | 105 | 4352 | 1158 | 5609 | 1465 |
-| namespace | CsMesh | 11 | 50 | 1876 | 485 | 2435 | 616 |
-| namespace | S | 49 | 241 | 9769 | 2501 | 12328 | 3111 |
+| project | CsMesh | 2 | 2 | 141 | 38 | 193 | 50 |
+| project | S | 20 | 102 | 4246 | 1130 | 5481 | 1431 |
+| namespace | CsMesh | 11 | 44 | 1686 | 437 | 2203 | 558 |
+| namespace | S | 49 | 235 | 9601 | 2459 | 12136 | 3063 |
 
-**Bucket rule.** A project bucket is the node's owning project; a node with none -- a synthesized top-level program, a synthetic tuple/anonymous signature -- is the `(no project)` bucket. A namespace bucket is the namespace of the node's outermost containing type, never a type name: a nested type and its members land in the outer namespace, and a synthetic node with no determinable declaring type is the `(global)` bucket. A namespace no symbol declares is not a bucket. The counts above are corrected on 2026-09-25: the first measurement bucketed members under their declaring type name, so nested-type containers appeared as namespaces, and it drew same-bucket self-loops instead of withholding them as internal.
+**Bucket rule.** A project bucket is the node's owning project; a node with none that is not synthetic -- a synthesized top-level program -- is the `(no project)` bucket. A namespace bucket is the namespace of the node's outermost containing type, never a type name: a nested type and its members land in the outer namespace, and a non-synthetic node with no determinable declaring type is the `(global)` bucket. A namespace no symbol declares is not a bucket. The counts above are corrected on 2026-09-25: the first measurement bucketed members under their declaring type name, so nested-type containers appeared as namespaces; a later one drew same-bucket self-loops instead of withholding them as internal; and synthetic nodes are now withheld, so a bucket that held only synthetic nodes (the empty project) disappears and `(global)` keeps only its non-synthetic nodes.
 
-CsMesh's third project bucket is the empty project of a synthesized top-level node (see "Node identity"); the real project count is two. "S" is a second, private solution measured the same way.
+CsMesh's real project count is two; an empty-project bucket appears only while it holds a node that is not synthetic. "S" is a second, private solution measured the same way.
 
 Collapsed edges per kind:
 
 | level | solution | Call | Construct | Interface | Override | DiBinding | Mediatr | Route | TypeUse |
 |---|---|---|---|---|---|---|---|---|---|
-| project | CsMesh | 3 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| namespace | CsMesh | 38 | 12 | 0 | 0 | 0 | 0 | 0 | 0 |
-| project | S | 51 | 33 | 15 | 1 | 5 | 0 | 0 | 0 |
-| namespace | S | 151 | 66 | 15 | 1 | 5 | 0 | 1 | 2 |
+| project | CsMesh | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| namespace | CsMesh | 34 | 10 | 0 | 0 | 0 | 0 | 0 | 0 |
+| project | S | 48 | 33 | 15 | 1 | 5 | 0 | 0 | 0 |
+| namespace | S | 145 | 66 | 15 | 1 | 5 | 0 | 1 | 2 |
 
 The graph totals behind those collapses: CsMesh 2766 nodes / 8566 edges, of which 2397 are `TypeUse`; S 1945 / 5328, of which 1453 are `TypeUse`. Test-tagged nodes (`Node.Tags` contains `test`, `src/CsMesh/Analysis/Queries.cs:481`): 1047 CsMesh, 461 S; edges touching one: 3901 and 2526. Edges below the 0.80 trust threshold (`src/CsMesh/Models/Edge.cs:56`): **0** in both — S has exactly two edges carrying confidence, both 0.9. So the low-confidence rule below is defined but unexercised by either solution.
 
@@ -103,6 +103,7 @@ Edge `Role` (`src/CsMesh/Models/Edge.cs:38-49`) does not create separate edges. 
 
 - **Confidence < 0.80** (`Edge.Score`, threshold `Edge.cs:56`) is a guess, and the convention everywhere else in csmesh is to say so rather than hide it: rows carry `?score`. Export draws such an edge **dashed with a `?0.xx` label** rather than excluding it. Neither measured graph has one, so this rule costs nothing today and states the contract for the graphs that do.
 - **`{test}` nodes** (`Node.Tags` contains `test`) are **excluded by default**, the way `blast-radius` separates production callers from tests (`Queries.cs:350-351`). The summary line states how many nodes and edges were withheld, so the omission is visible. `--include-tests` adds them.
+- **Synthetic nodes** -- the compiler-generated tuple or anonymous type a name refers to, and its members -- are **excluded**, and their edges with them, and are counted as `synthetic N node(s), M edge(s)`: a diagram of a compiler's own display text is not a picture of the code. The rule reads the node's own display name; the graph records no tuple/anonymous flag. `--include-tests` does not add them back.
 
 ### 4. Deterministic order, ids and labels
 
@@ -123,7 +124,7 @@ Labels:
 
 ### 5. Budget — truncate to stdout, or write a file with `--out`
 
-All answer text goes through `BudgetWriter`. The measurement settles the shape: the project level fits any sensible budget, but the namespace level and a hub's depth-1 neighbourhood do not. The private solution's namespace render is **2501 Mermaid tokens / 3111 DOT tokens** (the table above); CsMesh's top-degree symbol is **5412 / 6857 tokens at depth 1** and **10913 / 14017 at depth 2**, the private solution's **1990 / 2496** then **15670 / 20226**. Only `--level project` fits a default budget; nothing coarser does.
+All answer text goes through `BudgetWriter`. The measurement settles the shape: the project level fits any sensible budget, but the namespace level and a hub's depth-1 neighbourhood do not. The private solution's namespace render is **2459 Mermaid tokens / 3063 DOT tokens** (the table above); CsMesh's top-degree symbol is **5412 / 6857 tokens at depth 1** and **10913 / 14017 at depth 2**, the private solution's **1990 / 2496** then **15670 / 20226**. Only `--level project` fits a default budget; nothing coarser does.
 
 Two options were rejected each on its own:
 
