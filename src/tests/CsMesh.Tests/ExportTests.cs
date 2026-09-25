@@ -500,6 +500,66 @@ public sealed class ExportTests : IDisposable
         }
     }
 
+    // ------------------------------------------------------------------ namespace rule
+
+    /// <summary>
+    /// The namespace level buckets by declaring type, not by the parent prefix of a name: a
+    /// namespace no symbol declares is not drawn; a nested type keeps its containing type; an
+    /// interface member lands under its interface; and a node whose declaring type cannot be
+    /// determined (a tuple-typed synthetic node) has no namespace rather than a bucket invented from
+    /// its display name.
+    /// </summary>
+    [Fact]
+    public void The_namespace_level_counts_declared_buckets_not_name_prefixes()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "src"));
+        File.WriteAllText(Path.Combine(_root, "src", "Ns.cs"), """
+            namespace A.B.C
+            {
+                public class Outer
+                {
+                    public class Inner { public void Nested() { } }
+                    public void Take((int major, int minor) v) { }
+                }
+
+                public interface IThing { void Do(); }
+                public class Thing : IThing { public void Do() { } }
+            }
+            """);
+
+        var graph = Indexer.Build(_root);
+
+        // The indexer produces synthetic nodes for tuple/anonymous signatures whose display name is
+        // not a qualified name; one is appended here because the bare fixture does not compile far
+        // enough to emit one.
+        graph.Nodes.Add(new Node
+        {
+            Id = graph.Nodes.Count,
+            Name = "(System.Type Type, string Property)",
+            Short = "Property",
+            Kind = "field",
+            Project = "",
+            Key = "synthetic|tuple|field"
+        });
+        graph.InvalidateLookups();
+        graph.Freeze();
+
+        var of = Queries.NamespaceResolver(graph);
+
+        Node Find(string name) => graph.Nodes.First(n => n.Name == name);
+
+        // A declared namespace is a bucket.
+        Assert.Equal("A.B.C", of(Find("A.B.C.Outer")));
+        // A nested type keeps its containing type as its bucket.
+        Assert.Equal("A.B.C.Outer", of(Find("A.B.C.Outer.Inner")));
+        // An interface member lands under its interface's namespace.
+        Assert.Equal("A.B.C", of(Find("A.B.C.IThing.Do")));
+        // A synthetic node is not given a namespace invented from its display name.
+        Assert.Equal("", of(Find("(System.Type Type, string Property)")));
+        // No parent prefix is drawn.
+        Assert.DoesNotContain(graph.Nodes.Select(of), ns => ns is "A" or "A.B");
+    }
+
     // ------------------------------------------------------------------ budget and exits
 
     [Fact]
