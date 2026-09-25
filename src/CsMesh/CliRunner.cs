@@ -69,6 +69,7 @@ public static class CliRunner
             "review" => ReviewCommand.Execute(root, opt),
             "silence" or "why-not" => QueryCommand.Execute(root, opt, "silence"),
             "map" => QueryCommand.Execute(root, opt, "map"),
+            "export" => ExportCommand.Execute(root, opt),
             "serve" => Mcp.McpServer.Run(root),
             "usage" => UsageCommand.Execute(root, opt),
             "doctor" => DoctorCommand.Execute(root, opt),

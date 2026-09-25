@@ -24,6 +24,7 @@ public static class HelpCommand
             "review" => ReviewHelp,
             "silence" or "why-not" => SilenceHelp,
             "map" => MapHelp,
+            "export" => ExportHelp,
             "where" or "find" => WhereHelp,
             "usage" => UsageHelp,
             "doctor" => DoctorHelp,
@@ -47,6 +48,7 @@ public static class HelpCommand
 
         COMMANDS:
             map            Where the weight is: projects, entrypoints, hotspots
+            export         Render the graph as Mermaid or DOT
             where          Find the symbols a word belongs to, ranked by what reaches them
             index          Build or refresh the symbol graph for the repository
             trace          Trace execution paths through DI, MediatR, and interfaces
@@ -600,6 +602,33 @@ public static class HelpCommand
         EXAMPLES:
             csmesh map
             csmesh map --under src/Application --budget 400
+        """;
+
+    public const string ExportHelp =
+        """
+        csmesh export - Render the graph as Mermaid or DOT
+
+        USAGE:
+            csmesh export [<symbol>] [OPTIONS]
+
+        OPTIONS:
+            --level <L>        project | namespace | neighbourhood (default: project)
+            --format <F>       mermaid | dot (default: mermaid)
+            --budget <N>       Maximum output tokens (default: 1500, exits code 2 on overflow)
+            --repo <PATH>      Repository root
+            -h, --help         Print help information
+
+        NOTES:
+            The rendering is deterministic: two indexes of an unchanged tree produce byte-identical
+            output, because node ids are a hash of each node's stable identity, not a rank that
+            shifts when a symbol is added.
+
+        EXIT CODES:
+            0 rendered   2 over budget   4 no index   64 bad option
+
+        EXAMPLES:
+            csmesh export
+            csmesh export --level project
         """;
 
     public const string SilenceHelp =
