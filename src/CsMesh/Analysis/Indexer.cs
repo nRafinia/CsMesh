@@ -467,8 +467,8 @@ public static partial class Indexer
     /// rule stays the base scope's own assemblies, because those are exactly the types the base
     /// compiles from source and must not also load as references.
     /// </summary>
-    public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false,
-                              string? referenceRoot = null)
+    public static IndexBuild BuildWithScope(string root, Action<string>? progress = null, bool includeAllProjects = false,
+                                            string? referenceRoot = null)
     {
         var scope = includeAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
 
@@ -679,8 +679,16 @@ public static partial class Indexer
         graph.AmbiguousDiRegistrations = builder.AmbiguousDiRegistrations;
         graph.AmbiguousMessageDispatches = builder.AmbiguousMessageDispatches;
         graph.UnmatchedMessageDispatches = builder.UnmatchedMessageDispatches;
-        return graph;
+        return new IndexBuild(graph, scope);
     }
+
+    /// <summary>
+    /// The graph alone. <see cref="BuildWithScope"/> returns the scope that decided it too, so a
+    /// caller that reports on scope reads the one the build used instead of deriving a second one.
+    /// </summary>
+    public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false,
+                              string? referenceRoot = null) =>
+        BuildWithScope(root, progress, includeAllProjects, referenceRoot).Graph;
 
     /// <summary>
     /// How many .cs files sit outside every project while the repository has projects. Counted

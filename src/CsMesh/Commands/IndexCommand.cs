@@ -21,7 +21,8 @@ public static class IndexCommand
             return patched;
         }
 
-        var graph = Indexer.Build(root, message => Dbg.Log(message), opt.Flag("all"));
+        var built = Indexer.BuildWithScope(root, message => Dbg.Log(message), opt.Flag("all"));
+        var graph = built.Graph;
 
         using (Timings.Phase("save"))
         {
@@ -40,7 +41,7 @@ public static class IndexCommand
         e.Line($"indexed {graph.Files.Count} files -> {graph.Nodes.Count} nodes, " +
                           $"{graph.Edges.Count} edges in {clock.Elapsed.TotalSeconds:F1}s");
 
-        ReportStandingConditions(graph, fromFullIndex: true, e);
+        ReportStandingConditions(graph, fromFullIndex: true, built.Scope, report, e);
 
         if (Dbg.On)
         {
@@ -127,7 +128,7 @@ public static class IndexCommand
 
             e.Line($"index is current: {existing.Nodes.Count} nodes, {existing.Edges.Count} edges, " +
                               $"built {Ago(existing.BuiltAt)}");
-            ReportStandingConditions(existing, fromFullIndex: existing.IncrementalRefreshes == 0, e);
+            ReportStandingConditions(existing, fromFullIndex: existing.IncrementalRefreshes == 0, scope: null, report, e);
             return true;
         }
 
@@ -140,8 +141,9 @@ public static class IndexCommand
         }
 
         var before = (Nodes: existing.Nodes.Count, Edges: existing.Edges.Count);
-        var patched = Indexer.BuildIncremental(existing, dirty, message => Dbg.Log(message));
-        if (patched == null) return false;
+        var patch = Indexer.BuildIncrementalWithScope(existing, dirty, message => Dbg.Log(message));
+        if (patch is null) return false;
+        var patched = patch.Graph;
 
         // The previous snapshot is deliberately not rotated here. 'changes' compares against the
         // last full index; rotating on every small patch would leave it comparing a graph to
@@ -170,7 +172,7 @@ public static class IndexCommand
         e.Line($"rebound {dirty.Count} file(s) -> {patched.Nodes.Count} nodes ({Delta(dn)}), " +
                           $"{patched.Edges.Count} edges ({Delta(de)}) in {clock.Elapsed.TotalSeconds:F1}s");
 
-        ReportStandingConditions(patched, fromFullIndex: false, e);
+        ReportStandingConditions(patched, fromFullIndex: false, patch.Scope, report, e);
         return true;
     }
 
@@ -183,8 +185,22 @@ public static class IndexCommand
     /// a single line saying the index was current, which is a much weaker claim than it reads as:
     /// the index is as complete as it was, and it was never complete.
     /// </summary>
-    private static void ReportStandingConditions(Graph graph, bool fromFullIndex, Emit e)
+    private static void ReportStandingConditions(Graph graph, bool fromFullIndex, ProjectScope? scope,
+                                                 IndexReport report, Emit e)
     {
+        // The scope a solution finding is reported against is the one the build actually used,
+        // carried on the build result. A run that did not build -- the no-change incremental path --
+        // passes null and prints nothing; doctor stays the command that always recomputes and shows
+        // it. Nothing here reads the graph for scope or derives a second scope of its own.
+        if (scope is not null)
+        {
+            report.SolutionFindings = scope.SolutionFindings.ToList();
+            foreach (var line in SolutionScopeWarnings.Lines(scope))
+            {
+                e.Line(line);
+            }
+        }
+
         if (graph.SkippedProjects.Count > 0)
         {
             e.Line($"skipped {graph.SkippedProjects.Count} project(s): {graph.SkippedProjectsReason}");

@@ -93,6 +93,12 @@ public sealed class DoctorReport
     /// </summary>
     public List<ProjectPackageFinding> PackageReferencesToProjects { get; set; } = [];
 
+    /// <summary>
+    /// Solutions that were found but did not fully decide scope: unmatched paths, a file listing no
+    /// project path, or an unreadable file. Empty when no solution decided nothing.
+    /// </summary>
+    public List<SolutionScopeFinding> SolutionFindings { get; set; } = [];
+
     /// <summary>The report as a terminal would have shown it.</summary>
     public List<string> Text { get; set; } = [];
 }
@@ -174,6 +180,12 @@ public sealed class IndexReport
     public int UnresolvedCallSites { get; set; }
     public int ReferenceCount { get; set; }
     public string BuiltByVersion { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Solutions that were found but did not fully decide scope, recomputed from the tree the index
+    /// just read. Same shape as DoctorReport.SolutionFindings so a caller can read either.
+    /// </summary>
+    public List<SolutionScopeFinding> SolutionFindings { get; set; } = [];
 
     public List<string> Text { get; set; } = [];
 }

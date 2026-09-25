@@ -74,11 +74,15 @@ public static partial class Indexer
     /// Patches <paramref name="previous"/> in place and returns it, or null when the edit is one
     /// this path will not attempt. Null is not a failure: it means run a full index.
     /// </summary>
-    public static Graph? BuildIncremental(Graph previous, IReadOnlyList<string> dirty, Action<string>? progress = null)
+    public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, Action<string>? progress = null)
     {
         var root = previous.Root;
 
-        if (dirty.Count == 0) return previous;
+        if (dirty.Count == 0)
+        {
+            var unchanged = previous.IndexedAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
+            return new IndexBuild(previous, unchanged);
+        }
 
         if (dirty.Count > MaxIncrementalFiles)
         {
@@ -298,8 +302,15 @@ public static partial class Indexer
         // number with a fragment of one. They stay as the last full index left them, and the
         // refresh counter is how 'doctor' knows which index they came from.
         previous.Freeze();
-        return previous;
+        return new IndexBuild(previous, scope);
     }
+
+    /// <summary>
+    /// The patched graph alone. <see cref="BuildIncrementalWithScope"/> returns the scope that
+    /// decided the pass too, so a caller reporting on scope reads the one the pass used.
+    /// </summary>
+    public static Graph? BuildIncremental(Graph previous, IReadOnlyList<string> dirty, Action<string>? progress = null) =>
+        BuildIncrementalWithScope(previous, dirty, progress)?.Graph;
 
     /// <summary>
     /// Directory write times, used as the cheap gate that decides whether a query has to walk the

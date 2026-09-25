@@ -94,6 +94,17 @@ public static class DoctorCommand
                 e.Line("  include them with: csmesh index --all");
             }
 
+            // A solution that was found but did not fully decide scope is named here, so a fall
+            // back to the ProjectReference closure is never silent. Recomputed from the tree, like
+            // the package-reference warning below: the graph stores counts, not the solutions'
+            // paths, so nothing had to be persisted and no format changed.
+            var scope = graph.IndexedAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
+            report.SolutionFindings = scope.SolutionFindings.ToList();
+            foreach (var line in SolutionScopeWarnings.Lines(scope))
+            {
+                e.Line(line);
+            }
+
             // Source the ownership rules left out is named rather than dropped in silence. Both are
             // printed only when non-zero so the common case stays quiet.
             if (graph.ExcludedLooseFiles > 0)
@@ -185,7 +196,7 @@ public static class DoctorCommand
             }
 
             MissingGeneratedOutputWarnings(root, graph, report, e);
-            ProjectPackageReferenceWarnings(root, graph, report, e);
+            ProjectPackageReferenceWarnings(root, scope, report, e);
 
             Quality(graph, e);
         }
@@ -287,10 +298,8 @@ public static class DoctorCommand
     /// Condition attributes are ignored, exactly as <see cref="ProjectScope"/> ignores them when it
     /// decides what is in scope.
     /// </summary>
-    private static void ProjectPackageReferenceWarnings(string root, Graph graph, DoctorReport report, Emit e)
+    private static void ProjectPackageReferenceWarnings(string root, ProjectScope scope, DoctorReport report, Emit e)
     {
-        var scope = graph.IndexedAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
-
         // LiveDirectories are the in-scope project directories; a directory with no csproj has no
         // package id to compare against, so it is dropped rather than guessed at.
         var projects = scope.LiveDirectories
