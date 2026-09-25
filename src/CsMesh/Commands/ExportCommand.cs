@@ -146,6 +146,8 @@ public static class ExportCommand
             withheld.Add($"test code {result.TestNodesWithheld} node(s), {result.TestEdgesWithheld} edge(s)");
         if (result.TypeUseEdgesWithheld > 0)
             withheld.Add($"TypeUse {result.TypeUseEdgesWithheld} edge(s)");
+        if (result.InternalEdgesWithheld > 0)
+            withheld.Add($"internal {result.InternalEdgesWithheld} edge(s)");
         if (result.NodesBeyondDepth > 0 || result.EdgesBeyondDepth > 0)
             withheld.Add($"beyond depth {result.NodesBeyondDepth} node(s), {result.EdgesBeyondDepth} edge(s)");
         if (withheld.Count > 0) writer.Force("withheld: " + string.Join("; ", withheld));

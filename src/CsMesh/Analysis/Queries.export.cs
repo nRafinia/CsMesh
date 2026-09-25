@@ -42,6 +42,7 @@ public static partial class Queries
         int TestNodesWithheld,
         int TestEdgesWithheld,
         int TypeUseEdgesWithheld,
+        int InternalEdgesWithheld,
         int NodesBeyondDepth,
         int EdgesBeyondDepth);
 
@@ -50,7 +51,7 @@ public static partial class Queries
     private readonly record struct DrawnEdge(string FromIdentity, string ToIdentity, EdgeKind Kind, EdgeRole? Role, double Score);
 
     /// <summary>The raw counts of everything the diagram's filters removed.</summary>
-    private readonly record struct Withheld(int TestNodes, int TestEdges, int TypeUseEdges);
+    private readonly record struct Withheld(int TestNodes, int TestEdges, int TypeUseEdges, int InternalEdges);
 
     /// <summary>A level's filtered graph plus what a depth limit left out of it.</summary>
     private readonly record struct LevelResult(
@@ -74,7 +75,7 @@ public static partial class Queries
 
         return new ExportResult(lines, level.Nodes.Count, level.Edges.Count,
             level.Withheld.TestNodes, level.Withheld.TestEdges, level.Withheld.TypeUseEdges,
-            level.BeyondNodes, level.BeyondEdges);
+            level.Withheld.InternalEdges, level.BeyondNodes, level.BeyondEdges);
     }
 
     private static string PrefixFor(string level) => level switch
@@ -104,6 +105,7 @@ public static partial class Queries
 
         var testEdges = 0;
         var typeUseEdges = 0;
+        var internalEdges = 0;
         var collapsed = new Dictionary<(string From, string To, EdgeKind Kind), (EdgeRole? Role, double Score)>();
 
         foreach (var e in g.Edges)
@@ -115,6 +117,10 @@ public static partial class Queries
             // in a bucket at any level; an edge that lands on one has nowhere to point here.
             if (identityOf(g.ById(e.From)!) is not { } fromIdentity) continue;
             if (identityOf(g.ById(e.To)!) is not { } toIdentity) continue;
+
+            // Both ends in one bucket is not a relationship between two things the diagram draws;
+            // a self-loop is unreadable and carries no structure, so it is withheld and counted.
+            if (fromIdentity == toIdentity) { internalEdges++; continue; }
 
             var key = (fromIdentity, toIdentity, e.Kind);
             collapsed[key] = collapsed.TryGetValue(key, out var existing)
@@ -139,7 +145,7 @@ public static partial class Queries
             .Select(x => new DrawnEdge(x.Key.From, x.Key.To, x.Key.Kind, x.Value.Role, x.Value.Score))
             .ToList();
 
-        return new LevelResult(nodes, edges, new Withheld(testNodes, testEdges, typeUseEdges), 0, 0);
+        return new LevelResult(nodes, edges, new Withheld(testNodes, testEdges, typeUseEdges, internalEdges), 0, 0);
     }
 
     /// <summary>
@@ -244,7 +250,7 @@ public static partial class Queries
             .ThenBy(x => x.Kind)
             .ToList();
 
-        return new LevelResult(nodes, drawn, new Withheld(testNodes, testEdges, typeUseEdges), beyond.Count, beyondEdges);
+        return new LevelResult(nodes, drawn, new Withheld(testNodes, testEdges, typeUseEdges, 0), beyond.Count, beyondEdges);
     }
 
     /// <summary>

@@ -308,6 +308,41 @@ public sealed class ExportTests : IDisposable
         Assert.Equal("Real.Ns", of(graph.Nodes[2]));
     }
 
+    [Fact]
+    public void A_same_bucket_edge_is_withheld_as_internal_at_bucket_levels_only()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes =
+            [
+                new Node { Id = 0, Name = "A.T", Short = "T", Kind = "type", Project = "P", Key = "k0" },
+                new Node { Id = 1, Name = "A.U", Short = "U", Kind = "type", Project = "P", Key = "k1" },
+                new Node { Id = 2, Name = "B.V", Short = "V", Kind = "type", Project = "Q", Key = "k2" }
+            ],
+            Edges =
+            [
+                new Edge { From = 0, To = 1, Kind = EdgeKind.Call },
+                new Edge { From = 0, To = 2, Kind = EdgeKind.Call }
+            ]
+        };
+        graph.Freeze();
+
+        var project = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "project", null, 1, "both", false, false));
+        var ns = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, false));
+        var neighbourhood = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "neighbourhood", graph.Nodes[0], 1, "both", false, false));
+
+        Assert.Equal(1, project.Edges);
+        Assert.Equal(1, project.InternalEdgesWithheld);
+        Assert.Equal(1, ns.Edges);
+        Assert.Equal(1, ns.InternalEdgesWithheld);
+        Assert.Equal(2, neighbourhood.Edges);
+        Assert.Equal(0, neighbourhood.InternalEdgesWithheld);
+    }
+
     // ------------------------------------------------------------------ edge kinds
 
     [Fact]
@@ -319,7 +354,7 @@ public sealed class ExportTests : IDisposable
             Nodes =
             [
                 new Node { Id = 0, Name = "P.A", Short = "A", Kind = "type", Project = "P", Key = "p|A|type" },
-                new Node { Id = 1, Name = "P.B", Short = "B", Kind = "type", Project = "P", Key = "p|B|type" }
+                new Node { Id = 1, Name = "Q.B", Short = "B", Kind = "type", Project = "Q", Key = "q|B|type" }
             ],
             Edges = Enum.GetValues<EdgeKind>()
                 .Select(k => new Edge { From = 0, To = 1, Kind = k })
@@ -599,7 +634,7 @@ public sealed class ExportTests : IDisposable
     public void Overflow_exits_two_and_names_both_remedies()
     {
         var lines = Enumerable.Range(0, 80).Select(i => $"  p{i} --> q{i}").ToList();
-        var result = new Queries.ExportResult(lines, 80, 80, 0, 0, 0, 0, 0);
+        var result = new Queries.ExportResult(lines, 80, 80, 0, 0, 0, 0, 0, 0);
 
         var exit = ExportCommand.Write(result, budget: 200, level: "project", out var writer);
         var text = string.Join("\n", writer.Lines);
