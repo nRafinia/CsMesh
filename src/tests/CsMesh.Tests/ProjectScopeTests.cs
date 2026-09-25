@@ -49,6 +49,36 @@ public sealed class ProjectScopeTests : IDisposable
         Assert.Contains("Dead", scope.Reason.Length > 0 ? string.Join(",", scope.Excluded) : "");
     }
 
+    /// <summary>
+    /// The .sln a Windows tool writes carries backslashes. On Linux a backslash is an ordinary
+    /// filename character, so the path only resolves after it is normalized; otherwise the solution
+    /// matches nothing and the scope silently falls back to the ProjectReference closure, which drops
+    /// a library nothing references.
+    /// </summary>
+    [Fact]
+    public void A_backslash_sln_naming_a_library_keeps_it_in_scope()
+    {
+        Write("App.sln",
+            "Microsoft Visual Studio Solution File, Format Version 12.00\n" +
+            "Project(\"{FAE04EC0}\") = \"Dead\", \"src\\Dead\\Dead.csproj\", \"{2222}\"\nEndProject\n");
+
+        var scope = ProjectScope.Discover(_root);
+
+        Assert.True(scope.Includes(Path_("src/Dead/Code.cs")));
+        Assert.Contains("App.sln", scope.Decision);
+    }
+
+    [Fact]
+    public void A_backslash_slnx_naming_a_library_keeps_it_in_scope()
+    {
+        Write("App.slnx", "<Solution><Project Path=\"src\\Dead\\Dead.csproj\" /></Solution>");
+
+        var scope = ProjectScope.Discover(_root);
+
+        Assert.True(scope.Includes(Path_("src/Dead/Code.cs")));
+        Assert.Contains("App.slnx", scope.Decision);
+    }
+
     [Fact]
     public void The_old_sln_format_is_read_too()
     {
@@ -60,6 +90,7 @@ public sealed class ProjectScopeTests : IDisposable
 
         Assert.True(scope.Includes(Path_("src/Live/Code.cs")));
         Assert.False(scope.Includes(Path_("src/Dead/Code.cs")));
+        Assert.Contains("App.sln", scope.Decision);
     }
 
     [Fact]
