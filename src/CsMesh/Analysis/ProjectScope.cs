@@ -252,6 +252,13 @@ public sealed class ProjectScope
 
     // ------------------------------------------------------------------ solution files
 
+    /// <summary>
+    /// Reads the shallowest solution files and keeps only the projects they name. A solution path is
+    /// written with the separator of the machine that produced it: a .sln from Visual Studio carries
+    /// backslashes even when it lands on Linux, where a backslash is an ordinary filename character.
+    /// Left unnormalized, the combined path matches nothing on disk and the scope silently falls back
+    /// to the ProjectReference closure, which drops any project that closure cannot reach.
+    /// </summary>
     private static ProjectScope? FromSolutions(string root, List<string> projects)
     {
         // Only the shallowest solutions get a vote. A vendored library or submodule under
@@ -274,7 +281,8 @@ public sealed class ProjectScope
             {
                 try
                 {
-                    named.Add(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(solution)!, path)));
+                    var relative = path.Replace('\\', Path.DirectorySeparatorChar);
+                    named.Add(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(solution)!, relative)));
                 }
                 catch
                 {
