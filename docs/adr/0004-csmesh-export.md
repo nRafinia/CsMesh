@@ -18,8 +18,10 @@ A throwaway PowerShell script over each solution's `.csmesh/graph.json` (dev bui
 |---|---|---|---|---|---|---|---|
 | project | CsMesh | 3 | 11 | 297 | 81 | 426 | 111 |
 | project | S | 21 | 162 | 4473 | 1172 | 6105 | 1588 |
-| namespace | CsMesh | 39 | 202 | 6170 | 1661 | 8306 | 2161 |
-| namespace | S | 80 | 404 | 37696 | 9647 | 41978 | 10618 |
+| namespace | CsMesh | 37 | 200 | 7929 | 2059 | 10294 | 2613 |
+| namespace | S | 62 | 380 | 15407 | 3986 | 19857 | 5035 |
+
+**Namespace rule.** A node's namespace bucket is its declaring type's: a top-level type buckets under its namespace, a nested type under its containing type, a member under its declaring type. A name that no symbol declares is not a bucket, so `A.B` is not drawn when only `A.B.C` declares symbols. A node whose declaring type cannot be determined -- a synthetic node named after a tuple or anonymous signature -- belongs to no namespace (the global bucket) rather than to a bucket invented from its display name. The first measurement above did not apply this rule and counted signature prefixes as namespaces, which inflated S; the counts are corrected on 2026-09-25.
 
 CsMesh's third project bucket is the empty project of a synthesized top-level node (see "Node identity"); the real project count is two. "S" is a second, private solution measured the same way.
 
@@ -28,9 +30,9 @@ Collapsed edges per kind:
 | level | solution | Call | Construct | Interface | Override | DiBinding | Mediatr | Route | TypeUse |
 |---|---|---|---|---|---|---|---|---|---|
 | project | CsMesh | 5 | 3 | 0 | 0 | 0 | 0 | 1 | 2 |
-| namespace | CsMesh | 130 | 40 | 0 | 0 | 0 | 0 | 1 | 31 |
+| namespace | CsMesh | 128 | 40 | 0 | 0 | 0 | 0 | 1 | 31 |
 | project | S | 67 | 44 | 19 | 3 | 9 | 0 | 1 | 19 |
-| namespace | S | 218 | 91 | 21 | 3 | 10 | 0 | 2 | 59 |
+| namespace | S | 195 | 91 | 21 | 3 | 10 | 0 | 2 | 58 |
 
 The graph totals behind those collapses: CsMesh 2766 nodes / 8566 edges, of which 2397 are `TypeUse`; S 1945 / 5328, of which 1453 are `TypeUse`. Test-tagged nodes (`Node.Tags` contains `test`, `src/CsMesh/Analysis/Queries.cs:481`): 1047 CsMesh, 461 S; edges touching one: 3901 and 2526. Edges below the 0.80 trust threshold (`src/CsMesh/Models/Edge.cs:56`): **0** in both — S has exactly two edges carrying confidence, both 0.9. So the low-confidence rule below is defined but unexercised by either solution.
 
@@ -121,7 +123,7 @@ Labels:
 
 ### 5. Budget — truncate to stdout, or write a file with `--out`
 
-All answer text goes through `BudgetWriter`. The measurement settles the shape: the project level fits any sensible budget, but the namespace level and a hub's depth-1 neighbourhood do not. The private solution's namespace render is **9647 Mermaid tokens / 10618 DOT tokens** (the table above); CsMesh's top-degree symbol is **5412 / 6857 tokens at depth 1** and **10913 / 14017 at depth 2**, the private solution's **1990 / 2496** then **15670 / 20226**. Only `--level project` fits a default budget; nothing coarser does.
+All answer text goes through `BudgetWriter`. The measurement settles the shape: the project level fits any sensible budget, but the namespace level and a hub's depth-1 neighbourhood do not. The private solution's namespace render is **3986 Mermaid tokens / 5035 DOT tokens** (the table above); CsMesh's top-degree symbol is **5412 / 6857 tokens at depth 1** and **10913 / 14017 at depth 2**, the private solution's **1990 / 2496** then **15670 / 20226**. Only `--level project` fits a default budget; nothing coarser does.
 
 Two options were rejected each on its own:
 
