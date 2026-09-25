@@ -473,33 +473,48 @@ public sealed class ExportTests : IDisposable
 
     // ------------------------------------------------------------------ external validation
 
-    [RequiresGraphviz]
-    public void Graphviz_accepts_the_dot_render()
+    private IEnumerable<(string Level, string Format, IReadOnlyList<string> Lines)> FixtureRenders()
     {
         var graph = BuildAppReferencingLib();
-        var result = Queries.RenderExport(
-            graph, new Queries.ExportRequest("dot", "project", null, 1, "both", false, false));
+        var start = graph.Nodes.First(n => n.Name == "App.Use.Run");
 
-        var input = Path.Combine(_root, "project.dot");
-        var output = Path.Combine(_root, "project.svg");
-        File.WriteAllLines(input, result.Lines);
+        foreach (var level in new[] { "project", "namespace", "neighbourhood" })
+        foreach (var format in new[] { "mermaid", "dot" })
+        {
+            var result = Queries.RenderExport(graph, new Queries.ExportRequest(
+                format, level, level == "neighbourhood" ? start : null, 1, "both", false, false));
+            yield return (level, format, result.Lines);
+        }
+    }
 
-        Assert.True(ExternalTool.TryRun("dot", $"-Tsvg \"{input}\" -o \"{output}\"", out var log), log);
-        Assert.True(File.Exists(output));
+    [RequiresGraphviz]
+    public void Graphviz_accepts_every_level_and_format()
+    {
+        foreach (var (level, format, lines) in FixtureRenders().Where(x => x.Format == "dot"))
+        {
+            var input = Path.Combine(_root, $"{level}.dot");
+            var output = Path.Combine(_root, $"{level}.svg");
+            File.WriteAllLines(input, lines);
+
+            Assert.True(ExternalTool.TryRun("dot", $"-Tsvg \"{input}\" -o \"{output}\"", out var log),
+                $"{level}/dot: {log}");
+            Assert.True(File.Exists(output));
+        }
     }
 
     [RequiresMermaidCli]
-    public void Mermaid_cli_accepts_the_mermaid_render()
+    public void Mermaid_cli_accepts_every_level()
     {
-        var graph = BuildAppReferencingLib();
-        var result = Queries.RenderExport(
-            graph, new Queries.ExportRequest("mermaid", "project", null, 1, "both", false, false));
+        foreach (var (level, format, lines) in FixtureRenders().Where(x => x.Format == "mermaid"))
+        {
+            var input = Path.Combine(_root, $"{level}.mmd");
+            var output = Path.Combine(_root, $"{level}.mermaid.svg");
+            File.WriteAllLines(input, lines);
 
-        var input = Path.Combine(_root, "project.mmd");
-        var output = Path.Combine(_root, "project.svg");
-        File.WriteAllLines(input, result.Lines);
-
-        Assert.True(ExternalTool.TryRun("mmdc", $"-i \"{input}\" -o \"{output}\"", out var log), log);
+            Assert.True(ExternalTool.TryRun("mmdc", $"-i \"{input}\" -o \"{output}\"", out var log),
+                $"{level}/mermaid: {log}");
+            Assert.True(File.Exists(output));
+        }
     }
 
     // ------------------------------------------------------------------ --out
