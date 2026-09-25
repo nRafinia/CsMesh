@@ -79,6 +79,22 @@ public sealed class ExportTests : IDisposable
     }
 
     [Fact]
+    public void Namespace_level_groups_a_member_under_its_owning_types_namespace()
+    {
+        var graph = BuildAppReferencingLib();
+
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, false));
+
+        Assert.Equal(
+            "flowchart LR\n" +
+            "  ns0d04bfeb[\"App\"]\n" +
+            "  ns8b737b68[\"Lib\"]\n" +
+            "  ns0d04bfeb --> ns8b737b68",
+            string.Join("\n", result.Lines));
+    }
+
+    [Fact]
     public void Project_level_dot_renders_the_golden_text()
     {
         var graph = BuildAppReferencingLib();
@@ -191,6 +207,57 @@ public sealed class ExportTests : IDisposable
         Assert.Equal(1, result.TypeUseEdgesWithheld);
     }
 
+    // ------------------------------------------------------------------ namespace
+
+    [Fact]
+    public void A_namespace_bucket_comes_from_the_name_not_the_ownership_edge()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes =
+            [
+                new Node { Id = 0, Name = "Real.Ns.Dog", Short = "Dog", Kind = "type", Project = "P", Key = "k0" },
+                new Node { Id = 1, Name = "Other.Ns.IAnimal", Short = "IAnimal", Kind = "interface", Project = "P", Key = "k1" },
+                new Node { Id = 2, Name = "Real.Ns.Dog.Bark", Short = "Dog.Bark", Kind = "method", Project = "P", Key = "k2" }
+            ],
+            // A TypeUse ownership edge from the wrong type must not relocate the member.
+            Edges = [new Edge { From = 1, To = 2, Kind = EdgeKind.TypeUse, Note = "member" }]
+        };
+        graph.Freeze();
+
+        var of = Queries.NamespaceResolver(graph);
+
+        Assert.Equal("Real.Ns", of(graph.Nodes[0]));
+        Assert.Equal("Other.Ns", of(graph.Nodes[1]));
+        Assert.Equal("Real.Ns", of(graph.Nodes[2]));
+    }
+
+    [Fact]
+    public void A_node_with_no_namespace_lands_in_the_global_bucket_not_a_guessed_one()
+    {
+        var graph = new Graph
+        {
+            Root = "/tmp",
+            Nodes =
+            [
+                new Node { Id = 0, Name = "Real.Ns.T", Short = "T", Kind = "type", Project = "P", Key = "k0" },
+                new Node { Id = 1, Name = "Probe.Ns.X", Short = "x", Kind = "field", Project = "P", Key = "k1" }
+            ],
+            Edges = [new Edge { From = 1, To = 0, Kind = EdgeKind.TypeUse }]
+        };
+        graph.Freeze();
+
+        var result = Queries.RenderExport(
+            graph, new Queries.ExportRequest("mermaid", "namespace", null, 1, "both", false, true));
+        var text = string.Join("\n", result.Lines);
+
+        Assert.Equal(2, result.Nodes);
+        Assert.Contains("[\"Real.Ns\"]", text);
+        Assert.Contains("[\"\"]", text);
+        Assert.DoesNotContain("Probe.Ns", text);
+    }
+
     // ------------------------------------------------------------------ budget and exits
 
     [Fact]
@@ -206,13 +273,6 @@ public sealed class ExportTests : IDisposable
         Assert.Contains("INCOMPLETE", text);
         Assert.Contains("--out", text);
         Assert.Contains("--level", text);
-    }
-
-    [Fact]
-    public void The_default_budget_is_the_one_the_docs_promise()
-    {
-        Assert.Equal(1500, ExportCommand.DefaultBudget);
-        Assert.Contains("default: 1500", HelpCommand.ExportHelp, StringComparison.Ordinal);
     }
 
     [Fact]

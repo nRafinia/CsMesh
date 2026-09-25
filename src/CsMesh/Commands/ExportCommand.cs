@@ -25,9 +25,9 @@ public static class ExportCommand
             return Exit.Usage;
         }
 
-        if (level != "project")
+        if (level == "neighbourhood")
         {
-            Console.Error.WriteLine($"--level {level} is not implemented");
+            Console.Error.WriteLine("--level neighbourhood is not implemented");
             return Exit.Usage;
         }
 

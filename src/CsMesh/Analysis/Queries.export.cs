@@ -54,11 +54,15 @@ public static partial class Queries
 
     public static ExportResult RenderExport(Graph g, ExportRequest req)
     {
-        var (nodes, edges, withheld) = req.Level switch
+        var namespaceOf = NamespaceResolver(g);
+        var identityOf = req.Level switch
         {
-            "project" => Collapse(g, req),
+            "project" => (Func<Node, string?>)ProjectOf,
+            "namespace" => namespaceOf,
             _ => throw new ArgumentOutOfRangeException(nameof(req), req.Level)
         };
+
+        var (nodes, edges, withheld) = Collapse(g, req, identityOf);
 
         var ids = AssignIds(nodes.Select(n => n.Identity).ToList(), Sha256Hex, PrefixFor(req.Level));
 
@@ -78,11 +82,12 @@ public static partial class Queries
     };
 
     /// <summary>
-    /// Collapses the graph to project buckets. An edge is kept only when both endpoints are
-    /// included, and distinct (from, to, kind) triples become one drawn edge; a self-edge counts
+    /// Collapses the graph to project or namespace buckets. An edge is kept only when both endpoints
+    /// are included, and distinct (from, to, kind) triples become one drawn edge; a self-edge counts
     /// once, as the ADR measures it.
     /// </summary>
-    private static (List<Bucket> Nodes, List<DrawnEdge> Edges, Withheld Withheld) Collapse(Graph g, ExportRequest req)
+    private static (List<Bucket> Nodes, List<DrawnEdge> Edges, Withheld Withheld) Collapse(
+        Graph g, ExportRequest req, Func<Node, string?> identityOf)
     {
         var included = new List<Node>();
         var testNodes = 0;
@@ -106,15 +111,22 @@ public static partial class Queries
 
             var from = g.ById(e.From)!;
             var to = g.ById(e.To)!;
-            var key = (ProjectOf(from), ProjectOf(to), e.Kind);
 
+            // A node with no namespace of its own is not placed in a bucket; an edge that would land
+            // on one has nowhere to point.
+            if (identityOf(from) is not { } fromIdentity) continue;
+            if (identityOf(to) is not { } toIdentity) continue;
+
+            var key = (fromIdentity, toIdentity, e.Kind);
             collapsed[key] = collapsed.TryGetValue(key, out var existing)
                 ? (Or(existing.Role, e.Role), Math.Min(existing.Score, e.Score))
                 : (e.Role, e.Score);
         }
 
         var nodes = included
-            .Select(ProjectOf)
+            .Select(identityOf)
+            .Where(x => x != null)
+            .Select(x => x!)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(x => x, StringComparer.Ordinal)
             .Select(x => new Bucket(x, x))
@@ -131,6 +143,65 @@ public static partial class Queries
     }
 
     private static string ProjectOf(Node n) => n.Project;
+
+    /// <summary>
+    /// The namespace bucket a node belongs to, derived from names alone rather than from a graph
+    /// edge.
+    ///
+    /// <see cref="Node.Name"/> is fully qualified, so a type's bucket is everything before its last
+    /// segment and a member's bucket is everything before its declaring type. A nested type keeps
+    /// its containing type as part of the bucket (<c>Ns.Outer.Inner</c> -&gt; <c>Ns.Outer</c>), the
+    /// same collapse the ADR measured: one node per namespace and one per nested-type container.
+    ///
+    /// The previous implementation walked the TypeUse ownership edge instead. That edge exists only
+    /// for a declared member of a named type, so interface members and synthetic nodes had none and
+    /// were dropped or bucketed globally, and the namespace set came out smaller than the ADR's.
+    /// </summary>
+    internal static Func<Node, string?> NamespaceResolver(Graph g)
+    {
+        var typeNames = g.Nodes
+            .Where(n => n.Kind is "type" or "interface" or "enum" or "struct" or "delegate")
+            .Select(n => n.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        string? DeclaringTypeOf(string name)
+        {
+            string? declaring = null;
+            foreach (var candidate in typeNames)
+            {
+                if (candidate.Length < name.Length
+                    && name.StartsWith(candidate + ".", StringComparison.Ordinal)
+                    && (declaring is null || candidate.Length > declaring.Length))
+                {
+                    declaring = candidate;
+                }
+            }
+
+            return declaring;
+        }
+
+        return n =>
+        {
+            // A declared type groups under its own containing segment: a top-level type under its
+            // namespace, a nested type under its containing type. A member groups under its
+            // declaring type's name. This is the collapse the ADR measured -- one bucket per
+            // namespace and one per nested-type container.
+            if (n.Kind is "type" or "interface" or "enum" or "struct" or "delegate") return StripLastSegment(n.Name);
+
+            var declaring = DeclaringTypeOf(n.Name);
+            if (declaring is not null) return StripLastSegment(declaring);
+
+            // A synthetic node with no declaring type in the graph has no namespace; it belongs to
+            // none rather than to a namespace invented from its display name.
+            return "";
+        };
+    }
+
+    private static string StripLastSegment(string name)
+    {
+        var dot = name.LastIndexOf('.');
+        return dot <= 0 ? "" : name[..dot];
+    }
 
     private static EdgeRole? Or(EdgeRole? a, EdgeRole? b) =>
         (a, b) switch
