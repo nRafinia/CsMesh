@@ -78,7 +78,7 @@ public static class QueryCommand
                     bool written;
                     if (healExplicit)
                     {
-                        GraphStore.SaveHealed(healed);
+                        GraphStore.SaveInPlace(healed);
                         written = true;
                     }
                     else

@@ -38,14 +38,15 @@ public static class GraphStore
     /// locking. There is no second writer to serialise against in those cases, so the caller writes
     /// unsynchronised and the rename still keeps the file whole.
     ///
-    /// A lock that is <em>held</em> is contention, not a filesystem quirk, and this commits the
-    /// write path to treating it as such: it never returns null for a held lock, because doing so
-    /// let the caller write beside the holder -- on Windows two processes replacing one
-    /// destination, on any platform a writer that overwrote the result it waited out. Instead it
-    /// raises <see cref="LockContentedException"/> so the runner answers <see cref="Exit.Contended"/>
-    /// (retry). With <paramref name="wait"/> true a held lock is retried up to
-    /// <see cref="LockAttempts"/> × <see cref="LockWaitMs"/> ms first; with false it raises at
-    /// once, which is what the implicit heal needs so a query never stalls behind another writer.
+    /// A lock that is <em>held</em> is contention, not a filesystem quirk, and every writer now
+    /// treats it that way. A full or incremental index, like an explicit heal, waits
+    /// <see cref="LockAttempts"/> × <see cref="LockWaitMs"/> ms and then raises
+    /// <see cref="LockContentedException"/>, so the runner answers <see cref="Exit.Contended"/>
+    /// (retry). It never returns null for a held lock, because that let the caller write beside the
+    /// holder -- unsynchronised, after five seconds of waiting: on Windows two processes replacing
+    /// one destination, on any platform an index that waited a writer out and then overwrote that
+    /// writer's result. The implicit heal passes <paramref name="wait"/> false to raise at once
+    /// instead, so a query never stalls behind another writer.
     /// </summary>
     private static FileStream? AcquireLock(string root, bool wait)
     {
@@ -88,23 +89,6 @@ public static class GraphStore
         throw new LockContentedException(
             $"could not take the graph lock '{path}' after {LockAttempts * LockWaitMs}ms (held by another process)",
             lastContention!);
-    }
-
-    /// <summary>
-    /// The lock the index paths take until this series moves them onto <see cref="AcquireLock"/>.
-    ///
-    /// It waits and, when the lock is still held, writes unsynchronised rather than failing. That is
-    /// exactly the behaviour being removed: it is what put two writers on one graph file after a
-    /// five-second wait. It survives only so the query-path commit changes the heal alone.
-    /// </summary>
-    private static FileStream? AcquireLockOrNull(string root)
-    {
-        try { return AcquireLock(root, wait: true); }
-        catch (LockContentedException ex)
-        {
-            Dbg.Log($"graph lock still held, writing unsynchronised: {ex.Message}");
-            return null;
-        }
     }
 
     /// <summary>
@@ -210,7 +194,7 @@ public static class GraphStore
     {
         CsMeshDir.Ensure(g.Root);
 
-        using var guard = AcquireLockOrNull(g.Root);
+        using var guard = AcquireLock(g.Root, wait: true);
 
         var current = PathFor(g.Root);
         if (File.Exists(current))
@@ -229,21 +213,12 @@ public static class GraphStore
     /// incremental refresh runs often and touches little, and rotating on each one would leave
     /// 'changes' comparing a graph against a near-copy of itself and reporting that no binding
     /// moved -- the one answer it must never give wrongly.
+    ///
+    /// Like <see cref="Save"/> it waits for the lock and raises <see cref="LockContentedException"/>
+    /// when it stays held, so the incremental path answers exit 75 instead of writing beside the
+    /// holder.
     /// </summary>
     public static void SaveInPlace(Graph g)
-    {
-        CsMeshDir.Ensure(g.Root);
-
-        using var guard = AcquireLockOrNull(g.Root);
-        WriteAtomic(g, PathFor(g.Root));
-    }
-
-    /// <summary>
-    /// The explicit heal's write: waits for the lock and lets <see cref="LockContentedException"/>
-    /// propagate when it stays held. <c>--heal</c> asked for the write, so a timeout is the exit-75
-    /// contract that always applied to it, now reached through acquisition as well as the rename.
-    /// </summary>
-    public static void SaveHealed(Graph g)
     {
         CsMeshDir.Ensure(g.Root);
 
