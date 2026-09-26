@@ -24,6 +24,14 @@ public sealed class QueryRow
     public string? File { get; set; }
     public int Line { get; set; }
 
+    /// <summary>
+    /// 1-based line where the declaration ends, next to <see cref="Line"/>. Equal to it for a
+    /// single-line declaration and for a row that points at a call or registration site rather than
+    /// a declaration -- the range is then the one line. Lets an agent's follow-up read be a precise
+    /// range instead of the whole file.
+    /// </summary>
+    public int EndLine { get; set; }
+
     /// <summary>True when the source file changed after the index was built.</summary>
     public bool Stale { get; set; }
 

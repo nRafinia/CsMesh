@@ -23,14 +23,14 @@ Built for AI coding agents and developers who are tired of multi-turn "file-hopp
 ```bash
 $ csmesh trace PaymentController.Post --budget 600
 
-PaymentController.Post  {http:POST /charge}  Api/PaymentController.cs:14
-  -> CreatePaymentCommandHandler.Handle  [mediatr via Send(CreatePaymentCommand)]  App/CreatePaymentCommand.cs:18
+PaymentController.Post  {http:POST /charge}  Api/PaymentController.cs:14-26
+  -> CreatePaymentCommandHandler.Handle  [mediatr via Send(CreatePaymentCommand)]  App/CreatePaymentCommand.cs:18-31
     -> IPaymentGateway.Authorize  Infra/Repositories.cs:11
-      -> StripeGateway.Authorize  [impl, di-bound]  Infra/Repositories.cs:29
+      -> StripeGateway.Authorize  [impl, di-bound]  Infra/Repositories.cs:29-33
     -> IPaymentRepository.Add  Infra/Repositories.cs:7
-      -> PaymentRepository.Add  [impl, di-bound]  Infra/Repositories.cs:17
-        -> AppDbContext.SavePayment  Infra/Repositories.cs:34
-      -> InMemoryPaymentRepository.Add  [impl]  Infra/Repositories.cs:23
+      -> PaymentRepository.Add  [impl, di-bound]  Infra/Repositories.cs:17-22
+        -> AppDbContext.SavePayment  Infra/Repositories.cs:35-40
+      -> InMemoryPaymentRepository.Add  [impl]  Infra/Repositories.cs:24-27
 ```
 
 
@@ -209,8 +209,8 @@ Anything below the threshold prints its score and origin inline rather than blen
 ```text
 $ csmesh impl IStore --budget 300
 IStore  -- 2 implementation(s)
-  SqlStore  [di:scoped, ?0.75 assembly-scan]  src/Data/SqlStore.cs:12  @ src/Api/Startup.cs:41
-  InMemoryStore  [test]  tests/Fakes/InMemoryStore.cs:8
+  SqlStore  [di:scoped, ?0.75 assembly-scan]  src/Data/SqlStore.cs:12-40  @ src/Api/Startup.cs:41
+  InMemoryStore  [test]  tests/Fakes/InMemoryStore.cs:8-20
 ```
 
 And what csmesh could not resolve is an answer too, not a silence:

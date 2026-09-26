@@ -43,7 +43,16 @@ public static partial class Queries
         _ => "call"
     };
 
-    private static string Loc(Node n) => n.File.Length > 0 ? $"  {n.File}:{n.Line}" : "";
+    private static string Loc(Node n) => n.File.Length > 0 ? $"  {n.File}:{LineSpan(n)}" : "";
+
+    /// <summary>
+    /// The location suffix for a declaration: <c>start-end</c> when it spans more than one line,
+    /// <c>start</c> when it does not. A graph written before <see cref="Node.EndLine"/> existed
+    /// carries zero, so the fallback collapses the span to the start line rather than printing a
+    /// range that ends before it begins.
+    /// </summary>
+    internal static string LineSpan(Node n) =>
+        n.EndLine > n.Line ? $"{n.Line}-{n.EndLine}" : n.Line.ToString();
 
     private static string TagSuffix(Node n)
     {
@@ -66,6 +75,7 @@ public static partial class Queries
         Note = note,
         File = n.File.Length > 0 ? n.File : null,
         Line = n.Line,
+        EndLine = n.EndLine > n.Line ? n.EndLine : n.Line,
         Stale = IsStale(n, dirty),
         Project = n.Project.Length > 0 ? n.Project : null,
         Tags = n.Tags.Count > 0 ? n.Tags : null

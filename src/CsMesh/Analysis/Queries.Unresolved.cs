@@ -118,6 +118,7 @@ public static partial class Queries
                     Note = site.Reason,
                     File = site.File.Length > 0 ? site.File : null,
                     Line = site.Line,
+                    EndLine = site.Line,
                     Stale = stale.Length > 0
                 };
 
