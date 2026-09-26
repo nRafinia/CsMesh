@@ -93,6 +93,88 @@ public sealed class ProjectScopeTests : IDisposable
         Assert.Contains("App.sln", scope.Decision);
     }
 
+    // ------------------------------------------------------------------ solution findings
+
+    [Fact]
+    public void A_solution_naming_only_missing_projects_reports_a_zero_match_finding()
+    {
+        Write("App.slnx", "<Solution><Project Path=\"src/Nowhere/Gone.csproj\" /></Solution>");
+
+        var scope = ProjectScope.Discover(_root);
+
+        var finding = Assert.Single(scope.SolutionFindings);
+        Assert.Equal("App.slnx", finding.Solution);
+        Assert.Equal(1, finding.Named);
+        Assert.Equal(0, finding.Matched);
+        Assert.Equal("src/Nowhere/Gone.csproj", finding.FirstUnmatched);
+        Assert.True(scope.FellBackToClosure);
+    }
+
+    [Fact]
+    public void A_solution_naming_a_missing_project_and_a_real_one_reports_a_partial_finding()
+    {
+        Write("App.slnx",
+            "<Solution><Project Path=\"src/Live/Live.csproj\" />" +
+            "<Project Path=\"src/Nowhere/Gone.csproj\" /></Solution>");
+
+        var scope = ProjectScope.Discover(_root);
+
+        var finding = Assert.Single(scope.SolutionFindings);
+        Assert.Equal("App.slnx", finding.Solution);
+        Assert.Equal(2, finding.Named);
+        Assert.Equal(1, finding.Matched);
+        Assert.Equal("src/Nowhere/Gone.csproj", finding.FirstUnmatched);
+        Assert.False(scope.FellBackToClosure);
+        Assert.Contains("App.slnx", scope.Decision);
+    }
+
+    [Fact]
+    public void A_sln_listing_no_project_path_is_a_finding()
+    {
+        Write("App.sln", "Microsoft Visual Studio Solution File, Format Version 12.00\n");
+
+        var scope = ProjectScope.Discover(_root);
+
+        var finding = Assert.Single(scope.SolutionFindings);
+        Assert.Equal("App.sln", finding.Solution);
+        Assert.Equal(0, finding.Named);
+        Assert.Null(finding.ParseError);
+        Assert.Null(finding.FirstUnmatched);
+    }
+
+    [Fact]
+    public void A_malformed_slnx_is_a_finding()
+    {
+        Write("App.slnx", "<Solution><Project Path=\"src/Live/Live.csproj\">");
+
+        var scope = ProjectScope.Discover(_root);
+
+        var finding = Assert.Single(scope.SolutionFindings);
+        Assert.Equal("App.slnx", finding.Solution);
+        Assert.NotNull(finding.ParseError);
+        Assert.True(scope.FellBackToClosure);
+    }
+
+    [Fact]
+    public void A_solution_that_matches_everything_produces_no_finding()
+    {
+        Write("App.slnx",
+            "<Solution><Project Path=\"src/Live/Live.csproj\" />" +
+            "<Project Path=\"src/Dead/Dead.csproj\" /></Solution>");
+
+        var scope = ProjectScope.Discover(_root);
+
+        Assert.Empty(scope.SolutionFindings);
+    }
+
+    [Fact]
+    public void A_repository_without_a_solution_produces_no_finding()
+    {
+        var scope = ProjectScope.Discover(_root);
+
+        Assert.Empty(scope.SolutionFindings);
+    }
+
     [Fact]
     public void A_nested_solution_does_not_vote_on_the_outer_scope()
     {

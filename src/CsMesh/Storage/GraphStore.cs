@@ -485,14 +485,62 @@ public static class GraphStore
         if (DirectoriesChanged(g))
         {
             var knownPaths = g.Files.Select(x => x.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var skipped = g.IndexedAllProjects ? [] : SkippedProjectDirectories(g);
             foreach (var sourceFile in Indexer.EnumerateSourceFiles(g.Root))
             {
                 var relative = Path.GetRelativePath(g.Root, sourceFile);
-                if (!knownPaths.Contains(relative)) dirty.Add(relative);
+                if (knownPaths.Contains(relative)) continue;
+
+                // A file the index deliberately left out is not "new". Without this the walk's
+                // Everything enumeration reports every project the graph does not index as an added
+                // file the moment any tracked directory's timestamp moves.
+                if (skipped.Count > 0 && IsInsideSkippedProject(g.Root, sourceFile, skipped)) continue;
+
+                dirty.Add(relative);
             }
         }
 
         return dirty.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// The directories of the projects the index left out, from the csproj paths the graph already
+    /// records. Keeps the new-file walk from calling a deliberately excluded project's sources
+    /// "new" without re-deriving the scope, which would cost a full <c>ProjectScope.Discover</c>.
+    /// </summary>
+    private static HashSet<string> SkippedProjectDirectories(Graph g)
+    {
+        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in g.SkippedProjects)
+        {
+            var full = Path.GetFullPath(Path.Combine(g.Root, project));
+            var directory = Path.GetDirectoryName(full);
+            if (directory is not null) directories.Add(directory);
+        }
+
+        return directories;
+    }
+
+    /// <summary>
+    /// True when the file's nearest csproj ancestor is one of the skipped projects. A nested in-scope
+    /// project wins over a skipped ancestor, matching the nearest-project ownership rule.
+    /// </summary>
+    private static bool IsInsideSkippedProject(string root, string file, HashSet<string> skippedDirectories)
+    {
+        var stop = Path.GetFullPath(root);
+        var current = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(file))!);
+
+        while (current is not null && current.FullName.StartsWith(stop, StringComparison.OrdinalIgnoreCase))
+        {
+            bool hasProject;
+            try { hasProject = current.EnumerateFiles("*.csproj").Any(); }
+            catch { return false; }
+
+            if (hasProject) return skippedDirectories.Contains(current.FullName);
+            current = current.Parent;
+        }
+
+        return false;
     }
 
     /// <summary>

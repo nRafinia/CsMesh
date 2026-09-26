@@ -1,5 +1,7 @@
-﻿using System.Xml.Linq;
+﻿using System.Xml;
+using System.Xml.Linq;
 using CsMesh.Common;
+using CsMesh.Models;
 
 namespace CsMesh.Analysis;
 
@@ -23,12 +25,16 @@ public sealed class ProjectScope
     private readonly bool _hasProjects;
 
     private ProjectScope(string root, IEnumerable<string> live, IEnumerable<string> excluded,
-                         string reason, string decision)
+                         string reason, string decision,
+                         IReadOnlyList<SolutionScopeFinding>? solutionFindings = null,
+                         bool fellBackToClosure = false)
     {
         Root = root;
         Reason = reason;
         Decision = decision;
         Excluded = excluded.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
+        SolutionFindings = solutionFindings ?? [];
+        FellBackToClosure = fellBackToClosure;
 
         var paths = live.ToList();
         _hasProjects = paths.Count + Excluded.Count > 0;
@@ -74,6 +80,20 @@ public sealed class ProjectScope
 
     /// <summary>Project files left out, relative to the root.</summary>
     public List<string> Excluded { get; }
+
+    /// <summary>
+    /// Solutions that were found but did not fully decide scope: unmatched paths, no listed path,
+    /// or an unreadable file. Empty for a repository with no solution and for --all. Carried out of
+    /// Discover so doctor and index can name the cause of a fallback without a second parser.
+    /// </summary>
+    public IReadOnlyList<SolutionScopeFinding> SolutionFindings { get; }
+
+    /// <summary>
+    /// True when the final scope came from the ProjectReference closure rather than a solution.
+    /// Rendered as a suffix on each finding so the fallback is stated once for the scope, not once
+    /// per solution.
+    /// </summary>
+    public bool FellBackToClosure { get; }
 
     /// <summary>
     /// Declared ProjectReference edges between the projects in scope, by project name.
@@ -243,11 +263,14 @@ public sealed class ProjectScope
         if (projects.Count == 0) return Everything(root);
 
         // A solution file is the author saying which projects are in. Nothing inferred can beat
-        // that, so it is tried first and used alone when it produces anything.
-        var fromSolution = FromSolutions(root, projects);
+        // that, so it is tried first and used alone when it produces anything. A solution that
+        // decides nothing -- or only some of its paths -- is recorded either way, so a fallback is
+        // never silent.
+        var findings = new List<SolutionScopeFinding>();
+        var fromSolution = FromSolutions(root, projects, findings);
         if (fromSolution != null) return fromSolution;
 
-        return FromReferenceClosure(root, projects);
+        return FromReferenceClosure(root, projects, findings);
     }
 
     // ------------------------------------------------------------------ solution files
@@ -258,8 +281,13 @@ public sealed class ProjectScope
     /// backslashes even when it lands on Linux, where a backslash is an ordinary filename character.
     /// Left unnormalized, the combined path matches nothing on disk and the scope silently falls back
     /// to the ProjectReference closure, which drops any project that closure cannot reach.
+    ///
+    /// A solution that does not fully decide scope is recorded in <paramref name="findings"/> rather
+    /// than left to the debug log: unmatched paths, a file that lists no project path, and a file
+    /// that could not be read all surface, so the fallback is never silent.
     /// </summary>
-    private static ProjectScope? FromSolutions(string root, List<string> projects)
+    private static ProjectScope? FromSolutions(string root, List<string> projects,
+                                               List<SolutionScopeFinding> findings)
     {
         // Only the shallowest solutions get a vote. A vendored library or submodule under
         // src/Shared carries its own .slnx listing its own projects, and letting that union with
@@ -273,21 +301,54 @@ public sealed class ProjectScope
 
         var named = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var solutions = new List<string>();
+        var onDisk = projects.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var solution in chosen)
         {
-            solutions.Add(Path.GetFileName(solution));
-            foreach (var path in ProjectPathsIn(solution))
+            var file = Path.GetFileName(solution);
+            solutions.Add(file);
+
+            var (paths, parseError) = ProjectPathsIn(solution);
+            if (parseError is not null)
             {
-                try
+                findings.Add(new SolutionScopeFinding { Solution = file, ParseError = parseError });
+                continue;
+            }
+
+            // A file that lists no .csproj path cannot be read as a filter; it is a finding in its
+            // own right rather than an empty match that disappears.
+            if (paths.Count == 0)
+            {
+                findings.Add(new SolutionScopeFinding { Solution = file });
+                continue;
+            }
+
+            var matched = 0;
+            string? firstUnmatched = null;
+
+            foreach (var path in paths)
+            {
+                var resolved = Resolve(solution, path);
+                if (resolved is null)
                 {
-                    var relative = path.Replace('\\', Path.DirectorySeparatorChar);
-                    named.Add(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(solution)!, relative)));
+                    firstUnmatched ??= path;
+                    continue;
                 }
-                catch
+
+                named.Add(resolved);
+                if (onDisk.Contains(resolved)) matched++;
+                else firstUnmatched ??= path;
+            }
+
+            if (matched < paths.Count)
+            {
+                findings.Add(new SolutionScopeFinding
                 {
-                    // A malformed path entry is not worth failing an index over.
-                }
+                    Solution = file,
+                    Named = paths.Count,
+                    Matched = matched,
+                    FirstUnmatched = firstUnmatched
+                });
             }
         }
 
@@ -312,9 +373,27 @@ public sealed class ProjectScope
 
         var scope = new ProjectScope(root, live, excluded,
             $"not listed in {string.Join(", ", solutions)}",
-            $"{string.Join(", ", solutions)}: {live.Count} of {projects.Count} project(s) in scope");
+            $"{string.Join(", ", solutions)}: {live.Count} of {projects.Count} project(s) in scope",
+            findings);
         Dbg.Log($"scope: {string.Join(", ", solutions)} -> {live.Count} of {projects.Count} project(s)");
         return scope;
+    }
+
+    /// <summary>
+    /// The absolute path a solution entry names, or null when the entry cannot be turned into one.
+    /// A null is a finding, not a crash: the entry is counted as named and unmatched.
+    /// </summary>
+    private static string? Resolve(string solution, string path)
+    {
+        try
+        {
+            var relative = path.Replace('\\', Path.DirectorySeparatorChar);
+            return Path.GetFullPath(Path.Combine(Path.GetDirectoryName(solution)!, relative));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static int Depth(string root, string file)
@@ -343,33 +422,30 @@ public sealed class ProjectScope
 
     /// <summary>
     /// .slnx is XML with Project/@Path. .sln is the older text format where each project line
-    /// carries the path as the second quoted field.
+    /// carries the path as the second quoted field. A file that cannot be read returns its message
+    /// instead of throwing, so the caller can name the solution rather than fall back in silence.
     /// </summary>
-    private static IEnumerable<string> ProjectPathsIn(string solution)
+    private static (List<string> Paths, string? ParseError) ProjectPathsIn(string solution)
     {
         if (solution.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
         {
             XDocument document;
             try { document = XDocument.Load(solution); }
-            catch (Exception ex)
-            {
-                Dbg.Log($"could not read {solution}: {ex.Message}");
-                yield break;
-            }
+            catch (Exception ex) { return ([], Describe(ex)); }
 
-            foreach (var element in document.Descendants("Project"))
-            {
-                var path = element.Attribute("Path")?.Value;
-                if (!string.IsNullOrWhiteSpace(path)) yield return path;
-            }
-
-            yield break;
+            var paths = document.Descendants("Project")
+                .Select(element => element.Attribute("Path")?.Value)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => path!)
+                .ToList();
+            return (paths, null);
         }
 
         string[] lines;
         try { lines = File.ReadAllLines(solution); }
-        catch { yield break; }
+        catch (Exception ex) { return ([], Describe(ex)); }
 
+        var projects = new List<string>();
         foreach (var line in lines)
         {
             if (!line.StartsWith("Project(", StringComparison.Ordinal)) continue;
@@ -379,8 +455,26 @@ public sealed class ProjectScope
             if (quoted.Length < 6) continue;
 
             var path = quoted[5];
-            if (path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) yield return path;
+            if (path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) projects.Add(path);
         }
+
+        return (projects, null);
+    }
+
+    /// <summary>
+    /// The exception's message, with a line number added only when the exception carries one: an
+    /// XML parse failure does, a file-read failure does not. Skipped when the message already names
+    /// the line, so the number is never printed twice.
+    /// </summary>
+    private static string Describe(Exception ex)
+    {
+        var message = ex.Message;
+        if (ex is XmlException xml && !message.Contains("line", StringComparison.OrdinalIgnoreCase))
+        {
+            message += $" (line {xml.LineNumber})";
+        }
+
+        return message;
     }
 
     // ------------------------------------------------------------------ reference closure
@@ -390,7 +484,8 @@ public sealed class ProjectScope
     /// and test projects. Test projects are roots because nothing references a test project, and
     /// dropping them would take the test callers out of every blast radius.
     /// </summary>
-    private static ProjectScope FromReferenceClosure(string root, List<string> projects)
+    private static ProjectScope FromReferenceClosure(string root, List<string> projects,
+                                                     IReadOnlyList<SolutionScopeFinding> findings)
     {
         var references = projects.ToDictionary(
             p => Path.GetFullPath(p),
@@ -401,7 +496,8 @@ public sealed class ProjectScope
         if (roots.Count == 0)
         {
             Dbg.Log("no executable or test project found; indexing everything");
-            return Everything(root, "no executable or test project found; indexing everything");
+            return new ProjectScope(root, projects, [], "",
+                "no executable or test project found; indexing everything", findings);
         }
 
         var reached = new HashSet<string>(roots, StringComparer.OrdinalIgnoreCase);
@@ -425,7 +521,8 @@ public sealed class ProjectScope
 
         return new ProjectScope(root, live, excluded,
             "not reachable by ProjectReference from any executable or test project",
-            $"ProjectReference closure from {roots.Count} root(s): {live.Count} of {projects.Count} project(s) in scope");
+            $"ProjectReference closure from {roots.Count} root(s): {live.Count} of {projects.Count} project(s) in scope",
+            findings, fellBackToClosure: true);
     }
 
     private static bool IsRoot(string csproj)

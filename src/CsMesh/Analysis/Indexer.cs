@@ -1,5 +1,6 @@
 using CsMesh.Common;
 using CsMesh.Models;
+using CsMesh.Storage;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -467,8 +468,8 @@ public static partial class Indexer
     /// rule stays the base scope's own assemblies, because those are exactly the types the base
     /// compiles from source and must not also load as references.
     /// </summary>
-    public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false,
-                              string? referenceRoot = null)
+    public static IndexBuild BuildWithScope(string root, Action<string>? progress = null, bool includeAllProjects = false,
+                                            string? referenceRoot = null)
     {
         var scope = includeAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
 
@@ -486,6 +487,11 @@ public static partial class Indexer
         var owned = new List<OwnedTree>(files.Count);
         var stamps = new List<FileStamp>(files.Count);
         var dirs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+        // The .csmesh directory exists before the first directory stamp is taken, so the index's own
+        // state write cannot move the root's timestamp after dirs["."] recorded it and leave the next
+        // freshness check re-walking the tree for a file nobody added.
+        CsMeshDir.Ensure(root);
 
         var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
 
@@ -679,8 +685,16 @@ public static partial class Indexer
         graph.AmbiguousDiRegistrations = builder.AmbiguousDiRegistrations;
         graph.AmbiguousMessageDispatches = builder.AmbiguousMessageDispatches;
         graph.UnmatchedMessageDispatches = builder.UnmatchedMessageDispatches;
-        return graph;
+        return new IndexBuild(graph, scope);
     }
+
+    /// <summary>
+    /// The graph alone. <see cref="BuildWithScope"/> returns the scope that decided it too, so a
+    /// caller that reports on scope reads the one the build used instead of deriving a second one.
+    /// </summary>
+    public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false,
+                              string? referenceRoot = null) =>
+        BuildWithScope(root, progress, includeAllProjects, referenceRoot).Graph;
 
     /// <summary>
     /// How many .cs files sit outside every project while the repository has projects. Counted

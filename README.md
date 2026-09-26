@@ -536,7 +536,7 @@ csmesh usage --tail 10 # Last 10 raw invocations
 ```
 
 #### `csmesh doctor`
-Diagnoses index freshness, dirty files, caller attribution, and agent skill configurations. It warns when a project's compilation reports CS8795 — a source generator whose output is not on disk — naming the project, the count, and the `EmitCompilerGeneratedFiles=true` build that fixes it. It also warns when a `PackageReference` names an in-scope project's package id: that project's types are not bound through the package, and a `ProjectReference` is the fix.
+Diagnoses index freshness, dirty files, caller attribution, and agent skill configurations. It warns when a project's compilation reports CS8795 — a source generator whose output is not on disk — naming the project, the count, and the `EmitCompilerGeneratedFiles=true` build that fixes it. It also warns when a `PackageReference` names an in-scope project's package id: that project's types are not bound through the package, and a `ProjectReference` is the fix. It also names the solution files that were found but did not fully decide scope, showing how many of their project paths matched on disk and why one could not be read, and states when the scope fell back to the `ProjectReference` closure.
 ```bash
 csmesh doctor
 ```

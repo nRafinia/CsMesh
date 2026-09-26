@@ -93,6 +93,12 @@ public sealed class DoctorReport
     /// </summary>
     public List<ProjectPackageFinding> PackageReferencesToProjects { get; set; } = [];
 
+    /// <summary>
+    /// Solutions that were found but did not fully decide scope: unmatched paths, a file listing no
+    /// project path, or an unreadable file. Empty when no solution decided nothing.
+    /// </summary>
+    public List<SolutionScopeFinding> SolutionFindings { get; set; } = [];
+
     /// <summary>The report as a terminal would have shown it.</summary>
     public List<string> Text { get; set; } = [];
 }
@@ -117,6 +123,34 @@ public sealed class GeneratedOutputFinding
     public string Project { get; set; } = string.Empty;
 
     public int Count { get; set; }
+}
+
+/// <summary>
+/// One solution file that was found but did not fully decide scope: some of its project paths
+/// matched nothing on disk, it listed no project path at all, or it could not be read. The partial
+/// case still decided scope, so the finding records how many paths matched rather than claiming the
+/// solution was ignored.
+/// </summary>
+public sealed class SolutionScopeFinding
+{
+    /// <summary>The solution file, relative to the repository root.</summary>
+    public string Solution { get; set; } = string.Empty;
+
+    /// <summary>Project paths the solution listed.</summary>
+    public int Named { get; set; }
+
+    /// <summary>Of those, how many named a project that exists on disk.</summary>
+    public int Matched { get; set; }
+
+    /// <summary>
+    /// The first listed path that matched nothing, verbatim as the solution wrote it. Shown so a
+    /// separator or a typo is visible at a glance; null when every listed path matched or none was
+    /// listed.
+    /// </summary>
+    public string? FirstUnmatched { get; set; }
+
+    /// <summary>Why the file could not be read. Null when it parsed.</summary>
+    public string? ParseError { get; set; }
 }
 
 /// <summary>
@@ -146,6 +180,12 @@ public sealed class IndexReport
     public int UnresolvedCallSites { get; set; }
     public int ReferenceCount { get; set; }
     public string BuiltByVersion { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Solutions that were found but did not fully decide scope, recomputed from the tree the index
+    /// just read. Same shape as DoctorReport.SolutionFindings so a caller can read either.
+    /// </summary>
+    public List<SolutionScopeFinding> SolutionFindings { get; set; } = [];
 
     public List<string> Text { get; set; } = [];
 }
