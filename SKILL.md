@@ -189,9 +189,9 @@ span, `file:start-end`; a single-line declaration stays `file:line`.
   name match or from container scanning, not from a compiler symbol. **Below `0.80` is a lead, not
   a fact**: open the file before acting on it. A row with no `?score` was read straight off a
   symbol and is exact.
-- `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Add `--heal`
-  and run the same command again: the changed files are rebound in place first. `csmesh index` on
-  its own is incremental too, and only rebinds what moved.
+- `[STALE]` -- the file changed after the index was built. **Do not trust this row.** A query
+  rebinds changed files before answering, so a `[STALE]` row means that heal could not run; the
+  note says why. Run `csmesh index` to rebuild.
 
 ## Exit codes -- branch on these, do not parse the text
 
