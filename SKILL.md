@@ -170,8 +170,11 @@ csmesh doctor
 
 ## Reading the output
 
-Each row is `Symbol  [edge marker]  {tags}  file:line`.
+Each row is `Symbol  [edge marker]  {tags}  file:line`. A declaration row carries its full
+span, `file:start-end`; a single-line declaration stays `file:line`.
 
+- `Checkout/CheckoutService.cs:40-72` -- the declaration's full span. Read exactly that
+  range (offset/limit), not the whole file.
 - `[impl, di-bound]` -- registered in the container, so this is the one that runs.
 - `[mediatr via Send(CreatePaymentCommand)]` -- dispatched, not called directly.
 - `[via-interface]` -- under `blast-radius --writes`, a writer that reached the member
