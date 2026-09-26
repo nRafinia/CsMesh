@@ -75,8 +75,21 @@ public static partial class Indexer
     /// Patches <paramref name="previous"/> in place and returns it, or null when the edit is one
     /// this path will not attempt. Null is not a failure: it means run a full index.
     /// </summary>
-    public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, Action<string>? progress = null)
+    public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, Action<string>? progress = null) =>
+        BuildIncrementalWithScope(previous, dirty, out _, progress);
+
+    /// <summary>
+    /// As the pass above, but naming why it declined through <paramref name="declineReason"/>.
+    ///
+    /// A caller that would otherwise fall back to a full index does not need the reason, but one
+    /// that has chosen to answer from the stale graph anyway does: the note it prints has to say
+    /// whether a full <c>csmesh index</c> would clear the delay or whether the edit is one the
+    /// incremental path will never take. Silence at the point of decline is how a default heal
+    /// becomes indistinguishable from no heal at all.
+    /// </summary>
+    public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, out string? declineReason, Action<string>? progress = null)
     {
+        declineReason = null;
         var root = previous.Root;
 
         if (dirty.Count == 0)
@@ -88,6 +101,7 @@ public static partial class Indexer
         if (dirty.Count > MaxIncrementalFiles)
         {
             Dbg.Log($"incremental declined: {dirty.Count} file(s) changed, cap is {MaxIncrementalFiles}");
+            declineReason = $"more than {MaxIncrementalFiles} files changed";
             return null;
         }
 
@@ -96,6 +110,7 @@ public static partial class Indexer
         if (previous.Nodes.Count > 0 && previous.Nodes.All(n => n.Key.Length == 0))
         {
             Dbg.Log("incremental declined: graph predates stable node keys");
+            declineReason = "the graph predates stable node keys";
             return null;
         }
 
@@ -112,6 +127,7 @@ public static partial class Indexer
                 normalized.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase))
             {
                 Dbg.Log($"incremental declined: {relative} is a Razor source; its compiled C# does not change until the next build");
+                declineReason = "a changed file is Razor source";
                 return null;
             }
 
@@ -122,6 +138,7 @@ public static partial class Indexer
                 normalized.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase))
             {
                 Dbg.Log($"incremental declined: {relative} is generated build output; it changes on rebuild, not on an edit");
+                declineReason = "a changed file is generated build output";
                 return null;
             }
         }
@@ -133,12 +150,13 @@ public static partial class Indexer
 
             string text;
             try { text = File.ReadAllText(full); }
-            catch (Exception ex) { Dbg.Log($"incremental declined: cannot read {relative} ({ex.Message})"); return null; }
+            catch (Exception ex) { Dbg.Log($"incremental declined: cannot read {relative} ({ex.Message})"); declineReason = "a changed file could not be read"; return null; }
 
             foreach (var marker in CrossFileConstructs)
             {
                 if (!text.Contains(marker, StringComparison.Ordinal)) continue;
                 Dbg.Log($"incremental declined: {relative} contains '{marker.Trim()}', which binds across files");
+                declineReason = "a changed file binds across files";
                 return null;
             }
         }
@@ -191,6 +209,7 @@ public static partial class Indexer
         if (!unreadable.IsEmpty)
         {
             foreach (var failure in unreadable) Dbg.Log($"incremental declined: cannot read {failure}");
+            declineReason = "a changed file could not be read";
             return null;
         }
 
@@ -315,6 +334,13 @@ public static partial class Indexer
     /// </summary>
     public static Graph? BuildIncremental(Graph previous, IReadOnlyList<string> dirty, Action<string>? progress = null) =>
         BuildIncrementalWithScope(previous, dirty, progress)?.Graph;
+
+    /// <summary>
+    /// As <see cref="BuildIncremental(Graph, IReadOnlyList{string}, Action{string}?)"/>, but naming
+    /// why the pass declined; see the <c>out</c> overload above.
+    /// </summary>
+    public static Graph? BuildIncremental(Graph previous, IReadOnlyList<string> dirty, out string? declineReason, Action<string>? progress = null) =>
+        BuildIncrementalWithScope(previous, dirty, out declineReason, progress)?.Graph;
 
     /// <summary>
     /// Directory write times, used as the cheap gate that decides whether a query has to walk the

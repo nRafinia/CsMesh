@@ -96,7 +96,7 @@ public sealed class StalenessNoteTests : IDisposable
         IndexAndSave();                 // current: a visible DiBinding move for 'changes' to report
         MarkWorkingTreeDirty();
 
-        var text = Run("changes", out _, "--budget", "60");
+        var text = Run("changes", out _, "--budget", "60", "--no-heal");
 
         Assert.Contains("behind working tree", text, StringComparison.Ordinal);
         Assert.Contains("INCOMPLETE", text, StringComparison.Ordinal);
