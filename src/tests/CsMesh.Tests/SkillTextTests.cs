@@ -11,6 +11,7 @@ namespace CsMesh.Tests;
 /// reads whatever 'skill --install' wrote, not the file in the repository. These keep the two
 /// honest and check that the rules still name the reflex they exist to interrupt.
 /// </summary>
+[Collection("console-capture")]
 public sealed class SkillTextTests
 {
     private static string SkillFile()
@@ -37,6 +38,15 @@ public sealed class SkillTextTests
     /// comparison normalizes line endings the way doctor does. Only block targets are read:
     /// SkillBlock.cs and SkillCommandTests.cs contain both markers as source literals, and scanning
     /// every file would mistake them for installed blocks.
+    ///
+    /// No tracked file carries a block any more -- the skill is installed into the user's global
+    /// config, not committed -- so the loop over tracked targets can run on zero inputs. To keep the
+    /// test from passing vacuously, the same guard writes a block into a fresh temp directory
+    /// through <see cref="SkillCommand"/> and pins that file instead: the writer, the renderer and
+    /// the extractor all run against real bytes. That file is produced by the same renderer the
+    /// expected value comes from, so it would agree with a body-only change to itself; the check
+    /// therefore anchors on <see cref="SkillText.Rules"/> appearing in the block, so rules an
+    /// install forgets to write, or a marker the renderer drops, fail it.
     /// </summary>
     [RequiresGit]
     public void Every_tracked_block_file_carries_the_rendered_rules()
@@ -52,7 +62,6 @@ public sealed class SkillTextTests
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var expected = SkillBlock.Normalize(SkillBlock.Render(SkillText.Rules));
-        var checkedBlocks = 0;
 
         foreach (var target in SkillCommand.BlockTargets(root, isGlobal: false))
         {
@@ -62,11 +71,38 @@ public sealed class SkillTextTests
             var installed = SkillBlock.Extract(File.ReadAllText(path));
             if (installed is null) continue;
 
-            checkedBlocks++;
             Assert.Equal(expected, SkillBlock.Normalize(installed));
         }
 
-        Assert.True(checkedBlocks > 0, "no tracked block file was found to pin");
+        var temp = Path.Combine(Path.GetTempPath(), "csmesh-block-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(temp);
+        var originalOut = Console.Out;
+        try
+        {
+            Console.SetOut(TextWriter.Null);
+            Assert.Equal(Exit.Ok, SkillCommand.Execute(temp, new Options(["--agent", "codex"]), SkillMode.Install));
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        try
+        {
+            var blockFile = Path.Combine(temp, "AGENTS.md");
+            Assert.True(File.Exists(blockFile), "install wrote no block file to pin");
+
+            var pinned = SkillBlock.Extract(File.ReadAllText(blockFile));
+            Assert.NotNull(pinned);
+            Assert.Contains(
+                SkillBlock.Normalize(SkillText.Rules),
+                SkillBlock.Normalize(pinned!),
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(temp, recursive: true); } catch { /* temp dir */ }
+        }
     }
 
     /// <summary>
