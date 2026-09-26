@@ -33,20 +33,24 @@ public static class GraphStore
     /// Takes the write lock, or reports that it could not be taken.
     ///
     /// The lock is what stops two writers fighting over the rotation; the atomic rename below is
-    /// what protects the file itself. This returns null only for a lock that cannot be taken at
-    /// all -- a read-only checkout, an exotic filesystem or a container mount without file
-    /// locking. There is no second writer to serialise against in those cases, so the caller writes
-    /// unsynchronised and the rename still keeps the file whole.
+    /// what protects the file itself.
     ///
-    /// A lock that is <em>held</em> is contention, not a filesystem quirk, and every writer now
-    /// treats it that way. A full or incremental index, like an explicit heal, waits
-    /// <see cref="LockAttempts"/> × <see cref="LockWaitMs"/> ms and then raises
-    /// <see cref="LockContentedException"/>, so the runner answers <see cref="Exit.Contended"/>
-    /// (retry). It never returns null for a held lock, because that let the caller write beside the
-    /// holder -- unsynchronised, after five seconds of waiting: on Windows two processes replacing
-    /// one destination, on any platform an index that waited a writer out and then overwrote that
-    /// writer's result. The implicit heal passes <paramref name="wait"/> false to raise at once
-    /// instead, so a query never stalls behind another writer.
+    /// An <see cref="IOException"/> or an <see cref="UnauthorizedAccessException"/> from the open
+    /// is read as contention and raises <see cref="LockContentedException"/> rather than returning
+    /// null. The type cannot separate the two cases: on Windows a held handle surfaces as exactly
+    /// those, and so does a permanent refusal -- a read-only checkout raises
+    /// <see cref="UnauthorizedAccessException"/>. Refusing to write is the honest answer while a
+    /// holder might exist; the runner turns the raise into <see cref="Exit.Contended"/> (retry),
+    /// and a read-only checkout repeats that answer. With <paramref name="wait"/> true the open is
+    /// retried to <see cref="LockAttempts"/> × <see cref="LockWaitMs"/> ms first (a full or
+    /// incremental index, and an explicit heal); with false it raises on the first failure, which
+    /// is what the implicit heal needs so a query never stalls behind another writer.
+    ///
+    /// Any exception of another type -- a platform or filesystem that refuses the open without an
+    /// <see cref="IOException"/> or an <see cref="UnauthorizedAccessException"/>, so file locking
+    /// is not on offer at all -- is logged and returns null, and the caller writes unsynchronised.
+    /// There is no holder to serialise against in that case, the rename still keeps the file whole,
+    /// and refusing to index would be the worse answer.
     /// </summary>
     private static FileStream? AcquireLock(string root, bool wait)
     {
