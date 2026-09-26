@@ -191,6 +191,25 @@ public sealed class McpServerTests
         Assert.Contains("Thing.Go", text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// An MCP query heals by default like the CLI does, and heal:false has to reach the command as
+    /// --no-heal -- not merely be accepted and ignored. The order is deliberate: the stale call must
+    /// run first, because the default call is the one that leaves the graph current.
+    /// </summary>
+    [Fact]
+    public void AQueryHealsByDefaultAndHealFalseForwardsNoHeal()
+    {
+        using var sandbox = new Sandbox();
+        File.AppendAllText(Path.Combine(sandbox.Root, "src", "Thing.cs"),
+            "\n// edited after the index\n");
+
+        var stale = Call(sandbox.Root, "trace", """{"symbol":"Caller.Run","heal":false}""");
+        Assert.Contains("[STALE]", stale, StringComparison.Ordinal);
+
+        var healed = Call(sandbox.Root, "trace", """{"symbol":"Caller.Run"}""");
+        Assert.DoesNotContain("[STALE]", healed, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AnExportCallRendersThroughTheCommand()
     {

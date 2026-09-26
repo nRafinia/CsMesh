@@ -238,6 +238,20 @@ public static class McpTools
                 };
             }
 
+            // Healing is the default wherever a query runs, so the tool that most agents call has
+            // to be able to turn it off. --no-heal is the forwarded form; the default needs no
+            // argument and the schema says so.
+            if (tool.Kind is not ("doctor" or "index" or "review" or "export"))
+            {
+                schema.Properties["heal"] = new JsonSchemaProperty
+                {
+                    Type = "boolean",
+                    Description = "Rebind changed files before answering (default true). Set false to "
+                                  + "answer from the current graph without healing, marking rows from "
+                                  + "changed files [STALE]."
+                };
+            }
+
             schema.Properties["repo"] = new JsonSchemaProperty
             {
                 Type = "string",
@@ -314,6 +328,7 @@ public static class McpTools
         if (Text(arguments, "out") is { Length: > 0 } outPath) argv.AddRange(["--out", outPath]);
         if (Boolean(arguments, "full")) argv.Add("--full");
         if (Boolean(arguments, "writes")) argv.Add("--writes");
+        if (Bool(arguments, "heal") == false) argv.Add("--no-heal");
 
         var opt = new Options([.. argv]);
 
@@ -397,4 +412,23 @@ public static class McpTools
         arguments?.ValueKind == JsonValueKind.Object &&
         arguments.Value.TryGetProperty(name, out var value) &&
         value.ValueKind == JsonValueKind.True;
+
+    /// <summary>
+    /// Three-state, because a boolean argument that is absent and one that is explicitly false mean
+    /// different things here: absent takes the default, false forwards the opt-out flag. Treating
+    /// both as false would silently disable the default heal for every caller that never mentions it.
+    /// </summary>
+    private static bool? Bool(JsonElement? arguments, string name)
+    {
+        if (arguments?.ValueKind != JsonValueKind.Object) return null;
+        if (!arguments.Value.TryGetProperty(name, out var value)) return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(value.GetString(), out var parsed) => parsed,
+            _ => null
+        };
+    }
 }
