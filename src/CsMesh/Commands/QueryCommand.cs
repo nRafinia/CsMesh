@@ -418,6 +418,7 @@ public static class QueryCommand
                 writer.Force($"used at {external.Sites.Count} site(s):");
                 foreach (var site in external.Sites)
                 {
+                    var line = int.TryParse(site.Split(':').Last(), out var n) ? n : 0;
                     writer.Add($"  {site}");
                     result.Rows.Add(new QueryRow
                     {
@@ -426,7 +427,8 @@ public static class QueryCommand
                         Relation = "usage",
                         Note = external.Assembly,
                         File = site.Split(':').First(),
-                        Line = int.TryParse(site.Split(':').Last(), out var n) ? n : 0
+                        Line = line,
+                        EndLine = line
                     });
                 }
             }
@@ -478,6 +480,7 @@ public static class QueryCommand
                     Note = hit.Why,
                     File = n.File.Length > 0 ? n.File : null,
                     Line = n.Line,
+                    EndLine = n.EndLine > n.Line ? n.EndLine : n.Line,
                     Stale = n.File.Length > 0 && dirty.Contains(n.File)
                 });
             }
@@ -531,7 +534,7 @@ public static class QueryCommand
             // The project leads the location so a repeated name -- every linked type, every
             // top-level Program -- can be told apart and pasted into --project.
             var project = candidate.Project.Length > 0 ? $"{candidate.Project}  " : "";
-            if (!writer.Add($"  {selector}  ({candidate.Kind})  {project}{candidate.File}:{candidate.Line}"))
+            if (!writer.Add($"  {selector}  ({candidate.Kind})  {project}{candidate.File}:{Queries.LineSpan(candidate)}"))
                 break;
 
             result.Rows.Add(new QueryRow
@@ -544,6 +547,7 @@ public static class QueryCommand
                 Project = candidate.Project.Length > 0 ? candidate.Project : null,
                 File = candidate.File.Length > 0 ? candidate.File : null,
                 Line = candidate.Line,
+                EndLine = candidate.EndLine > candidate.Line ? candidate.EndLine : candidate.Line,
                 Stale = candidate.File.Length > 0 && dirty.Contains(candidate.File)
             });
         }

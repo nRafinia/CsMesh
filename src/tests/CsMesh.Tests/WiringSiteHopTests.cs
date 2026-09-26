@@ -496,8 +496,8 @@ public sealed class WiringSiteHopTests(GraphFixture fixture) : IClassFixture<Gra
             var iface = graph.Nodes.Single(n => n.Short == "IGreeter.Greet");
             var impl = graph.Nodes.Single(n => n.Short == "Greeter.Greet");
 
-            var rootLine = $"IGreeter.Greet  Services.cs:{iface.Line}";
-            var hopWithoutSite = $"  -> Greeter.Greet  [impl, di-bound]  Services.cs:{impl.Line}";
+            var rootLine = $"IGreeter.Greet  Services.cs:{Queries.LineSpan(iface)}";
+            var hopWithoutSite = $"  -> Greeter.Greet  [impl, di-bound]  Services.cs:{Queries.LineSpan(impl)}";
             var costWithoutSite = BudgetWriter.Estimate(rootLine) + BudgetWriter.Estimate(hopWithoutSite);
 
             // A budget set to exactly costWithoutSite fits the bare hop but overflows with the suffix.

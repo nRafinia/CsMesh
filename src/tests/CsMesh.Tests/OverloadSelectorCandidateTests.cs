@@ -94,7 +94,12 @@ public sealed class OverloadSelectorCandidateTests : IDisposable
             var separator = body.IndexOf("  (", StringComparison.Ordinal);
             var colon = body.LastIndexOf(':');
             if (separator < 0 || colon < 0) continue;
-            if (!int.TryParse(body[(colon + 1)..], out var number)) continue;
+
+            // The location is a declaration span, start-end or start; the row pins the start line.
+            var span = body[(colon + 1)..];
+            var dash = span.IndexOf('-');
+            if (dash >= 0) span = span[..dash];
+            if (!int.TryParse(span, out var number)) continue;
 
             rows.Add((body[..separator], number));
         }
