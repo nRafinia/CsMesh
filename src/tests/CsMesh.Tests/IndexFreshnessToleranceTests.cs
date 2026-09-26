@@ -80,4 +80,20 @@ public sealed class IndexFreshnessToleranceTests
 
         Assert.Contains(GraphStore.DirtyFiles(graph), d => d.EndsWith("Thing.cs", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// The root directory stamp must be taken after the index's own .csmesh exists. Otherwise the
+    /// first index creates .csmesh after recording the stamp, the root's timestamp moves, and the
+    /// next run believes a tracked directory changed when nothing did.
+    /// </summary>
+    [Fact]
+    public void TheRootStampIsTakenAfterTheIndexDirectoryExists()
+    {
+        using var sandbox = new Sandbox();
+        var graph = sandbox.Index();
+        GraphStore.Save(graph);
+
+        var stamp = graph.Dirs.Single(d => d.Path is "." or "");
+        Assert.Equal(Directory.GetLastWriteTimeUtc(sandbox.Root).Ticks, stamp.Ticks);
+    }
 }

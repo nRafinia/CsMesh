@@ -1,5 +1,6 @@
 using CsMesh.Common;
 using CsMesh.Models;
+using CsMesh.Storage;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -486,6 +487,11 @@ public static partial class Indexer
         var owned = new List<OwnedTree>(files.Count);
         var stamps = new List<FileStamp>(files.Count);
         var dirs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+        // The .csmesh directory exists before the first directory stamp is taken, so the index's own
+        // state write cannot move the root's timestamp after dirs["."] recorded it and leave the next
+        // freshness check re-walking the tree for a file nobody added.
+        CsMeshDir.Ensure(root);
 
         var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
 

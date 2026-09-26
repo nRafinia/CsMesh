@@ -1,5 +1,6 @@
 using CsMesh.Common;
 using CsMesh.Models;
+using CsMesh.Storage;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -292,6 +293,9 @@ public static partial class Indexer
             .ToList();
 
         previous.Files = freshStamps.Concat(carried).ToList();
+        // Same reason as Build: create .csmesh before stamping the root, so this pass's own state
+        // write cannot move a directory timestamp its next freshness check will compare against.
+        CsMeshDir.Ensure(root);
         previous.Dirs = DirectoryStamps(root, files);
         previous.BuiltAt = DateTimeOffset.UtcNow;
         previous.BuiltFromCommit = RepositoryLocator.GitHead(root);
