@@ -12,7 +12,7 @@
     <ToolCommandName>csmesh</ToolCommandName>
     <AssemblyName>csmesh</AssemblyName>
     <PackageId>CsMesh</PackageId>
-    <Version>0.8.2</Version>
+    <Version>0.9.0</Version>
 
     <ToolPackageRuntimeIdentifiers>win-x64;linux-x64;osx-arm64;osx-x64;linux-arm64;win-arm64;any</ToolPackageRuntimeIdentifiers>
     <Authors>Vali (naser) Rafinia</Authors>
