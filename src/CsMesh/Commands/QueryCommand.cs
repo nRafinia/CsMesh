@@ -70,12 +70,34 @@ public static class QueryCommand
             {
                 if (Indexer.BuildIncremental(graph, dirty, out var decline, message => Dbg.Log(message)) is { } healed)
                 {
-                    GraphStore.SaveInPlace(healed);
-                    graph = healed;
-                    dirty = GraphStore.DirtyFiles(graph);
-                    dirtySet = dirty.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    result.StaleFiles = dirty.Count;
-                    Dbg.Log($"healed index in place; {dirty.Count} file(s) still behind");
+                    // The default heal must not block a query behind another writer: it takes the
+                    // lock only if it is free and falls back to the stale answer when it is not.
+                    // --heal asked for the write and keeps the waiting contract; on an acquisition
+                    // timeout it raises the same contention exception the rename path does, so the
+                    // runner answers exit 75.
+                    bool written;
+                    if (healExplicit)
+                    {
+                        GraphStore.SaveHealed(healed);
+                        written = true;
+                    }
+                    else
+                    {
+                        written = GraphStore.TrySaveInPlace(healed);
+                    }
+
+                    if (written)
+                    {
+                        graph = healed;
+                        dirty = GraphStore.DirtyFiles(graph);
+                        dirtySet = dirty.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        result.StaleFiles = dirty.Count;
+                        Dbg.Log($"healed index in place; {dirty.Count} file(s) still behind");
+                    }
+                    else
+                    {
+                        healBusy = true;
+                    }
                 }
                 else
                 {

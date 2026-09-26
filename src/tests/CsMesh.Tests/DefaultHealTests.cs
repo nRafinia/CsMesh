@@ -161,6 +161,74 @@ public sealed class DefaultHealTests
 
         Assert.Equal(Exit.Contended, exit);
     }
+
+    /// <summary>
+    /// The implicit heal used to wait out the lock (5 s) and then write unsynchronised beside the
+    /// holder, so a query in one terminal could clobber an index in another. It now takes the lock
+    /// only if it is free: a held lock means no write, and the answer falls back to the stale graph
+    /// with the busy note, still exit 0 because nothing is wrong with the query.
+    ///
+    /// Pinned with a handle held across the whole query -- the lock file, not graph.json, so this
+    /// exercises acquisition and not the rename.
+    /// </summary>
+    [Fact]
+    public void A_default_heal_with_the_lock_held_answers_stale_without_writing()
+    {
+        if (!OperatingSystem.IsWindows()) return; // FileShare.None is only a lock on Windows
+
+        using var box = new HealSandbox();
+        box.Edit("\n// edited while another process holds the write lock\n");
+
+        var graphPath = GraphStore.PathFor(box.Root);
+        var originalBytes = File.ReadAllBytes(graphPath);
+
+        string text;
+        int exit;
+        using (new FileStream(Path.Combine(GraphStore.DirFor(box.Root), "lock"),
+                   FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+        {
+            text = Run(box.Root, "trace", out exit, "Demo.Caller.Run");
+        }
+
+        Assert.Equal(Exit.Ok, exit);
+        Assert.Contains("heal skipped: index busy", text, StringComparison.Ordinal);
+        Assert.Contains("[STALE]", text, StringComparison.Ordinal);
+        Assert.Equal(originalBytes, File.ReadAllBytes(graphPath));
+    }
+
+    /// <summary>
+    /// --heal asked for the write, so it keeps waiting for the lock. When the wait runs out it now
+    /// raises the same contention exception the rename path does, so the acquisition timeout is
+    /// exit 75 too -- the contract the flag always promised but the storage layer only honoured on
+    /// a rename.
+    /// </summary>
+    [Fact]
+    public void An_explicit_heal_with_the_lock_held_exits_75()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var box = new HealSandbox();
+        box.Edit("\n// edited while another process holds the write lock\n");
+
+        int exit;
+        var original = Console.Error;
+        try
+        {
+            Console.SetError(new StringWriter());
+            using (new FileStream(Path.Combine(GraphStore.DirFor(box.Root), "lock"),
+                       FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            {
+                exit = CliRunner.RunGuarded(["trace"],
+                    _ => QueryCommand.Execute(box.Root, new Options(["Demo.Caller.Run", "--heal"]), "trace"));
+            }
+        }
+        finally
+        {
+            Console.SetError(original);
+        }
+
+        Assert.Equal(Exit.Contended, exit);
+    }
 }
 
 /// <summary>
