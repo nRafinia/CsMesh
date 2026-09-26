@@ -79,7 +79,8 @@ public static class HelpCommand
             --depth <N>        Traversal depth limit (trace 6, blast-radius 3, context 3, path 12)
             --json             Output results as a structured JSON envelope
             --debug            Enable verbose diagnostics on stderr
-            --heal             Rebind changed files before answering instead of marking rows [STALE]
+            --heal             Heal explicitly; a contended index write exits 75 (healing is the default)
+            --no-heal          Answer from the current graph and mark rows from changed files [STALE]
             --no-telemetry     Do not record this invocation in usage telemetry
             -h, --help         Print help information
 

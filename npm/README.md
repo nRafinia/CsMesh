@@ -186,7 +186,7 @@ Times below are the same 2026-09-21 medians as the table above, measured on the 
 - **💥 Blast Radius & Impact Analysis:** Computes the reverse call graph to surface all direct/indirect callers, affected controllers, and background consumers before modifying a symbol.
 - **🧩 Nested Type & Member Resolution:** Resolves members declared inside nested types seamlessly (e.g. `Container.Compute` automatically resolves `Container.Inner.Compute`), avoiding lookup misses without shadowing direct matches.
 - **🌐 Universal AI Agent Integration:** Installs native prompt rules and skills for **12+ AI tools** (Claude Code, Cursor, Antigravity, OpenCode, Windsurf, Cline, Copilot, MiMo Code, etc.) with both local and `--global` machine-wide support.
-- **🔄 Incremental Re-indexing:** Node identity is a compiler symbol key, not an array position, so an edit re-binds only the files that moved and every edge into them survives. Rows from files the index has not caught up with are tagged `[STALE]`; `--heal` re-binds them before answering. Falls back to a full pass when an edit touches something that binds across files.
+- **🔄 Incremental Re-indexing:** Node identity is a compiler symbol key, not an array position, so an edit re-binds only the files that moved and every edge into them survives. Queries re-bind changed files before answering by default; a `[STALE]` row means that heal could not run, and the note says why. `--no-heal` answers from the current graph instead. Falls back to a full pass when an edit touches something that binds across files.
 - **🧭 Entry by Description, Not by Name:** `csmesh where <term>` searches names, namespaces, file paths and route templates, then ranks by how many entrypoints reach each hit — so the handler outranks the DTO that shares its name.
 
 ---
@@ -351,7 +351,8 @@ csmesh entrypoints orders
 | `--project <PATH>` | Pick one project when a name repeats across assemblies, e.g. `--project src/Api`. Exit `3` lists each candidate's project. Two overloads in one project need the parameter list instead, e.g. `Type.Member(int, string)`. |
 | `--budget <N>` | Hard token limit for stdout. Exits code `2` on overflow. Defaults per command below. |
 | `--depth <N>` | Traversal depth limit (`trace` 6, `blast-radius` 3, `context` 3, `path` 12, `diff` 3, `export` neighbourhood 1) |
-| `--heal` | Re-bind changed files before answering, instead of marking rows `[STALE]` |
+| `--heal` | Heal changed files explicitly before answering. Healing is the default; this form makes a contended index write exit `75` instead of answering stale. |
+| `--no-heal` | Answer from the current graph without healing, marking rows from changed files `[STALE]` |
 | `--json` | Output results in structured JSON format |
 | `--debug` | Print verbose diagnostics to stderr |
 | `--no-telemetry` | Skip recording the invocation in local usage metrics |

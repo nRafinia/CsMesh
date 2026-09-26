@@ -30,19 +30,34 @@ public static class GraphStore
     private const int LockWaitMs = 100;
 
     /// <summary>
-    /// Takes the write lock, or returns null when it cannot be taken.
+    /// Takes the write lock, or reports that it could not be taken.
     ///
-    /// Null is not a failure to report upward. A read-only checkout, an exotic filesystem or a
-    /// container mount without file locking would all land here, and refusing to write in those
-    /// cases would be a worse outcome than an unsynchronised write on a machine that has no
-    /// second writer anyway. The atomic rename below is what actually protects the file; the lock
-    /// is what stops two writers fighting over the rotation.
+    /// The lock is what stops two writers fighting over the rotation; the atomic rename below is
+    /// what protects the file itself.
+    ///
+    /// An <see cref="IOException"/> or an <see cref="UnauthorizedAccessException"/> from the open
+    /// is read as contention and raises <see cref="LockContentedException"/> rather than returning
+    /// null. The type cannot separate the two cases: on Windows a held handle surfaces as exactly
+    /// those, and so does a permanent refusal -- a read-only checkout raises
+    /// <see cref="UnauthorizedAccessException"/>. Refusing to write is the honest answer while a
+    /// holder might exist; the runner turns the raise into <see cref="Exit.Contended"/> (retry),
+    /// and a read-only checkout repeats that answer. With <paramref name="wait"/> true the open is
+    /// retried to <see cref="LockAttempts"/> × <see cref="LockWaitMs"/> ms first (a full or
+    /// incremental index, and an explicit heal); with false it raises on the first failure, which
+    /// is what the implicit heal needs so a query never stalls behind another writer.
+    ///
+    /// Any exception of another type -- a platform or filesystem that refuses the open without an
+    /// <see cref="IOException"/> or an <see cref="UnauthorizedAccessException"/>, so file locking
+    /// is not on offer at all -- is logged and returns null, and the caller writes unsynchronised.
+    /// There is no holder to serialise against in that case, the rename still keeps the file whole,
+    /// and refusing to index would be the worse answer.
     /// </summary>
-    private static FileStream? AcquireLock(string root)
+    private static FileStream? AcquireLock(string root, bool wait)
     {
         var path = LockPathFor(root);
+        Exception? lastContention = null;
 
-        for (var attempt = 0; attempt < LockAttempts; attempt++)
+        for (var attempt = 0; attempt < (wait ? LockAttempts : 1); attempt++)
         {
             try
             {
@@ -50,28 +65,34 @@ public static class GraphStore
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // Another csmesh holds it. Wait rather than clobber.
+                // Another csmesh holds it. Wait rather than clobber, unless the caller asked not to.
                 //
-                // UnauthorizedAccessException belongs here and its absence was a real bug. A
-                // sharing violation on Windows does not always surface as IOException, and the
-                // catch-all below read that as "no locking on this filesystem" and wrote
-                // unsynchronised. On Linux that costs nothing, because rename() is atomic whoever
-                // else is renaming. On Windows it puts two writers on one destination, and the
-                // second one's MoveFileEx fails with access denied -- which is what the suite
-                // found on its first Windows run.
+                // UnauthorizedAccessException belongs here and its absence was a real bug: a
+                // sharing violation on Windows does not always surface as IOException, and it is
+                // contention, not evidence that the filesystem cannot lock.
+                lastContention = ex;
+
+                if (!wait)
+                {
+                    throw new LockContentedException(
+                        $"the graph lock '{path}' is held by another process", ex);
+                }
+
                 Thread.Sleep(LockWaitMs);
             }
             catch (Exception ex)
             {
                 // A read-only checkout or a filesystem without locking. Genuinely nothing to wait
-                // for, and refusing to index would be the worse answer.
+                // for, refusing to index would be the worse answer, and there is no second writer
+                // whose work an unsynchronised write could clobber.
                 Dbg.Log($"graph lock unavailable, writing unsynchronised: {ex.Message}");
                 return null;
             }
         }
 
-        Dbg.Log($"graph lock still held after {LockAttempts * LockWaitMs}ms, writing unsynchronised");
-        return null;
+        throw new LockContentedException(
+            $"could not take the graph lock '{path}' after {LockAttempts * LockWaitMs}ms (held by another process)",
+            lastContention!);
     }
 
     /// <summary>
@@ -177,7 +198,7 @@ public static class GraphStore
     {
         CsMeshDir.Ensure(g.Root);
 
-        using var guard = AcquireLock(g.Root);
+        using var guard = AcquireLock(g.Root, wait: true);
 
         var current = PathFor(g.Root);
         if (File.Exists(current))
@@ -196,13 +217,42 @@ public static class GraphStore
     /// incremental refresh runs often and touches little, and rotating on each one would leave
     /// 'changes' comparing a graph against a near-copy of itself and reporting that no binding
     /// moved -- the one answer it must never give wrongly.
+    ///
+    /// Like <see cref="Save"/> it waits for the lock and raises <see cref="LockContentedException"/>
+    /// when it stays held, so the incremental path answers exit 75 instead of writing beside the
+    /// holder.
     /// </summary>
     public static void SaveInPlace(Graph g)
     {
         CsMeshDir.Ensure(g.Root);
 
-        using var guard = AcquireLock(g.Root);
+        using var guard = AcquireLock(g.Root, wait: true);
         WriteAtomic(g, PathFor(g.Root));
+    }
+
+    /// <summary>
+    /// The implicit heal's write: takes the lock only if it is free and returns false when another
+    /// process holds it.
+    ///
+    /// A query that heals by default must not stall behind another writer, and it must not write
+    /// beside one. Returning false lets the caller answer from the graph it already loaded and say
+    /// the heal was skipped -- the same outcome the rename path's contention catch produces. A
+    /// rename that loses its race still raises, so the caller's existing catch handles both.
+    /// </summary>
+    public static bool TrySaveInPlace(Graph g)
+    {
+        CsMeshDir.Ensure(g.Root);
+
+        FileStream? guard;
+        try { guard = AcquireLock(g.Root, wait: false); }
+        catch (LockContentedException) { return false; }
+
+        using (guard)
+        {
+            WriteAtomic(g, PathFor(g.Root));
+        }
+
+        return true;
     }
 
     /// <summary>

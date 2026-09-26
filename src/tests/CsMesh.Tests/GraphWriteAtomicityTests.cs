@@ -11,6 +11,7 @@ namespace CsMesh.Tests;
 /// graph.json is written while other csmesh processes may be reading it -- CSMESH_AUTO_INDEX makes
 /// any query a potential writer, so a query in one terminal and an index in another is ordinary.
 /// </summary>
+[Collection("console-capture")]
 public sealed class GraphWriteAtomicityTests
 {
     private sealed class Sandbox : IDisposable
@@ -239,5 +240,39 @@ public sealed class GraphWriteAtomicityTests
         var reloaded = GraphStore.Load(sandbox.Root, out var problem);
         Assert.Null(problem);
         Assert.NotNull(reloaded);
+    }
+
+    /// <summary>
+    /// An index that cannot take the write lock must raise rather than write without it. The lock is
+    /// what serialises the rotation of graph.prev.json and the replace of graph.json, so a writer
+    /// that gives up after five seconds and writes anyway races the holder: on Windows two processes
+    /// replace one destination and the second fails with access denied, and on any platform the
+    /// index that waited overwrites the result it waited for while claiming success.
+    ///
+    /// Held on the lock file, not graph.json, so this is acquisition contention and not a rename
+    /// loss. Both the full and the incremental writer are asserted, and the graph must be
+    /// byte-for-byte unchanged with no temp orphan.
+    /// </summary>
+    [Fact]
+    public void AnIndexThatCannotTakeTheLockRaisesInsteadOfWritingUnlocked()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var sandbox = new Sandbox();
+        var graph = sandbox.Index();
+        GraphStore.Save(graph);
+
+        var path = GraphStore.PathFor(sandbox.Root);
+        var originalBytes = File.ReadAllBytes(path);
+        var lockPath = Path.Combine(GraphStore.DirFor(sandbox.Root), "lock");
+
+        using (new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.Throws<LockContentedException>(() => GraphStore.Save(graph));
+            Assert.Throws<LockContentedException>(() => GraphStore.SaveInPlace(graph));
+        }
+
+        Assert.Equal(originalBytes, File.ReadAllBytes(path));
+        Assert.Empty(Directory.EnumerateFiles(GraphStore.DirFor(sandbox.Root), "*.tmp-*"));
     }
 }

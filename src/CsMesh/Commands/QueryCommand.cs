@@ -52,19 +52,65 @@ public static class QueryCommand
             _ => 6
         });
 
-        // Answering from a graph that is known to be behind, when catching it up costs less than
-        // the round trip that reports it is behind, is a worse default than it looks.
-        if (dirty.Count > 0 &&
-            (opt.Flag("heal") || Environment.GetEnvironmentVariable("CSMESH_AUTO_INDEX") == "1"))
+        // Healing is the default and refusal is the opt-out: a read-only query that edits nothing
+        // but the index is cheap next to the round trip that reports the index is behind, and an
+        // agent that has to remember --heal is the one that ends up reading stale answers without
+        // knowing it. --no-heal and CSMESH_AUTO_INDEX=0 leave the graph exactly as it is; --heal
+        // and CSMESH_AUTO_INDEX=1 keep their old meaning and also mark the heal explicit, which is
+        // the path where write contention still surfaces as exit 75.
+        var healExplicit = opt.Flag("heal") || Environment.GetEnvironmentVariable("CSMESH_AUTO_INDEX") == "1";
+        var healDisabled = opt.Flag("no-heal") || Environment.GetEnvironmentVariable("CSMESH_AUTO_INDEX") == "0";
+
+        var healReason = (string?)null;
+        var healBusy = false;
+
+        if (dirty.Count > 0 && !healDisabled)
         {
-            if (Indexer.BuildIncremental(graph, dirty, message => Dbg.Log(message)) is { } healed)
+            try
             {
-                GraphStore.SaveInPlace(healed);
-                graph = healed;
-                dirty = GraphStore.DirtyFiles(graph);
-                dirtySet = dirty.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                result.StaleFiles = dirty.Count;
-                Dbg.Log($"healed index in place; {dirty.Count} file(s) still behind");
+                if (Indexer.BuildIncremental(graph, dirty, out var decline, message => Dbg.Log(message)) is { } healed)
+                {
+                    // The default heal must not block a query behind another writer: it takes the
+                    // lock only if it is free and falls back to the stale answer when it is not.
+                    // --heal asked for the write and keeps the waiting contract; on an acquisition
+                    // timeout it raises the same contention exception the rename path does, so the
+                    // runner answers exit 75.
+                    bool written;
+                    if (healExplicit)
+                    {
+                        GraphStore.SaveInPlace(healed);
+                        written = true;
+                    }
+                    else
+                    {
+                        written = GraphStore.TrySaveInPlace(healed);
+                    }
+
+                    if (written)
+                    {
+                        graph = healed;
+                        dirty = GraphStore.DirtyFiles(graph);
+                        dirtySet = dirty.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        result.StaleFiles = dirty.Count;
+                        Dbg.Log($"healed index in place; {dirty.Count} file(s) still behind");
+                    }
+                    else
+                    {
+                        healBusy = true;
+                    }
+                }
+                else
+                {
+                    healReason = decline;
+                }
+            }
+            // A heal that loses the write race has still answered nothing wrong: the graph it was
+            // going to patch is the one it now answers from, so it reports the delay and exits as
+            // an unhealed answer would. An explicit --heal asked for the write itself, so
+            // contention stays the exit-75 contract the write path already had.
+            catch (LockContentedException) when (!healExplicit)
+            {
+                healBusy = true;
             }
         }
 
@@ -75,6 +121,19 @@ public static class QueryCommand
             var note = $"# index is {dirty.Count} file(s) behind working tree; rows from those files are marked [STALE]. run: csmesh index";
             result.Notes.Add(note);
             if (!json) writer.AddOpeningNote(note);
+
+            // A second reserved note says why the default heal did not run. Without it the stale
+            // note reads as the tool having tried and failed with no way to tell a held lock from
+            // an edit the incremental path refuses; the remedies differ and only one is a full index.
+            var skip = healBusy
+                ? "# heal skipped: index busy; run: csmesh index"
+                : healReason is null ? null : $"# heal skipped: {healReason}; run: csmesh index";
+
+            if (skip is not null)
+            {
+                result.Notes.Add(skip);
+                if (!json) writer.AddOpeningNote(skip);
+            }
         }
 
         // A version gap is invisible in the rows themselves -- every line looks as confident as

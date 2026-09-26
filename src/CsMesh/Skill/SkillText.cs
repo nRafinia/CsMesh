@@ -204,9 +204,9 @@ public static class SkillText
           name match or from container scanning, not from a compiler symbol. **Below `0.80` is a lead, not
           a fact**: open the file before acting on it. A row with no `?score` was read straight off a
           symbol and is exact.
-        - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** Add `--heal`
-          and run the same command again: the changed files are rebound in place first. `csmesh index` on
-          its own is incremental too, and only rebinds what moved.
+        - `[STALE]` -- the file changed after the index was built. **Do not trust this row.** A query
+          rebinds changed files before answering, so a `[STALE]` row means that heal could not run; the
+          note says why. Run `csmesh index` to rebuild.
 
         ## Exit codes -- branch on these, do not parse the text
 
@@ -309,7 +309,8 @@ public static class SkillText
         - **Exit 3**: the name matches symbols in more than one project. The candidate list prints each
           one's project; re-run with `--project <path>` taken from it, or with a qualified `Type.Member`.
         - **Thinner than expected**: `csmesh unresolved` reports where the indexer failed and why.
-        - **`[STALE]` rows**: re-run with `--heal`. The changed files are rebound before the answer.
+        - **`[STALE]` rows**: a query rebinds changed files before answering. A `[STALE]` row means the
+          heal could not run; the note says why. Run `csmesh index`.
 
         Keep using grep for string literals, config values, TODOs, error messages, and non-`.cs` files.
 
@@ -415,7 +416,8 @@ public static class SkillText
         - **Exit 3**: the name matches symbols in more than one project. The candidate list prints each
           one's project; re-run with `--project <path>` taken from it, or with a qualified `Type.Member`.
         - **Thinner than expected**: `csmesh unresolved` reports where the indexer failed and why.
-        - **`[STALE]` rows**: re-run with `--heal`. The changed files are rebound before the answer.
+        - **`[STALE]` rows**: a query rebinds changed files before answering. A `[STALE]` row means the
+          heal could not run; the note says why. Run `csmesh index`.
 
         Keep using grep for string literals, config values, TODOs, error messages, and non-`.cs` files.
 
