@@ -29,9 +29,24 @@ public static class Telemetry
         Current.Parents = CallerDetector.ParentChain();
     }
 
+    /// <summary>
+    /// Appends the finished invocation to a <c>.csmesh</c> that already exists, and never creates
+    /// one.
+    ///
+    /// The directory belongs to the repository, not to telemetry. Creation used to happen here
+    /// through <c>CsMeshDir.Ensure</c>, so any command that resolved a root and then failed -- a
+    /// usage error in a plain folder, exit 64 in 3 ms -- left a <c>.csmesh</c> behind. While the
+    /// root rule accepted the bare directory, that stray folder then marked the parent as a
+    /// repository for every unmarked folder beneath it. Commands that write state (the graph, the
+    /// review baseline) ensure the directory themselves; one that only logs must leave the tree as
+    /// it found it.
+    /// </summary>
     public static void End(int exit)
     {
         if (Disabled || string.IsNullOrEmpty(Current.Root)) return;
+
+        // No directory, no log. Creating it is what put a marker where the user had none.
+        if (!Directory.Exists(CsMeshDir.For(Current.Root))) return;
 
         Current.Exit = exit;
         Current.Ms = Clock.ElapsedMilliseconds;
@@ -39,8 +54,6 @@ public static class Telemetry
 
         try
         {
-            CsMeshDir.Ensure(Current.Root);
-
             var line = JsonSerializer.Serialize(Current, AppJsonContext.Default.Invocation);
             using var fs = new FileStream(LogPath(Current.Root), FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
             using var sw = new StreamWriter(fs);
