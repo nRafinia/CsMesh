@@ -1,3 +1,5 @@
+using CsMesh.Storage;
+
 namespace CsMesh.Common;
 
 /// <summary>
@@ -6,7 +8,15 @@ namespace CsMesh.Common;
 public static class RepositoryLocator
 {
     /// <summary>
-    /// Searches upward from the starting directory to find the repository root (.git, .csmesh, or solution files).
+    /// Searches upward from the starting directory to find the repository root: a <c>.git</c>
+    /// directory, a solution file, or a <c>.csmesh</c>/<c>.csgraph</c> directory that holds a graph.
+    ///
+    /// A bare <c>.csmesh</c> is deliberately not a marker. Every command writes
+    /// <c>.csmesh/usage.jsonl</c> into the root it resolved, so a telemetry-only <c>.csmesh</c> is
+    /// created wherever csmesh happens to run -- under a user profile, for one, because a folder
+    /// with no marker of its own falls back to just that. While the bare directory counted, such a
+    /// <c>.csmesh</c> in a parent captured every unmarked folder beneath it, so a query from any
+    /// one of them was answered for the parent instead of the tree it was run in.
     /// </summary>
     public static string FindRoot(string start)
     {
@@ -27,8 +37,8 @@ public static class RepositoryLocator
         while (dir != null)
         {
             if (Directory.Exists(Path.Combine(dir.FullName, ".git")) ||
-                Directory.Exists(Path.Combine(dir.FullName, ".csmesh")) ||
-                Directory.Exists(Path.Combine(dir.FullName, ".csgraph")) ||
+                HasGraph(Path.Combine(dir.FullName, ".csmesh")) ||
+                HasGraph(Path.Combine(dir.FullName, ".csgraph")) ||
                 dir.EnumerateFiles("*.sln").Any() ||
                 dir.EnumerateFiles("*.slnx").Any())
             {
@@ -40,6 +50,14 @@ public static class RepositoryLocator
 
         return Path.GetFullPath(start);
     }
+
+    /// <summary>
+    /// Whether a <c>.csmesh</c>/<c>.csgraph</c> directory is a repository marker: it is one only
+    /// when it holds the graph. A directory left behind by telemetry alone is not. See
+    /// <see cref="FindRoot"/> for the bug the distinction prevents.
+    /// </summary>
+    private static bool HasGraph(string directory) =>
+        File.Exists(Path.Combine(directory, GraphStore.GraphFileName));
 
     /// <summary>
     /// Reads the current Git HEAD commit hash, following a symbolic ref when present.

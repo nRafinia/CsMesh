@@ -73,7 +73,7 @@ public static class HelpCommand
             help           Print this message or the help of the given subcommand(s)
 
         GLOBAL OPTIONS:
-            --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
+            --repo <PATH>      Repository root (default: nearest .git/.sln/.slnx above cwd, or a .csmesh/.csgraph with a graph)
             --under <PATH>     Restrict to a subtree, e.g. --under src/Api
             --budget <N>       Maximum output tokens (trace/impl 600, blast-radius 800)
             --depth <N>        Traversal depth limit (trace 6, blast-radius 3, context 3, path 12)
@@ -188,7 +188,7 @@ public static class HelpCommand
             csmesh index [OPTIONS]
 
         OPTIONS:
-            --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
+            --repo <PATH>      Repository root (default: nearest .git/.sln/.slnx above cwd, or a .csmesh/.csgraph with a graph)
             --full             Force a full re-index of every in-scope project instead of incremental refresh
             --all              Include projects that are not built by any solution file
             --debug            Print debug details during indexing to stderr
@@ -784,7 +784,7 @@ public static class HelpCommand
             csmesh doctor [OPTIONS]
 
         OPTIONS:
-            --repo <PATH>      Repository root (default: nearest .sln/.slnx/.git above cwd)
+            --repo <PATH>      Repository root (default: nearest .git/.sln/.slnx above cwd, or a .csmesh/.csgraph with a graph)
             -h, --help         Print help information
 
         EXAMPLES:
