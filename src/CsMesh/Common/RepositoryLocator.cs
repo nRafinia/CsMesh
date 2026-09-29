@@ -37,8 +37,7 @@ public static class RepositoryLocator
         while (dir != null)
         {
             if (Directory.Exists(Path.Combine(dir.FullName, ".git")) ||
-                HasGraph(Path.Combine(dir.FullName, ".csmesh")) ||
-                HasGraph(Path.Combine(dir.FullName, ".csgraph")) ||
+                HasGraphMarker(dir.FullName) ||
                 dir.EnumerateFiles("*.sln").Any() ||
                 dir.EnumerateFiles("*.slnx").Any())
             {
@@ -52,10 +51,15 @@ public static class RepositoryLocator
     }
 
     /// <summary>
-    /// Whether a <c>.csmesh</c>/<c>.csgraph</c> directory is a repository marker: it is one only
-    /// when it holds the graph. A directory left behind by telemetry alone is not. See
-    /// <see cref="FindRoot"/> for the bug the distinction prevents.
+    /// Whether a directory is a csmesh repository marker: it holds a <c>.csmesh</c> or legacy
+    /// <c>.csgraph</c> directory that actually contains the graph file. A directory left behind by
+    /// telemetry alone is not one; see <see cref="FindRoot"/> for the bug the distinction prevents.
+    /// Shared with McpServer's root preference so the two checks cannot drift apart.
     /// </summary>
+    public static bool HasGraphMarker(string directory) =>
+        HasGraph(Path.Combine(directory, ".csmesh")) ||
+        HasGraph(Path.Combine(directory, ".csgraph"));
+
     private static bool HasGraph(string directory) =>
         File.Exists(Path.Combine(directory, GraphStore.GraphFileName));
 

@@ -386,5 +386,47 @@ public sealed class McpServerTests
             try { Directory.Delete(tempNonRepo, recursive: true); } catch { }
         }
     }
+
+    /// <summary>
+    /// A .csmesh that holds only telemetry must not make its folder the preferred MCP root. It did
+    /// while the preference check accepted the bare directory, so a workspace folder that had once
+    /// been the target of a failed command outranked the folder actually holding an index. The
+    /// telemetry-only root is advertised first, so only the shared graph-marker check can reject it
+    /// and let the indexed root below it win.
+    /// </summary>
+    [Fact]
+    public void RootsListIgnoresATelemetryOnlyCsmeshAndPicksTheIndexedRoot()
+    {
+        using var sandbox = new Sandbox();
+        var telemetryOnly = Path.Combine(Path.GetTempPath(), "csmesh-telemetry-only-" + Guid.NewGuid().ToString("N")[..8]);
+        var emptyCwd = Path.Combine(Path.GetTempPath(), "csmesh-empty-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(telemetryOnly, ".csmesh"));
+        File.WriteAllText(Path.Combine(telemetryOnly, ".csmesh", "usage.jsonl"), "{}");
+        Directory.CreateDirectory(emptyCwd);
+
+        try
+        {
+            var firstUri = new Uri(telemetryOnly).AbsoluteUri;
+            var secondUri = new Uri(sandbox.Root).AbsoluteUri;
+            var rootsResultJson = """{"jsonrpc":"2.0","id":"csmesh-roots-1","result":{"roots":[{"uri":"URI1","name":"telemetry"},{"uri":"URI2","name":"sandbox"}]}}"""
+                .Replace("URI1", firstUri, StringComparison.Ordinal)
+                .Replace("URI2", secondUri, StringComparison.Ordinal);
+
+            var replies = Exchange(emptyCwd,
+                """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"roots":{"listChanged":true}}}}""",
+                """{"jsonrpc":"2.0","method":"notifications/initialized"}""",
+                rootsResultJson,
+                """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"where","arguments":{"symbol":"Thing"}}}""");
+
+            Assert.Equal(3, replies.Count);
+            var content = replies[2].GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!;
+            Assert.Contains("Thing", content, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(telemetryOnly, recursive: true); } catch { }
+            try { Directory.Delete(emptyCwd, recursive: true); } catch { }
+        }
+    }
 }
 
