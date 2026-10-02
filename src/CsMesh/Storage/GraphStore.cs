@@ -10,7 +10,14 @@ namespace CsMesh.Storage;
 public static class GraphStore
 {
     public static string DirFor(string root) => Path.Combine(root, ".csmesh");
-    public static string PathFor(string root) => Path.Combine(DirFor(root), "graph.json");
+
+    /// <summary>
+    /// The name of the persisted graph. Shared with the root marker check so the two cannot drift:
+    /// only a <c>.csmesh</c>/<c>.csgraph</c> directory that actually holds this file is a marker.
+    /// </summary>
+    public const string GraphFileName = "graph.json";
+
+    public static string PathFor(string root) => Path.Combine(DirFor(root), GraphFileName);
 
     /// <summary>
     /// The graph as it was before the current index. Kept so 'changes' can answer what the shape

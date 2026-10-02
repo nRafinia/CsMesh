@@ -260,8 +260,7 @@ public static class McpServer
         try
         {
             var dir = new DirectoryInfo(dirPath);
-            return Directory.Exists(Path.Combine(dirPath, ".csmesh"))
-                   || Directory.Exists(Path.Combine(dirPath, ".csgraph"))
+            return RepositoryLocator.HasGraphMarker(dirPath)
                    || dir.EnumerateFiles("*.sln").Any()
                    || dir.EnumerateFiles("*.slnx").Any()
                    || dir.EnumerateFiles("*.csproj", SearchOption.AllDirectories).Any();

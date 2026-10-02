@@ -378,7 +378,7 @@ csmesh entrypoints orders
 
 | Option | Description |
 |:---|:---|
-| `--repo <PATH>` | Target repository root (default: nearest `.sln`, `.slnx`, or `.git` above cwd) |
+| `--repo <PATH>` | Target repository root (default: nearest `.git`, `.sln`/`.slnx`, or a `.csmesh`/`.csgraph` holding a graph, above cwd) |
 | `--under <PATH>` | Restrict the answer to a subtree, e.g. `--under src/Api`. Narrow before raising the budget. |
 | `--project <PATH>` | Pick one project when a name repeats across assemblies, e.g. `--project src/Api`. Exit `3` lists each candidate's project. Two overloads in one project need the parameter list instead, e.g. `Type.Member(int, string)`. |
 | `--budget <N>` | Hard token limit for stdout. Exits code `2` on overflow. Defaults per command below. |

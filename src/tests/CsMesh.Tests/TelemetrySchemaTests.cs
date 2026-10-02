@@ -30,6 +30,10 @@ public sealed class TelemetrySchemaTests : IDisposable
     [Fact]
     public void A_written_line_carries_schema_version_two()
     {
+        // End appends only to a .csmesh that already exists; it no longer creates one, so the
+        // directory this log lives in is set up here like its two siblings below.
+        Directory.CreateDirectory(Path.Combine(_root, ".csmesh"));
+
         var previousRoot = TelemetryApi.Current.Root;
         var previousDisabled = TelemetryApi.Disabled;
         try

@@ -99,7 +99,7 @@ public static partial class Indexer
 
     public static IEnumerable<string> EnumerateSourceFiles(string root, ProjectScope scope)
     {
-        foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+        foreach (var file in WalkSourceFiles(root))
         {
             if (IsSkipped(root, file)) continue;
             if (!scope.Includes(file)) continue;
@@ -109,6 +109,84 @@ public static partial class Indexer
             if (normalized.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase)) continue;
             if (normalized.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase)) continue;
             yield return file;
+        }
+    }
+
+    /// <summary>
+    /// Attribute skips kept identical to the framework default the old SearchOption overload used:
+    /// hidden and system entries are not returned, and reparse points (junctions included) still
+    /// are.
+    /// </summary>
+    private const FileAttributes SkippedAttributes = FileAttributes.Hidden | FileAttributes.System;
+
+    /// <summary>
+    /// File listing for one directory. IgnoreInaccessible is on so a file-level refusal cannot
+    /// abort the listing; the directory refusal that matters is caught by the walk itself.
+    /// </summary>
+    private static readonly EnumerationOptions SourceEnumeration = new()
+    {
+        RecurseSubdirectories = false,
+        IgnoreInaccessible = true,
+        AttributesToSkip = SkippedAttributes,
+        MatchType = MatchType.Simple
+    };
+
+    /// <summary>
+    /// Directory listing for one level, with the ignore off on purpose. The recursive enumerator
+    /// skips a refused directory in silence, so it cannot say which one was dropped; asking for the
+    /// children with IgnoreInaccessible false surfaces the refusal for the walk to name in the log.
+    /// </summary>
+    private static readonly EnumerationOptions RefusalProbe = new()
+    {
+        RecurseSubdirectories = false,
+        IgnoreInaccessible = false,
+        AttributesToSkip = SkippedAttributes,
+        MatchType = MatchType.Simple
+    };
+
+    /// <summary>
+    /// The .cs files under <paramref name="root"/>, in a walk that survives a directory the process
+    /// may not read.
+    ///
+    /// Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories) -- what this replaces --
+    /// maps to an EnumerationOptions whose IgnoreInaccessible is false, so a single unreadable
+    /// directory aborted the whole enumeration and `index` failed with it. The legacy "Application
+    /// Data" junction under a Windows profile does exactly that, and when a telemetry-only .csmesh
+    /// in that profile made it the resolved root, one unrelated query took the index down (exit 70).
+    ///
+    /// The recursion is explicit so a refusal is attributed to the directory that produced it and
+    /// named in the debug log. IgnoreInaccessible stays on for the file listing, so a file-level
+    /// denial is skipped rather than fatal.
+    /// </summary>
+    private static IEnumerable<string> WalkSourceFiles(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+
+            string[] subdirectories;
+            try
+            {
+                subdirectories = Directory.GetDirectories(directory, "*", RefusalProbe);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                Dbg.Log($"source walk skipped {directory}: {ex.Message}");
+                continue;
+            }
+
+            foreach (var file in Directory.GetFiles(directory, "*.cs", SourceEnumeration))
+            {
+                yield return file;
+            }
+
+            foreach (var subdirectory in subdirectories)
+            {
+                pending.Push(subdirectory);
+            }
         }
     }
 
