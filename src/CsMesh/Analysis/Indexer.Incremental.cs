@@ -1,4 +1,3 @@
-using System.Text;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Storage;
@@ -79,8 +78,13 @@ public static partial class Indexer
     public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, Action<string>? progress = null) =>
         BuildIncrementalWithScope(previous, dirty, out _, progress);
 
+    public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, out string? declineReason, Action<string>? progress = null) =>
+        BuildIncrementalWithScope(previous, dirty, out declineReason, progress, ReadSource);
+
     /// <summary>
-    /// As the pass above, but naming why it declined through <paramref name="declineReason"/>.
+    /// As the pass above, but naming why it declined through <paramref name="declineReason"/>, and
+    /// reading sources through <paramref name="readSource"/>. The reader defaults to the real file
+    /// read; a test substitutes one to interleave a write between the stat and the read.
     ///
     /// A caller that would otherwise fall back to a full index does not need the reason, but one
     /// that has chosen to answer from the stale graph anyway does: the note it prints has to say
@@ -88,7 +92,7 @@ public static partial class Indexer
     /// incremental path will never take. Silence at the point of decline is how a default heal
     /// becomes indistinguishable from no heal at all.
     /// </summary>
-    public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, out string? declineReason, Action<string>? progress = null)
+    internal static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, out string? declineReason, Action<string>? progress, Func<string, SourceRead> readSource)
     {
         declineReason = null;
         var root = previous.Root;
@@ -199,14 +203,13 @@ public static partial class Indexer
         Parallel.For(0, files.Count, i =>
         {
             var file = files[i];
-            byte[] bytes;
-            string text;
+            SourceRead read;
             try
             {
-                bytes = File.ReadAllBytes(file);
-                using var stream = new MemoryStream(bytes);
-                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-                text = reader.ReadToEnd();
+                // The reader stats before it reads; see ReadSource. A writer between the two yields a
+                // nonzero delta the next freshness check can act on, rather than a stamp that matches
+                // the writer's time while the parsed text is the revision before it.
+                read = readSource(file);
             }
             catch (Exception ex)
             {
@@ -214,20 +217,19 @@ public static partial class Indexer
                 return;
             }
 
-            trees[i] = CSharpSyntaxTree.ParseText(text, parseOptions, path: file);
+            trees[i] = CSharpSyntaxTree.ParseText(read.Text, parseOptions, path: file);
 
-            var info = new FileInfo(file);
             var relative = Path.GetRelativePath(root, file);
             var normalized = relative.Replace('\\', '/');
             var hash = dirtySet.Contains(normalized)
-                ? FileStamp.HashOf(bytes)
-                : storedHashes.TryGetValue(normalized, out var stored) ? stored : FileStamp.HashOf(bytes);
+                ? FileStamp.HashOf(read.Bytes)
+                : storedHashes.TryGetValue(normalized, out var stored) ? stored : FileStamp.HashOf(read.Bytes);
 
             stamps[i] = new FileStamp
             {
                 Path = relative,
-                Ticks = info.LastWriteTimeUtc.Ticks,
-                Size = info.Length,
+                Ticks = read.Ticks,
+                Size = read.Size,
                 Hash = hash
             };
         });

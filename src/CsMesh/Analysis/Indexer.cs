@@ -548,7 +548,11 @@ public static partial class Indexer
     /// compiles from source and must not also load as references.
     /// </summary>
     public static IndexBuild BuildWithScope(string root, Action<string>? progress = null, bool includeAllProjects = false,
-                                            string? referenceRoot = null)
+                                            string? referenceRoot = null) =>
+        BuildWithScope(root, progress, includeAllProjects, referenceRoot, ReadSource);
+
+    internal static IndexBuild BuildWithScope(string root, Action<string>? progress, bool includeAllProjects,
+                                              string? referenceRoot, Func<string, SourceRead> readSource)
     {
         var scope = includeAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
 
@@ -579,22 +583,33 @@ public static partial class Indexer
             for (var i = 0; i < files.Count; i++)
             {
                 var file = files[i];
-                if (!TryReadSource(file, out var bytes, out var text)) continue;
+
+                // The reader takes the stat before the bytes; see ReadSource. A writer landing between
+                // the two leaves a nonzero delta the freshness check can act on, where a stamp taken
+                // after the read would record the writer's new time against pre-read text and hide it.
+                SourceRead read;
+                try
+                {
+                    read = readSource(file);
+                }
+                catch
+                {
+                    continue;
+                }
 
                 owned.Add(new OwnedTree(
-                    CSharpSyntaxTree.ParseText(text, parseOptions, path: file),
+                    CSharpSyntaxTree.ParseText(read.Text, parseOptions, path: file),
                     owners[i]));
 
-                var fileInfo = new FileInfo(file);
                 stamps.Add(new FileStamp
                 {
                     Path = Path.GetRelativePath(root, file),
-                    Ticks = fileInfo.LastWriteTimeUtc.Ticks,
-                    Size = fileInfo.Length,
-                    Hash = FileStamp.HashOf(bytes)
+                    Ticks = read.Ticks,
+                    Size = read.Size,
+                    Hash = FileStamp.HashOf(read.Bytes)
                 });
 
-                var dir = fileInfo.DirectoryName;
+                var dir = Path.GetDirectoryName(file);
                 if (dir == null) continue;
                 var relDir = Path.GetRelativePath(root, dir);
                 if (!dirs.ContainsKey(relDir))
@@ -779,27 +794,37 @@ public static partial class Indexer
         BuildWithScope(root, progress, includeAllProjects, referenceRoot).Graph;
 
     /// <summary>
-    /// Reads one source file once, as bytes, and decodes them the way <c>File.ReadAllText</c> would.
-    /// The bytes are what the stamp hashes; taking them in a single read is what keeps the digest
-    /// and the parsed text describing the same revision when a writer is racing the index.
+    /// One source file's freshness inputs and its content, taken as a unit: the write time and length
+    /// first, then the bytes and the decoded text. Keeping them together is what makes the ordering
+    /// the reader's, and lets a test substitute a reader that interleaves a write.
     /// </summary>
-    internal static bool TryReadSource(string path, out byte[] bytes, out string text)
-    {
-        try
-        {
-            bytes = File.ReadAllBytes(path);
-        }
-        catch
-        {
-            bytes = [];
-            text = string.Empty;
-            return false;
-        }
+    internal readonly record struct SourceRead(long Ticks, long Size, byte[] Bytes, string Text);
 
+    /// <summary>
+    /// The production read: stat first, then the bytes, then decode. A writer that lands between the
+    /// stat and the read leaves the stamp describing the pre-write revision while the digest
+    /// describes the writer's bytes, so the next freshness check sees a nonzero delta and hashes the
+    /// file instead of trusting a timestamp it cannot reconcile.
+    /// </summary>
+    internal static SourceRead ReadSource(string path)
+    {
+        var info = new FileInfo(path);
+        var ticks = info.LastWriteTimeUtc.Ticks;
+        var size = info.Length;
+        var bytes = File.ReadAllBytes(path);
+        return new SourceRead(ticks, size, bytes, Decode(bytes));
+    }
+
+    /// <summary>
+    /// Decodes file bytes to text with the same BOM detection and UTF-8 default that
+    /// <c>File.ReadAllText</c> uses, so reading bytes instead of text does not change what Roslyn
+    /// parses or what the digest covers.
+    /// </summary>
+    private static string Decode(byte[] bytes)
+    {
         using var stream = new MemoryStream(bytes);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        text = reader.ReadToEnd();
-        return true;
+        return reader.ReadToEnd();
     }
 
     /// <summary>
