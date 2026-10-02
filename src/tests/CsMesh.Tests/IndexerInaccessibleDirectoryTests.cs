@@ -13,9 +13,11 @@ namespace CsMesh.Tests;
 /// The old call, Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories), maps to an
 /// EnumerationOptions whose IgnoreInaccessible is false, so one refused directory -- a legacy
 /// profile junction, a permission-stripped cache -- aborted the whole enumeration and took the
-/// index with it (exit 70). This denies the list permission on a real directory and checks the walk
-/// both skips it and names it in the debug log. Captures Console.Error, so the class joins the
-/// console-capture collection.
+/// index with it (exit 70). This denies the list permission on a real directory -- an ACL rule on
+/// Windows, mode 000 elsewhere -- and checks the walk both skips it and names it in the debug log.
+/// The denial is asserted to have taken before the result is trusted, because root bypasses Unix
+/// file modes and an owner can hold a right the deny was meant to remove. Captures Console.Error,
+/// so the class joins the console-capture collection.
 /// </summary>
 [Collection("console-capture")]
 public sealed class IndexerInaccessibleDirectoryTests : IDisposable
@@ -34,14 +36,8 @@ public sealed class IndexerInaccessibleDirectoryTests : IDisposable
     }
 
     [Fact]
-    [SupportedOSPlatform("windows")]
     public void An_inaccessible_directory_is_skipped_and_named_in_the_debug_log()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            Assert.Fail("list-permission denial needs the Windows access-control API");
-        }
-
         Directory.CreateDirectory(Path.Combine(_root, "src"));
         File.WriteAllText(Path.Combine(_root, "src", "Kept.cs"),
             "namespace Demo; public sealed class Kept { }");
@@ -51,18 +47,34 @@ public sealed class IndexerInaccessibleDirectoryTests : IDisposable
         File.WriteAllText(Path.Combine(denied, "Hidden.cs"),
             "namespace Demo; public sealed class Hidden { }");
 
-        var identity = WindowsIdentity.GetCurrent().User!;
-        var rule = new FileSystemAccessRule(identity, FileSystemRights.ListDirectory, AccessControlType.Deny);
-        var info = new DirectoryInfo(denied);
-        var security = info.GetAccessControl();
-        security.AddAccessRule(rule);
+        var restore = DenyListing(denied);
 
         var originalError = Console.Error;
         var captured = new StringWriter();
         var debugWasOn = Dbg.On;
         try
         {
-            info.SetAccessControl(security);
+            // Precondition: the denial has to be real before the result means anything. Running as
+            // root -- the one account Unix file modes do not restrain -- leaves the directory
+            // readable, and without this check the test would pass by finding nothing to skip.
+            var refused = false;
+            try
+            {
+                _ = Directory.GetFiles(denied, "*", new EnumerationOptions { IgnoreInaccessible = false });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                refused = true;
+            }
+
+            if (!refused)
+            {
+                Assert.Fail(
+                    $"listing '{denied}' was expected to be refused but succeeded; the denial did " +
+                    "not take (running as root, or a platform that ignored it), so this test could " +
+                    "not tell a skipped directory from an empty one.");
+            }
+
             Dbg.On = true;
             Console.SetError(captured);
 
@@ -76,8 +88,46 @@ public sealed class IndexerInaccessibleDirectoryTests : IDisposable
         {
             Console.SetError(originalError);
             Dbg.On = debugWasOn;
+            restore();
+        }
+    }
+
+    /// <summary>
+    /// Removes the list permission on <paramref name="directory"/> and returns the action that puts
+    /// it back. Windows denies through an ACL rule on the current user; elsewhere the Unix mode is
+    /// set to none. Both are restored by the caller's finally.
+    /// </summary>
+    private static Action DenyListing(string directory)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return DenyUnix(directory);
+        }
+
+        return DenyWindows(directory);
+    }
+
+    [UnsupportedOSPlatform("windows")]
+    private static Action DenyUnix(string directory)
+    {
+        var original = File.GetUnixFileMode(directory);
+        File.SetUnixFileMode(directory, UnixFileMode.None);
+        return () => File.SetUnixFileMode(directory, original);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static Action DenyWindows(string directory)
+    {
+        var identity = WindowsIdentity.GetCurrent().User!;
+        var rule = new FileSystemAccessRule(identity, FileSystemRights.ListDirectory, AccessControlType.Deny);
+        var info = new DirectoryInfo(directory);
+        var security = info.GetAccessControl();
+        security.AddAccessRule(rule);
+        info.SetAccessControl(security);
+        return () =>
+        {
             security.RemoveAccessRule(rule);
             info.SetAccessControl(security);
-        }
+        };
     }
 }
