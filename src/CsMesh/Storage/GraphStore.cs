@@ -505,7 +505,10 @@ public static class GraphStore
     /// a permanent [STALE] on every query and a heal that never finishes healing.
     ///
     /// Size is checked first and exactly, so this only ever forgives a timestamp that moved while
-    /// the byte count stayed identical. Set CSMESH_MTIME_EXACT=1 to compare ticks strictly.
+    /// the byte count stayed identical -- and since v15 a moved timestamp is not taken on trust:
+    /// the file's content hash is compared inside this band, so a real same-size edit is still
+    /// caught. Set CSMESH_MTIME_EXACT=1 to compare ticks strictly, which empties the band and
+    /// skips the content read entirely.
     /// </summary>
     private static readonly long MTimeToleranceTicks =
         Environment.GetEnvironmentVariable("CSMESH_MTIME_EXACT") == "1"
@@ -518,6 +521,27 @@ public static class GraphStore
     /// Identifies files that have been modified, removed, or added since the index was created.
     /// The full tree walk only runs when a tracked directory's timestamp moved, which is what
     /// keeps a query at a few milliseconds on a large solution.
+    ///
+    /// A tracked file is decided in one of four ways:
+    ///
+    ///   - missing                         -> dirty;
+    ///   - byte count differs              -> dirty, no content read;
+    ///   - tick delta above the tolerance  -> dirty, no content read;
+    ///   - tick delta exactly zero         -> clean, no content read.
+    ///
+    /// The remaining case -- a nonzero delta inside the tolerance -- is the band where the write
+    /// time and the byte count can both still say "unchanged" for an edit, so the file is read and
+    /// hashed, and is dirty iff the digest moved. That is what turns a same-size edit whose
+    /// timestamp landed within two seconds of the stamp into a rebound file instead of a silent
+    /// stale answer; the stamp's stored hash is written by the indexer and never by this path, so a
+    /// query cannot move the baseline it compares against.
+    ///
+    /// One case deliberately remains invisible: an edit whose write time rounds to the same coarse
+    /// granule as the stamp has a delta of zero and is not read. Closing it would mean hashing every
+    /// tracked file on every query. On a measured 256-file / 728 KB solution the stamp scan is
+    /// ~9.6 ms and hashing every file adds ~8.4 ms (~0.03 ms per file), roughly doubling the cost of
+    /// every query -- including the many with nothing to heal -- to catch a case the coarse mount
+    /// spaces by up to two seconds anyway.
     /// </summary>
     public static List<string> DirtyFiles(Graph g)
     {
@@ -533,10 +557,22 @@ public static class GraphStore
             }
 
             var info = new FileInfo(fullPath);
-            if (info.Length != file.Size || TimesDiffer(info.LastWriteTimeUtc.Ticks, file.Ticks))
+            if (info.Length != file.Size)
             {
                 dirty.Add(file.Path);
+                continue;
             }
+
+            var deltaTicks = Math.Abs(info.LastWriteTimeUtc.Ticks - file.Ticks);
+            if (deltaTicks > MTimeToleranceTicks)
+            {
+                dirty.Add(file.Path);
+                continue;
+            }
+
+            if (deltaTicks == 0) continue;
+
+            if (!ContentMatches(fullPath, file.Hash)) dirty.Add(file.Path);
         }
 
         if (DirectoriesChanged(g))
@@ -558,6 +594,27 @@ public static class GraphStore
         }
 
         return dirty.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Whether the file still hashes to what the stamp recorded. Only ever called in the nonzero
+    /// tolerance band, where the byte count and the write time cannot tell an edit from a mount that
+    /// rounded the clock. A stamp with no recorded hash and a file that cannot be read both count as
+    /// changed: freshness is a claim, and it is not made for something that cannot be proven.
+    /// </summary>
+    private static bool ContentMatches(string fullPath, string storedHash)
+    {
+        if (storedHash.Length == 0) return false;
+
+        try
+        {
+            var bytes = File.ReadAllBytes(fullPath);
+            return string.Equals(FileStamp.HashOf(bytes), storedHash, StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>

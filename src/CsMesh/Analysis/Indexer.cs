@@ -1,3 +1,4 @@
+using System.Text;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Storage;
@@ -578,8 +579,7 @@ public static partial class Indexer
             for (var i = 0; i < files.Count; i++)
             {
                 var file = files[i];
-                string text;
-                try { text = File.ReadAllText(file); } catch { continue; }
+                if (!TryReadSource(file, out var bytes, out var text)) continue;
 
                 owned.Add(new OwnedTree(
                     CSharpSyntaxTree.ParseText(text, parseOptions, path: file),
@@ -590,7 +590,8 @@ public static partial class Indexer
                 {
                     Path = Path.GetRelativePath(root, file),
                     Ticks = fileInfo.LastWriteTimeUtc.Ticks,
-                    Size = fileInfo.Length
+                    Size = fileInfo.Length,
+                    Hash = FileStamp.HashOf(bytes)
                 });
 
                 var dir = fileInfo.DirectoryName;
@@ -628,7 +629,8 @@ public static partial class Indexer
                 {
                     Path = Path.GetRelativePath(root, razorPath),
                     Ticks = razorInfo.LastWriteTimeUtc.Ticks,
-                    Size = razorInfo.Length
+                    Size = razorInfo.Length,
+                    Hash = HashFileOrEmpty(razorPath)
                 });
             }
         }
@@ -654,7 +656,8 @@ public static partial class Indexer
                 {
                     Path = Path.GetRelativePath(root, generated),
                     Ticks = generatedInfo.LastWriteTimeUtc.Ticks,
-                    Size = generatedInfo.Length
+                    Size = generatedInfo.Length,
+                    Hash = HashFileOrEmpty(generated)
                 });
             }
         }
@@ -673,7 +676,8 @@ public static partial class Indexer
             {
                 Path = Path.GetRelativePath(root, assets),
                 Ticks = assetsInfo.LastWriteTimeUtc.Ticks,
-                Size = assetsInfo.Length
+                Size = assetsInfo.Length,
+                Hash = HashFileOrEmpty(assets)
             });
         }
 
@@ -773,6 +777,49 @@ public static partial class Indexer
     public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false,
                               string? referenceRoot = null) =>
         BuildWithScope(root, progress, includeAllProjects, referenceRoot).Graph;
+
+    /// <summary>
+    /// Reads one source file once, as bytes, and decodes them the way <c>File.ReadAllText</c> would.
+    /// The bytes are what the stamp hashes; taking them in a single read is what keeps the digest
+    /// and the parsed text describing the same revision when a writer is racing the index.
+    /// </summary>
+    internal static bool TryReadSource(string path, out byte[] bytes, out string text)
+    {
+        try
+        {
+            bytes = File.ReadAllBytes(path);
+        }
+        catch
+        {
+            bytes = [];
+            text = string.Empty;
+            return false;
+        }
+
+        using var stream = new MemoryStream(bytes);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        text = reader.ReadToEnd();
+        return true;
+    }
+
+    /// <summary>
+    /// The stored hash of a file the indexer tracks but does not parse as source -- a generated
+    /// file, the Razor source a generated tree points at, or an assets file. It is read separately
+    /// because the bytes hashed are the ones at the stamped path, which for a Razor node is the
+    /// .razor file and not the generated C# parsed for it. An unreadable file stamps an empty hash,
+    /// which <c>DirtyFiles</c> treats as changed rather than clean.
+    /// </summary>
+    private static string HashFileOrEmpty(string path)
+    {
+        try
+        {
+            return FileStamp.HashOf(File.ReadAllBytes(path));
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 
     /// <summary>
     /// How many .cs files sit outside every project while the repository has projects. Counted

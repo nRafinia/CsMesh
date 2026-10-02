@@ -1,3 +1,4 @@
+using System.Text;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Storage;
@@ -182,13 +183,31 @@ public static partial class Indexer
         // tool exists to prevent. The caller falls back to a full index.
         var unreadable = new System.Collections.Concurrent.ConcurrentBag<string>();
 
+        // A file this pass rebinds is rehashed from the bytes it reads; a file it leaves alone must
+        // not be rehashed, so it keeps the digest the last pass stored. Every file is still parsed
+        // (a semantic model needs all declarations), so the digest is taken on the read path only
+        // for the handful this pass was actually called for.
+        var dirtySet = dirty
+            .Select(d => d.Replace('\\', '/'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var storedHashes = previous.Files
+            .Where(f => f.Hash.Length > 0)
+            .ToDictionary(f => f.Path.Replace('\\', '/'), f => f.Hash, StringComparer.OrdinalIgnoreCase);
+
         // Parsing is embarrassingly parallel and is now the largest remaining cost, since binding
         // has been cut down to the edited files.
         Parallel.For(0, files.Count, i =>
         {
             var file = files[i];
+            byte[] bytes;
             string text;
-            try { text = File.ReadAllText(file); }
+            try
+            {
+                bytes = File.ReadAllBytes(file);
+                using var stream = new MemoryStream(bytes);
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                text = reader.ReadToEnd();
+            }
             catch (Exception ex)
             {
                 unreadable.Add($"{Path.GetRelativePath(root, file)} ({ex.Message})");
@@ -198,11 +217,18 @@ public static partial class Indexer
             trees[i] = CSharpSyntaxTree.ParseText(text, parseOptions, path: file);
 
             var info = new FileInfo(file);
+            var relative = Path.GetRelativePath(root, file);
+            var normalized = relative.Replace('\\', '/');
+            var hash = dirtySet.Contains(normalized)
+                ? FileStamp.HashOf(bytes)
+                : storedHashes.TryGetValue(normalized, out var stored) ? stored : FileStamp.HashOf(bytes);
+
             stamps[i] = new FileStamp
             {
-                Path = Path.GetRelativePath(root, file),
+                Path = relative,
                 Ticks = info.LastWriteTimeUtc.Ticks,
-                Size = info.Length
+                Size = info.Length,
+                Hash = hash
             };
         });
 
@@ -247,10 +273,6 @@ public static partial class Indexer
         var references = ReferenceSet(root, root, scope, out _);
 
         var compilations = CreateCompilations(root, scope, ownedTrees, references);
-
-        var dirtySet = dirty
-            .Select(d => d.Replace('\\', '/'))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Retire the nodes declared in edited files, remembering their ids. Anything still declared
         // after the edit comes back under the same id; anything deleted or renamed does not, and

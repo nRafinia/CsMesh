@@ -234,4 +234,41 @@ public sealed class AssemblyQualifiedKeysTests : IDisposable
         Assert.NotNull(reloaded);
         Assert.Equal(Graph.CurrentFormatVersion, reloaded!.FormatVersion);
     }
+
+    /// <summary>
+    /// A graph whose stamps predate the content hash cannot be half-read: its files carry no digest,
+    /// so a same-size edit inside the mtime tolerance would be called clean and answered from
+    /// pre-edit symbols. The format bump makes the load fail, and the command maps that to exit 4
+    /// with the re-index remedy rather than answering from a graph it cannot check.
+    /// </summary>
+    [Fact]
+    public void A_v14_graph_is_rejected_on_load_with_exit_4()
+    {
+        Write("A/A.csproj", Lib());
+        Write("A/T.cs", "namespace A { public sealed class T { } }");
+
+        var stale = Indexer.Build(_root);
+        stale.FormatVersion = 14;
+        GraphStore.Save(stale);
+
+        Assert.Null(GraphStore.Load(_root, out var problem));
+        Assert.Contains("v14", problem!, StringComparison.Ordinal);
+
+        var originalOut = Console.Out;
+        var originalErr = Console.Error;
+        int exit;
+        try
+        {
+            Console.SetOut(new StringWriter());
+            Console.SetError(new StringWriter());
+            exit = QueryCommand.Execute(_root, new Options(["T"]), "where");
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            Console.SetError(originalErr);
+        }
+
+        Assert.Equal(Exit.NoIndex, exit);
+    }
 }
