@@ -82,8 +82,12 @@ them.
   `env-mutation`, `telemetry-state`.
 - `Fixtures/<case>/` solutions reference no NuGet package and declare their
   handler interfaces locally. Golden snapshots assert by `Node.Key`.
-- The suite runs on Windows: file-sharing violations and lock-file access are
-  real failure modes there. Design tests for them.
+- The suite runs on Windows locally and on Linux (ubuntu, non-root) in CI.
+  File-sharing violations and lock-file access are real failure modes on
+  Windows; design tests for them. A test that touches platform behaviour
+  (permissions, file locks, paths, line endings) must work on both platforms
+  with the BCL alone. A platform attribute does not skip a test, and a test
+  that throws on the other platform fails CI.
 - Build once, then `--no-build`. Use `--filter` while working.
 - End of prompt, once: full `dotnet test` with a build after the last commit;
   the reported count comes from that run. Publish Native AOT only when the
