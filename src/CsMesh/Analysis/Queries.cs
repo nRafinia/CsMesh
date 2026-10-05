@@ -289,8 +289,6 @@ public static partial class Queries
         // deciding what not to break.
         var seen = new HashSet<int>();
         var frontier = new List<Reach> { new(target, 0, 1.0, null) };
-        var reached = new List<Reach>();
-        var entrypoints = new List<Reach>();
 
         if (target.Kind is "type" or "interface" or "enum")
         {
@@ -301,29 +299,7 @@ public static partial class Queries
             }
         }
 
-        while (frontier.Count > 0)
-        {
-            var next = new List<Reach>();
-            foreach (var reach in frontier)
-            {
-                if (reach.Level >= depth) continue;
-                foreach (var e in g.In(reach.Node.Id))
-                {
-                    if (e.Kind == EdgeKind.TypeUse) continue;
-                    var from = g.ById(e.From);
-                    if (from == null || !seen.Add(from.Id)) continue;
-
-                    var score = Math.Min(reach.Score, e.Score);
-                    var source = e.Score < reach.Score ? e.Source : reach.Source;
-                    var hop = new Reach(from, reach.Level + 1, score, source);
-
-                    reached.Add(hop);
-                    if (IsEntrypoint(from)) entrypoints.Add(hop);
-                    next.Add(hop);
-                }
-            }
-            frontier = next;
-        }
+        var reached = ReverseWalk(g, frontier, depth, seen, out var entrypoints);
 
         var tests = reached.Where(r => IsTest(r.Node)).ToList();
         var weakest = reached.Select(r => r.Score).DefaultIfEmpty(1.0).Min();
@@ -433,7 +409,117 @@ public static partial class Queries
     }
 
     /// <summary>One node reached during a reverse walk, with the weakest edge on the way to it.</summary>
-    private readonly record struct Reach(Node Node, int Level, double Score, string? Source);
+    private readonly record struct Reach(Node Node, int Level, double Score, string? Source, Edge? Edge = null);
+
+    /// <summary>
+    /// The reverse walk shared by blast-radius and context's CALLED BY. The caller seeds the level-0
+    /// frontier -- the target plus the nodes whose callers are wanted -- and the seen set holding
+    /// those seeds; this expands outward one level at a time, keeping the weakest edge on each path.
+    /// Sharing the loop is what keeps the two answers from drifting: CALLED BY is blast-radius at
+    /// depth 1, not a second traversal that can disagree with it.
+    /// </summary>
+    private static List<Reach> ReverseWalk(Graph g, List<Reach> frontier, int depth, HashSet<int> seen,
+                                           out List<Reach> entrypoints)
+    {
+        var reached = new List<Reach>();
+        entrypoints = [];
+
+        while (frontier.Count > 0)
+        {
+            var next = new List<Reach>();
+            foreach (var reach in frontier)
+            {
+                if (reach.Level >= depth) continue;
+                foreach (var e in g.In(reach.Node.Id))
+                {
+                    if (e.Kind == EdgeKind.TypeUse) continue;
+                    var from = g.ById(e.From);
+                    if (from == null || !seen.Add(from.Id)) continue;
+
+                    var score = Math.Min(reach.Score, e.Score);
+                    var source = e.Score < reach.Score ? e.Source : reach.Source;
+                    var hop = new Reach(from, reach.Level + 1, score, source, e);
+
+                    reached.Add(hop);
+                    if (IsEntrypoint(from)) entrypoints.Add(hop);
+                    next.Add(hop);
+                }
+            }
+            frontier = next;
+        }
+
+        return reached;
+    }
+
+    /// <summary>
+    /// Direct callers of every member of <paramref name="target"/>, for context's CALLED BY.
+    ///
+    /// Seeded with the members themselves -- constructors included, nested types excluded -- then
+    /// walked by the same reverse step blast-radius uses, so the section shows what a consumer
+    /// actually calls rather than only who news up the type. A caller that calls two members is one
+    /// node; a caller declared inside the target (or a type nested in it) is the target's own wiring,
+    /// not a consumer, and is dropped.
+    /// </summary>
+    private static List<Reach> DirectCallers(Graph g, Node target)
+    {
+        var seen = new HashSet<int>();
+        var frontier = new List<Reach> { new(target, 0, 1.0, null) };
+
+        if (target.Kind is "type" or "interface" or "enum")
+        {
+            foreach (var e in g.Out(target.Id)
+                         .Where(x => x.Kind == EdgeKind.TypeUse && x.Note is "member" or "ctor"))
+            {
+                var m = g.ById(e.To);
+                if (m != null && seen.Add(m.Id)) frontier.Add(new Reach(m, 0, 1.0, null));
+            }
+        }
+
+        return ReverseWalk(g, frontier, 1, seen, out _)
+            .Where(r => r.Level == 1)
+            .Where(r => !IsDeclaredInside(g, r.Node, target))
+            .DistinctBy(r => r.Node.Key)
+            // Production callers first, tests last: a test is a real caller but not what breaks in
+            // production, and with a budget this list can be long enough that the test names would
+            // otherwise be the only ones that fit.
+            .OrderBy(r => IsTest(r.Node) ? 1 : 0)
+            .ToList();
+    }
+
+    /// <summary>The direct-caller nodes for a type, for callers that need identity rather than rows.</summary>
+    internal static List<Node> DirectCallerNodes(Graph g, Node target) =>
+        DirectCallers(g, target).Select(r => r.Node).ToList();
+
+    /// <summary>
+    /// True when <paramref name="caller"/> is declared in <paramref name="typeNode"/> or in a type
+    /// nested within it. The owner comes from the member's own owner edge; nesting is decided on the
+    /// fully-qualified type name, so a same-named type in another namespace is not mistaken for a
+    /// nested one.
+    /// </summary>
+    private static bool IsDeclaredInside(Graph g, Node caller, Node typeNode)
+    {
+        if (caller.Id == typeNode.Id) return true;
+
+        var ownerId = DeclaringTypeId(g, caller);
+        if (ownerId == null) return false;
+        if (ownerId.Value == typeNode.Id) return true;
+
+        var owner = g.ById(ownerId.Value);
+        if (owner == null) return false;
+
+        var ownerName = TypeFqn(owner);
+        var targetName = TypeFqn(typeNode);
+        return ownerName.Length > targetName.Length
+            && ownerName.StartsWith(targetName, StringComparison.Ordinal)
+            && ownerName[targetName.Length] == '.';
+    }
+
+    /// <summary>The fully-qualified type name from a type node's key, falling back to its display name.</summary>
+    private static string TypeFqn(Node typeNode)
+    {
+        var parts = typeNode.Key.Split('|');
+        return parts.Length >= 2 ? parts[^2] : typeNode.Name;
+    }
 
     /// <summary>
     /// The --writes form: the sites that write the target, not the sites that read it. A write

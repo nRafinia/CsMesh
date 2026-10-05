@@ -14,7 +14,7 @@ public static partial class Queries
     /// rather than the answer.
     /// </summary>
     public static int Context(Graph g, Node node, int depth, BudgetWriter w, HashSet<string> dirty,
-                              ICollection<int>? withheld = null)
+                              ICollection<int>? withheld = null, ICollection<int>? withheldCallers = null)
     {
         var overflowed = false;
 
@@ -54,15 +54,54 @@ public static partial class Queries
             }
         }
 
-        var callers = g.In(node.Id)
-            .Where(e => e.Kind != EdgeKind.TypeUse)
-            .Select(e => (Edge: e, Node: g.ById(e.From)))
-            .Where(x => x.Node != null)
-            .DistinctBy(x => x.Node!.Id)
-            .Take(12)
-            .ToList();
+        // Direct callers of every member, not just of the type node. Seeding only the type node
+        // showed who news up the type and hid the consumers of its methods -- the question CALLED BY
+        // is asked to answer. The set comes from the blast-radius walk at depth 1, so the two cannot
+        // drift; callers declared in this type (or a type nested in it) are its own wiring and are
+        // dropped by that walk.
+        var callers = DirectCallers(g, node);
 
-        Emit("CALLED BY", callers.Select(x => (x.Node!, x.Edge, "caller")));
+        // A fixed cap, like MEMBERS, not a budget slice: a type can be called from hundreds of
+        // places and the default 'context' answer must still reach CALLS, IMPLEMENTATION, IMPACT and
+        // FILES. Production callers come first, so the twelve that print are the twelve that break
+        // when the type changes. Hitting the cap is not an overflow -- the answer is complete at
+        // exit 0, it just says what it withheld.
+        const int CallerCap = 12;
+        var callersTruncated = callers.Count > CallerCap;
+
+        if (callers.Count > 0 && !overflowed)
+        {
+            if (!w.Add("")) overflowed = true;
+            else if (!w.Add("CALLED BY")) overflowed = true;
+            else
+            {
+                foreach (var caller in callers.Take(CallerCap))
+                {
+                    var edge = caller.Edge!;
+                    var row = Row(caller.Node, 1, edge, dirty);
+                    row.Relation = "caller";
+
+                    var test = IsTest(caller.Node) ? "  {test}" : "";
+                    var line = $"  {caller.Node.Short}{Marker(edge)}{TagSuffix(caller.Node)}{test}"
+                             + $"{FormatSite(edge.Site, caller.Node)}{Loc(caller.Node)}{StaleTag(caller.Node, dirty)}";
+
+                    if (!w.Add(line, row))
+                    {
+                        overflowed = true;
+                        break;
+                    }
+                }
+
+                // The line the MEMBERS cap prints, in the caller's terms, with the one query that
+                // returns the whole set. Recorded so --json carries the same omission.
+                if (!overflowed && callersTruncated)
+                {
+                    var omitted = callers.Count - CallerCap;
+                    if (w.Add($"  ... {omitted} more caller(s): csmesh blast-radius {node.Short} --depth 1"))
+                        withheldCallers?.Add(omitted);
+                }
+            }
+        }
 
         var callees = g.Out(node.Id)
             .Where(IsFlow)
