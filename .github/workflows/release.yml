@@ -300,3 +300,30 @@ jobs:
           cp ../README.md ./README.md
           npm version ${{ needs.publish-release.outputs.release_version }} --no-git-tag-version --allow-same-version
           npm publish --access public
+
+  publish-winget:
+    name: Submit to winget-pkgs
+    needs: [publish-release]
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
+    runs-on: windows-latest
+    steps:
+      - name: Check WINGET_TOKEN
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        shell: pwsh
+        run: |
+          if (-not $env:WINGET_TOKEN) {
+            Write-Output "::error::Secret WINGET_TOKEN is missing! Configure a classic PAT with public_repo scope in GitHub Settings -> Secrets and variables -> Actions."
+            exit 1
+          }
+
+      - name: Open winget-pkgs PR for nRafinia.CsMesh
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: nRafinia.CsMesh
+          version: ${{ needs.publish-release.outputs.release_version }}
+          release-tag: ${{ inputs.tag_name }}
+          installers-regex: '^csmesh-win-(x64|arm64)\.zip$'
+          fork-user: nRafinia
+          token: ${{ secrets.WINGET_TOKEN }}
