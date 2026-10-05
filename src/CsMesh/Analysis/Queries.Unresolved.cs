@@ -69,13 +69,17 @@ public static partial class Queries
             ? $"{total} unresolved site(s) in total; {sites.Count} with locations in the sample"
             : $"{sites.Count} unresolved site(s)");
 
+        // Site rows printed so far, so an overflow can say how many of the sample were shown. The
+        // reason-count rows above are not sites and are not counted here.
+        var rowsShown = 0;
+
         // The sample is capped in traversal order, so its proportions are about the first files
         // walked. The full counts are the ones to reason from.
         if (g.UnresolvedByReason.Count > 0 && kind == null)
         {
             foreach (var (reason, count) in g.UnresolvedByReason.OrderByDescending(x => x.Value).Take(UnresolvedReasonRows))
             {
-                if (!w.Add($"  {reason,-28} {count}")) return TooMany(w, total);
+                if (!w.Add($"  {reason,-28} {count}")) return TooMany(w, total, 0);
             }
         }
 
@@ -103,7 +107,7 @@ public static partial class Queries
             }
 
             w.Separator();
-            if (!w.Add($"{group.Key}  ({group.Count()})")) return TooMany(w, sites.Count);
+            if (!w.Add($"{group.Key}  ({group.Count()})")) return TooMany(w, sites.Count, rowsShown);
 
             var shown = 0;
             foreach (var site in group.Take(UnresolvedRowsPerGroup))
@@ -124,7 +128,7 @@ public static partial class Queries
 
                 if (!w.Add($"  {site.File}:{site.Line}  {site.Expression}{stale}", row))
                 {
-                    return TooMany(w, sites.Count);
+                    return TooMany(w, sites.Count, rowsShown + shown);
                 }
 
                 shown++;
@@ -132,6 +136,7 @@ public static partial class Queries
 
             if (group.Count() > shown) capped.Add((group.Key, shown, group.Count()));
             groupsShown++;
+            rowsShown += shown;
         }
 
         // A separator, so it yields rather than ends the query: the withheld footer below has the
@@ -164,9 +169,9 @@ public static partial class Queries
         return Exit.Ok;
     }
 
-    private static int TooMany(BudgetWriter w, int total)
+    private static int TooMany(BudgetWriter w, int total, int shown)
     {
-        w.AddMarker(IncompleteMarker(w, "narrow with --kind di, or raise --budget", 0, total));
+        w.AddMarker(IncompleteMarker(w, "narrow with --kind di, or raise --budget", shown, total, "unresolved site(s)"));
         return Exit.OverBudget;
     }
 

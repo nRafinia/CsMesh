@@ -99,7 +99,7 @@ public static partial class Queries
             if (site != null) row.Site = site.Value.Site;
             if (!w.Add(line, row))
             {
-                w.AddMarker(IncompleteMarker(w, null, i, chain.Count - 1));
+                w.AddMarker(IncompleteMarker(w, null, i, chain.Count - 1, "step(s)"));
                 return Exit.OverBudget;
             }
 
