@@ -89,6 +89,13 @@ public sealed class QueryResult
     /// </summary>
     public int? WithheldMembers { get; set; }
 
+    /// <summary>
+    /// 'context' only: direct callers the CALLED BY budget withheld, so a JSON consumer sees the same
+    /// truncation the INCOMPLETE line reports. Null when nothing was withheld, so the field is absent
+    /// rather than 0 on every other command.
+    /// </summary>
+    public int? WithheldCallers { get; set; }
+
     public List<string> Notes { get; set; } = [];
 
     /// <summary>

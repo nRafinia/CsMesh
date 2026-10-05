@@ -295,6 +295,7 @@ public static class QueryCommand
 
             var node = wanted[0];
             var withheldMembers = new List<int>();
+            var withheldCallers = new List<int>();
             exitCode = kind switch
             {
                 // The suggestion on overflow is a command the caller can paste, not advice.
@@ -302,11 +303,12 @@ public static class QueryCommand
                                          $"csmesh trace {query} --budget {budget}"),
                 "impl" => Queries.Impl(graph, node, writer, dirtySet),
                 "blast" => Queries.BlastRadius(graph, node, depth, writer, dirtySet, opt.Flag("writes"), hints),
-                "context" => Queries.Context(graph, node, depth, writer, dirtySet, withheldMembers),
+                "context" => Queries.Context(graph, node, depth, writer, dirtySet, withheldMembers, withheldCallers),
                 _ => Exit.Usage
             };
 
             if (withheldMembers.Count > 0) result.WithheldMembers = withheldMembers[0];
+            if (withheldCallers.Count > 0) result.WithheldCallers = withheldCallers[0];
         }
 
         Telemetry.Telemetry.Current.FilesReferenced = writer.DistinctFiles;
