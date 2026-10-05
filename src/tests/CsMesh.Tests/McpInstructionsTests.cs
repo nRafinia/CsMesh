@@ -7,17 +7,16 @@ using Xunit;
 namespace CsMesh.Tests;
 
 /// <summary>
-/// The MCP instructions are resident in a session's context for its whole life, so they must carry
-/// the two rules an MCP-only session would otherwise never see -- the "prefer csmesh over grep"
-/// directive and the reach-for-the-command table -- and they must carry them by reference from
-/// <see cref="SkillText"/> rather than as a copy that drifts. These drive the real initialize frame,
-/// so a wiring change that stops sending the sections fails here.
+/// The MCP instructions and the tool catalogue are both resident in a session's context and both are
+/// paid for once per session, so their combined size is what matters. These drive the real frames --
+/// a wiring change that stops sending the rules sections, or a schema description that grows back,
+/// fails here.
 /// </summary>
 [Collection("console-capture")]
 public sealed class McpInstructionsTests
 {
-    /// <summary>Sends one initialize frame through the server and returns the instructions it sent.</summary>
-    private static string InitializeInstructions()
+    /// <summary>Runs frames through the server the way a client does and returns the replies.</summary>
+    private static List<JsonElement> Exchange(params string[] frames)
     {
         var stdin = Console.In;
         var stdout = Console.Out;
@@ -25,8 +24,7 @@ public sealed class McpInstructionsTests
 
         try
         {
-            Console.SetIn(new StringReader(
-                """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}""" + "\n"));
+            Console.SetIn(new StringReader(string.Join("\n", frames) + "\n"));
             Console.SetOut(buffer);
             McpServer.Run(Path.GetTempPath());
         }
@@ -36,13 +34,18 @@ public sealed class McpInstructionsTests
             Console.SetOut(stdout);
         }
 
-        var line = buffer.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries)[0];
-        using var document = JsonDocument.Parse(line);
-        return document.RootElement.GetProperty("result").GetProperty("instructions").GetString()!;
+        return buffer.ToString()
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+            .ToList();
     }
 
-    // SkillBlock.Render normalizes CRLF and CR to LF; the ceiling has to mean the same thing on a
-    // Windows CRLF checkout and on Linux CI, so the instructions are normalized the same way.
+    private static string InitializeInstructions() =>
+        Exchange("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}""")[0]
+            .GetProperty("result").GetProperty("instructions").GetString()!;
+
+    // SkillBlock.Render normalizes CRLF and CR to LF; the ceilings have to mean the same thing on a
+    // Windows CRLF checkout and on Linux CI, so the text is normalized the same way.
     private static string Lf(string text) =>
         text.Replace("\r\n", "\n").Replace("\r", "\n");
 
@@ -63,5 +66,22 @@ public sealed class McpInstructionsTests
         Assert.True(
             tokens <= McpServer.InstructionsTokenCeiling,
             $"MCP instructions are {tokens} tokens, over the {McpServer.InstructionsTokenCeiling}-token ceiling.");
+    }
+
+    [Fact]
+    public void Instructions_and_the_tool_catalogue_stay_under_the_combined_ceiling()
+    {
+        var replies = Exchange(
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}""",
+            """{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}""");
+
+        var instructions = replies[0].GetProperty("result").GetProperty("instructions").GetString()!;
+        var catalogue = replies[1].GetProperty("result").GetRawText();
+
+        var tokens = BudgetWriter.Estimate(Lf(instructions)) + BudgetWriter.Estimate(Lf(catalogue));
+
+        Assert.True(
+            tokens <= McpServer.CatalogueTokenCeiling,
+            $"instructions + tools/list are {tokens} tokens, over the {McpServer.CatalogueTokenCeiling}-token ceiling.");
     }
 }

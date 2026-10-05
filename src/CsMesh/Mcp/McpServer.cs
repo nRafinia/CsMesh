@@ -300,33 +300,52 @@ public static class McpServer
         + "container binds, and what a change would reach.\n\n"
         + "Every tool reads an index on disk. Run 'index' once in a fresh checkout, and again "
         + "when an answer says it is stale. 'doctor' says whether the index is usable.\n\n"
-        + "In standalone desktop or multi-repo environments where workspace detection is not available, "
-        + "specify the 'repo' argument on tool calls to point to the repository.\n\n"
-        + "Not in the graph: string literals, config keys, log messages, and anything outside "
-        + "a .cs file. Use ordinary text search for those.\n\n"
+        + "Not in the graph: config keys and log messages; use text search for those.\n\n"
         + "Answers end with a suggested next step written as a shell command, e.g. "
         + "'next: csmesh entrypoints orders'. Each maps to the tool of the same name, so call "
         + "'entrypoints' with filter='orders' rather than reaching for a terminal.\n\n"
         + "When a name is declared in more than one project, the answer exits 3 and lists each "
         + "candidate with its project. Re-run the tool with 'project' set to one of them rather "
         + "than guessing. Two overloads of one member in one project are separated by the "
-        + "parameter list instead: pass 'Type.Member(int, string)', as the candidate list prints it.";
+        + "parameter list instead: pass 'Type.Member(int, string)', as the candidate list prints it.\n\n"
+        + "Parameters: budget caps the answer (raise it only after narrowing with 'under'); "
+        + "'under' scopes a subtree (e.g. src/Payments) and is the cheapest way to cut a large "
+        + "answer; 'depth' sets how many levels to walk; 'heal' rebinds changed files before "
+        + "answering (default true) and false answers from the current graph, marking changed "
+        + "rows [STALE]; 'repo' is an optional repository root or workspace folder that overrides "
+        + "the detected root, and is how you point at the repository when workspace detection is "
+        + "unavailable.";
 
     /// <summary>
     /// The token ceiling the assembled instructions must stay under, measured with
     /// <see cref="BudgetWriter.Estimate"/> on LF-normalized text so a CRLF checkout and an LF one
     /// agree. This text sits in the context of every MCP session for the whole session, paid for on
-    /// every turn whichever tool is called; the schema batch that follows is its payback, not licence
-    /// to grow this further.
+    /// every turn whichever tool is called; the catalogue it shares the context with is bounded by
+    /// <see cref="CatalogueTokenCeiling"/>, not licence to grow this further.
     /// </summary>
-    public const int InstructionsTokenCeiling = 900;
+    public const int InstructionsTokenCeiling = 1000;
+
+    /// <summary>
+    /// Combined ceiling for the resident instructions plus the tool catalogue, LF-normalized. Before
+    /// this batch the two were 892 + 5,059 = 5,951 tokens; the pre-directive figure was 309 + 5,059 =
+    /// 5,368; after the shared parameter descriptions were written once it measures 966 + 2,899 =
+    /// 3,865. The catalogue is read by a model once per session just as the instructions are, and the
+    /// shared parameter descriptions repeated across tools were what carried it up.
+    /// </summary>
+    public const int CatalogueTokenCeiling = 4000;
+
+    /// <summary>
+    /// LF, whatever line endings the build checkout gave the SkillText literals, so the initialize
+    /// frame is byte-identical from a Windows and a Linux build.
+    /// </summary>
+    private static string Lf(string text) => text.Replace("\r\n", "\n").Replace("\r", "\n");
 
     /// <summary>
     /// The text sent in the <c>initialize</c> result: the MCP-specific paragraphs plus the shared
     /// "prefer csmesh over grep" directive and command table, by reference.
     /// </summary>
     public static readonly string InstructionText =
-        McpPreamble + "\n\n" + SkillText.RulesGrepDirective + "\n\n" + SkillText.RulesMatchTable;
+        Lf(McpPreamble + "\n\n" + SkillText.RulesGrepDirective + "\n\n" + SkillText.RulesMatchTable);
 
     private static InitializeResult Initialize(RpcRequest request)
     {

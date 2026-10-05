@@ -120,6 +120,17 @@ public static class McpTools
             null, Depth: false)
     ];
 
+    // One definition each for the parameters every tool shares, so the schema repeats a short
+    // sentence rather than a paragraph thirteen times. The detail these replaced lives once in the
+    // MCP "Parameters" paragraph, which is why a client that shows no instructions still gets a
+    // usable sentence here and the catalogue stays small.
+    private const string BudgetHelp = "Token cap for the answer.";
+    private const string UnderHelp = "Restrict to this subtree.";
+    private const string ProjectHelp = "Project when the name repeats.";
+    private const string DepthHelp = "How many levels to walk.";
+    private const string HealHelp = "Rebind changed files.";
+    private const string RepoHelp = "Repository root to query.";
+
     public static List<ToolDescriptor> Descriptors()
     {
         var tools = new List<ToolDescriptor>();
@@ -160,7 +171,7 @@ public static class McpTools
                 schema.Properties["budget"] = new JsonSchemaProperty
                 {
                     Type = "integer",
-                    Description = "Approximate token ceiling for the answer. Raise only after narrowing with 'under'."
+                    Description = BudgetHelp
                 };
 
                 // review has no subtree scope: a base revision is indexed whole, and narrowing it
@@ -171,7 +182,7 @@ public static class McpTools
                     schema.Properties["under"] = new JsonSchemaProperty
                     {
                         Type = "string",
-                        Description = "Restrict to a subtree, e.g. src/Payments. The cheapest way to cut a large answer."
+                        Description = UnderHelp
                     };
 
                     // A name that repeats across projects now returns exit 3 with the candidates
@@ -179,7 +190,7 @@ public static class McpTools
                     schema.Properties["project"] = new JsonSchemaProperty
                     {
                         Type = "string",
-                        Description = "Pick one project when a name repeats across assemblies, e.g. src/Payments. Shown in ambiguous output. Two overloads in one project cannot be separated this way; pass the parameter list in 'symbol' instead."
+                        Description = ProjectHelp
                     };
 
                     if (tool.Kind == "export")
@@ -213,7 +224,7 @@ public static class McpTools
                 schema.Properties["depth"] = new JsonSchemaProperty
                 {
                     Type = "integer",
-                    Description = "How many levels to walk."
+                    Description = DepthHelp
                 };
             }
 
@@ -246,16 +257,14 @@ public static class McpTools
                 schema.Properties["heal"] = new JsonSchemaProperty
                 {
                     Type = "boolean",
-                    Description = "Rebind changed files before answering (default true). Set false to "
-                                  + "answer from the current graph without healing, marking rows from "
-                                  + "changed files [STALE]."
+                    Description = HealHelp
                 };
             }
 
             schema.Properties["repo"] = new JsonSchemaProperty
             {
                 Type = "string",
-                Description = "Optional repository root path or workspace folder. Overrides detected workspace root."
+                Description = RepoHelp
             };
 
             tools.Add(new ToolDescriptor
@@ -271,16 +280,12 @@ public static class McpTools
 
     private static string ArgumentHelp(Tool tool) => tool.Kind switch
     {
-        "where" => "A name, part of a name, a namespace, a path fragment or a route. Need not be exact.",
-        "entrypoints" => "Optional word to filter entrypoints by. Omit for all of them.",
-        "unresolved" => "Optional cause to filter by, e.g. di or mediatr. Omit for all.",
-        "path" => "Fully qualified or short name of the starting symbol.",
-        "review" => "Optional git revision to compare against. Omit for the merge base with the "
-                     + "default branch.",
-        _ => "Fully qualified or short name, e.g. OrderService.SaveAsync. When a name repeats "
-             + "across projects the answer exits 3 and lists each candidate's project; re-run "
-             + "with 'project' set to one of them. Two overloads in one project need the parameter "
-             + "list instead: 'Type.Member(int, string)', as the candidate list prints it."
+        "where" => "Name, path fragment or route. Need not be exact.",
+        "entrypoints" => "Word to filter entrypoints by.",
+        "unresolved" => "Cause to filter by, e.g. di or mediatr.",
+        "path" => "Starting symbol, short or qualified.",
+        "review" => "Git revision to compare against.",
+        _ => "Symbol name, short or qualified."
     };
 
     /// <summary>
