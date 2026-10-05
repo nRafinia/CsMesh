@@ -108,8 +108,15 @@ public static partial class Queries
             .ThenBy(c => c.Node.Short.Length)
             .Take(WhereCandidateCap)
             .Select(c => WhereWeigh(g, c))
-            .OrderByDescending(c => c.Score)
             .ToList();
+
+        // A member that matched only through its container is a real hit, but it is the container
+        // the task is about. The container is a name match and cannot out-reach its own members, so
+        // without this the member rows bury it. Only container-only rows are moved; a row that
+        // matched its own name keeps the reach-weighted order untouched.
+        DemoteContainerMatches(ranked);
+
+        ranked = ranked.OrderByDescending(c => c.Score).ToList();
 
         w.Force($"{query} -- {candidates.Count} match(es), ranked by what reaches them",
                 Row(ranked[0].Node, 0, "query", query, dirty));
@@ -117,8 +124,10 @@ public static partial class Queries
         // The boundary, stated because it is not what a reader assumes. Rank is a composite of
         // lexical strength and reach, not exact-name-first: an exact match with nothing calling it
         // scores 100 + bonuses, while a substring match under an entrypoint can collect up to 72
-        // for entrypoints alone. The exact name can sit below it, and is not special-cased.
-        w.Force("  rank is reach-weighted, not exact-name-first: an exact name nothing calls can sit below a substring the entrypoints reach.");
+        // for entrypoints alone. The exact name can sit below it, and is not special-cased. A match
+        // made only through a container is the one exception: it is labelled [container] and sorts
+        // below that container, so the type a task names is not buried under its own members.
+        w.Force("  rank is reach-weighted, not exact-name-first: an exact name nothing calls can sit below a substring the entrypoints reach; a match made only through a container is labelled [container] and sorts after it.");
 
         var shown = 0;
         foreach (var c in ranked.Take(WhereRowCap))
@@ -134,7 +143,7 @@ public static partial class Queries
 
             if (!w.Add(line, row))
             {
-                w.AddMarker(IncompleteMarker(w, "narrow with --under before raising --budget", shown, ranked.Count));
+                w.AddMarker(IncompleteMarker(w, "narrow with --under before raising --budget", shown, candidates.Count, "match(es)"));
                 return Exit.OverBudget;
             }
 
@@ -186,7 +195,7 @@ public static partial class Queries
             var line = $"  {c.Node.Short}{TagSuffix(c.Node)}{Loc(c.Node)}  [{c.Why}]{StaleTag(c.Node, dirty)}";
             if (!w.Add(line, row))
             {
-                w.AddMarker(IncompleteMarker(w, "narrow with --under, or raise --budget", shown, ordered.Count));
+                w.AddMarker(IncompleteMarker(w, "narrow with --under, or raise --budget", shown, ordered.Count, "match(es)"));
                 return Exit.OverBudget;
             }
 
@@ -228,7 +237,7 @@ public static partial class Queries
         }
 
         if (leaf.Contains(term, StringComparison.OrdinalIgnoreCase)) return (62, "name");
-        if (n.Short.Contains(term, StringComparison.OrdinalIgnoreCase)) return (52, "name");
+        if (n.Short.Contains(term, StringComparison.OrdinalIgnoreCase)) return (52, "container");
         if (n.Name.Contains(term, StringComparison.OrdinalIgnoreCase)) return (40, "namespace");
         if (n.File.Contains(term, StringComparison.OrdinalIgnoreCase)) return (28, "path");
         if (n.Signature.Contains(term, StringComparison.OrdinalIgnoreCase)) return (16, "signature");
@@ -305,6 +314,47 @@ public static partial class Queries
     {
         var dot = s.LastIndexOf('.');
         return dot < 0 ? s : s[(dot + 1)..];
+    }
+
+    /// <summary>The prefix a container-only match matched through, or empty when there is none.</summary>
+    private static string WhereContainer(string s)
+    {
+        var dot = s.LastIndexOf('.');
+        return dot < 0 ? "" : s[..dot];
+    }
+
+    /// <summary>
+    /// Pushes every candidate that matched only through its container below that container.
+    ///
+    /// Reach is the tie-breaker that lifts a member over its own type: a type has no callers, its
+    /// members have all of them. The container is already in the ranked list as a name match, and
+    /// its members must not sit above it. A container can itself be a container-only match (a nested
+    /// type), so the cap is re-applied until no score moves; a score only ever falls, so this
+    /// terminates.
+    /// </summary>
+    private static void DemoteContainerMatches(List<Candidate> ranked)
+    {
+        var containers = new Dictionary<string, Candidate>(StringComparer.Ordinal);
+        foreach (var c in ranked) containers.TryAdd(c.Node.Short, c);
+
+        for (var pass = 0; pass < ranked.Count; pass++)
+        {
+            var changed = false;
+
+            foreach (var c in ranked)
+            {
+                if (c.Why != "container") continue;
+                if (!containers.TryGetValue(WhereContainer(c.Node.Short), out var container)) continue;
+
+                var cap = container.Score - 0.001;
+                if (c.Score <= cap) continue;
+
+                c.Score = cap;
+                changed = true;
+            }
+
+            if (!changed) break;
+        }
     }
 
     private static bool WhereWithin(string file, string scope) =>
