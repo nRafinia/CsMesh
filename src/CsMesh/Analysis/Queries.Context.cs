@@ -13,7 +13,8 @@ public static partial class Queries
     /// emitted in decreasing order of usefulness, so a budget that runs out truncates the tail
     /// rather than the answer.
     /// </summary>
-    public static int Context(Graph g, Node node, int depth, BudgetWriter w, HashSet<string> dirty)
+    public static int Context(Graph g, Node node, int depth, BudgetWriter w, HashSet<string> dirty,
+                              ICollection<int>? withheld = null)
     {
         var overflowed = false;
 
@@ -28,17 +29,29 @@ public static partial class Queries
         // and today they get a file:line and go read it themselves.
         if (node.Kind is "type" or "interface" or "enum" or "enum")
         {
-            var members = g.Out(node.Id)
+            // Ordered before the cap so the 20 that print are the 20 the ordering chose, and the
+            // remainder is a number the caller can see rather than a silent truncation.
+            var allMembers = g.Out(node.Id)
                 .Where(e => e.Kind == EdgeKind.TypeUse && e.Note is "member" or "ctor")
                 .Select(e => g.ById(e.To))
                 .Where(n => n != null)
                 .Select(n => n!)
                 .OrderBy(n => n.Kind == "method" ? 1 : 0)
                 .ThenBy(n => n.Line)
-                .Take(20)
                 .ToList();
 
+            var members = allMembers.Take(20).ToList();
+
             Section("MEMBERS", members.Select(Describe), members);
+
+            // The cap is a fixed 20, not a budget, so its omission is not an overflow: the answer is
+            // still complete at exit 0, but it must say what it withheld. Same shape as `where`'s
+            // "N weaker match(es) not shown".
+            var extra = allMembers.Count - members.Count;
+            if (extra > 0 && !overflowed && w.Add($"  ... {extra} more member(s)"))
+            {
+                withheld?.Add(extra);
+            }
         }
 
         var callers = g.In(node.Id)

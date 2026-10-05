@@ -294,6 +294,7 @@ public static class QueryCommand
             if (wanted.Count > 1) return Ambiguous(query, wanted, writer, result, json, dirtySet);
 
             var node = wanted[0];
+            var withheldMembers = new List<int>();
             exitCode = kind switch
             {
                 // The suggestion on overflow is a command the caller can paste, not advice.
@@ -301,9 +302,11 @@ public static class QueryCommand
                                          $"csmesh trace {query} --budget {budget}"),
                 "impl" => Queries.Impl(graph, node, writer, dirtySet),
                 "blast" => Queries.BlastRadius(graph, node, depth, writer, dirtySet, opt.Flag("writes"), hints),
-                "context" => Queries.Context(graph, node, depth, writer, dirtySet),
+                "context" => Queries.Context(graph, node, depth, writer, dirtySet, withheldMembers),
                 _ => Exit.Usage
             };
+
+            if (withheldMembers.Count > 0) result.WithheldMembers = withheldMembers[0];
         }
 
         Telemetry.Telemetry.Current.FilesReferenced = writer.DistinctFiles;

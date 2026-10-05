@@ -82,6 +82,13 @@ public sealed class QueryResult
     /// <summary>Number of files that changed since the index was built.</summary>
     public int StaleFiles { get; set; }
 
+    /// <summary>
+    /// 'context' only: members the fixed 20-row MEMBERS cap withheld, so a JSON consumer can see the
+    /// same omission the text line reports. Null when nothing was withheld, so the field is absent
+    /// rather than 0 on every other command.
+    /// </summary>
+    public int? WithheldMembers { get; set; }
+
     public List<string> Notes { get; set; } = [];
 
     /// <summary>
