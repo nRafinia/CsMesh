@@ -1,0 +1,79 @@
+# csmesh graph snapshot: ef-context
+# format 2
+# regenerate: CSMESH_UPDATE_SNAPSHOTS=1 dotnet test --filter FullyQualifiedName~GoldenGraphTests
+# names shared by more than one node (shown by key): Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContext, Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContextPool
+
+## nodes
+# key | kind | name | file
+Fixture|global::Demo.AuditContext|NamedType | type | Demo.AuditContext | Wiring.cs
+Fixture|global::Demo.BillingContext|NamedType | type | Demo.BillingContext | Wiring.cs
+Fixture|global::Demo.BillingStore|NamedType | type | Demo.BillingStore | Wiring.cs
+Fixture|global::Demo.IBillingStore|NamedType | interface | Demo.IBillingStore | Wiring.cs
+Fixture|global::Demo.IClock|NamedType | interface | Demo.IClock | Wiring.cs
+Fixture|global::Demo.IOrdersStore|NamedType | interface | Demo.IOrdersStore | Wiring.cs
+Fixture|global::Demo.NegativeContext|NamedType | type | Demo.NegativeContext | Wiring.cs
+Fixture|global::Demo.NotAContainer|AddDbContextFactory`1()|Method | method | Demo.NotAContainer.AddDbContextFactory | Wiring.cs
+Fixture|global::Demo.NotAContainer|AddDbContext`1()|Method | method | Demo.NotAContainer.AddDbContext | Wiring.cs
+Fixture|global::Demo.NotAContainer|NamedType | type | Demo.NotAContainer | Wiring.cs
+Fixture|global::Demo.OrdersContext|NamedType | type | Demo.OrdersContext | Wiring.cs
+Fixture|global::Demo.OrdersStore|NamedType | type | Demo.OrdersStore | Wiring.cs
+Fixture|global::Demo.SystemClock|NamedType | type | Demo.SystemClock | Wiring.cs
+Fixture|global::Demo.Wiring|NamedType | type | Demo.Wiring | Wiring.cs
+Fixture|global::Demo.Wiring|Register`0(global::Microsoft.Extensions.DependencyInjection.IServiceCollection)|Method | method | Demo.Wiring.Register | Wiring.cs
+Fixture|global::Microsoft.EntityFrameworkCore.DbContext|NamedType | type | Microsoft.EntityFrameworkCore.DbContext | Wiring.cs
+Fixture|global::Microsoft.EntityFrameworkCore.IDbContextFactory<TContext>|CreateDbContext`0()|Method | method | Microsoft.EntityFrameworkCore.IDbContextFactory<TContext>.CreateDbContext | Wiring.cs
+Fixture|global::Microsoft.EntityFrameworkCore.IDbContextFactory<TContext>|NamedType | interface | Microsoft.EntityFrameworkCore.IDbContextFactory<TContext> | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextFactory`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | method | Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContextFactory | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextPool`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | method | Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContextPool | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextPool`2(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | method | Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContextPool | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContext`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | method | Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContext | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContext`2(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | method | Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContext | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|NamedType | type | Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.IServiceCollection|NamedType | interface | Microsoft.Extensions.DependencyInjection.IServiceCollection | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.ServiceLifetime|NamedType | enum | Microsoft.Extensions.DependencyInjection.ServiceLifetime | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.ServiceLifetime|Scoped|Field | enum-member | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Scoped | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.ServiceLifetime|Singleton|Field | enum-member | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Singleton | Wiring.cs
+Fixture|global::Microsoft.Extensions.DependencyInjection.ServiceLifetime|Transient|Field | enum-member | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Transient | Wiring.cs
+
+## edges
+# from | kind | to | confidence | source | site | note
+Demo.IBillingStore | DiBinding | Demo.BillingStore | 1.00 | semantic-registration | Wiring.cs:81 | scoped
+Demo.IBillingStore | Interface | Demo.BillingStore | 1.00 | - | - | di-bound
+Demo.IClock | DiBinding | Demo.SystemClock | 1.00 | semantic-registration | Wiring.cs:84 | transient
+Demo.IClock | Interface | Demo.SystemClock | 1.00 | - | - | di-bound
+Demo.IOrdersStore | DiBinding | Demo.OrdersStore | 1.00 | semantic-registration | Wiring.cs:80 | scoped
+Demo.IOrdersStore | Interface | Demo.OrdersStore | 1.00 | - | - | di-bound
+Demo.NotAContainer | TypeUse | Demo.NotAContainer.AddDbContext | 1.00 | - | - | member
+Demo.NotAContainer | TypeUse | Demo.NotAContainer.AddDbContextFactory | 1.00 | - | - | member
+Demo.Wiring | TypeUse | Demo.Wiring.Register | 1.00 | - | - | member
+Demo.Wiring.Register | Call | Demo.NotAContainer.AddDbContext | 1.00 | - | - | -
+Demo.Wiring.Register | Call | Demo.NotAContainer.AddDbContextFactory | 1.00 | - | - | -
+Demo.Wiring.Register | Call | Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextPool`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | 1.00 | - | - | -
+Demo.Wiring.Register | Call | Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextPool`2(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | 1.00 | - | - | -
+Demo.Wiring.Register | Call | Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContext`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | 1.00 | - | - | -
+Demo.Wiring.Register | Call | Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContext`2(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | 1.00 | - | - | -
+Demo.Wiring.Register | Call | Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContextFactory | 1.00 | - | - | -
+Demo.Wiring.Register | Call | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Transient | 1.00 | - | - | enum-member
+Demo.Wiring.Register | Construct | Demo.NotAContainer | 1.00 | - | - | -
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextPool`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | Call | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Scoped | 1.00 | - | - | enum-member
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextPool`2(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | Call | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Scoped | 1.00 | - | - | enum-member
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContext`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | Call | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Scoped | 1.00 | - | - | enum-member
+Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContext`2(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | Call | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Scoped | 1.00 | - | - | enum-member
+Microsoft.EntityFrameworkCore.DbContext | Override | Demo.AuditContext | 1.00 | - | - | -
+Microsoft.EntityFrameworkCore.DbContext | Override | Demo.BillingContext | 1.00 | - | - | -
+Microsoft.EntityFrameworkCore.DbContext | Override | Demo.NegativeContext | 1.00 | - | - | -
+Microsoft.EntityFrameworkCore.DbContext | Override | Demo.OrdersContext | 1.00 | - | - | -
+Microsoft.EntityFrameworkCore.IDbContextFactory<TContext> | DiBinding | Demo.AuditContext | 1.00 | semantic-registration | Wiring.cs:87 | singleton
+Microsoft.EntityFrameworkCore.IDbContextFactory<TContext> | TypeUse | Microsoft.EntityFrameworkCore.IDbContextFactory<TContext>.CreateDbContext | 1.00 | - | - | member
+Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions | TypeUse | Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextPool`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | 1.00 | - | - | member
+Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions | TypeUse | Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContextPool`2(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | 1.00 | - | - | member
+Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions | TypeUse | Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContext`1(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | 1.00 | - | - | member
+Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions | TypeUse | Fixture|global::Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions|AddDbContext`2(global::Microsoft.Extensions.DependencyInjection.IServiceCollection,global::System.Action<object>,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime,global::Microsoft.Extensions.DependencyInjection.ServiceLifetime)|Method | 1.00 | - | - | member
+Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions | TypeUse | Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContextFactory | 1.00 | - | - | member
+Microsoft.Extensions.DependencyInjection.EntityFrameworkServiceCollectionExtensions.AddDbContextFactory | Call | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Singleton | 1.00 | - | - | enum-member
+Microsoft.Extensions.DependencyInjection.ServiceLifetime | TypeUse | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Scoped | 1.00 | - | - | member
+Microsoft.Extensions.DependencyInjection.ServiceLifetime | TypeUse | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Singleton | 1.00 | - | - | member
+Microsoft.Extensions.DependencyInjection.ServiceLifetime | TypeUse | Microsoft.Extensions.DependencyInjection.ServiceLifetime.Transient | 1.00 | - | - | member
+
+## unresolved
+# kind/reason | site | expression

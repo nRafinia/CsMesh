@@ -3283,6 +3283,14 @@ public static partial class Indexer
         };
 
         /// <summary>
+        /// The EF Core context registrations. They are not in <see cref="DiLifetimes"/> because their
+        /// default lifetime and their service shape differ per form, but they register through the
+        /// same container and must be recognised here.
+        /// </summary>
+        private static readonly string[] DbContextRegistrationMethods =
+            ["AddDbContext", "AddDbContextPool", "AddDbContextFactory"];
+
+        /// <summary>
         /// Tracks dependency injection service registrations, resolving the type arguments through
         /// the semantic model so that same-named types in different namespaces stay distinct.
         /// Handles generic arguments, typeof() pairs, keyed registrations and factory lambdas whose
@@ -3292,10 +3300,44 @@ public static partial class Indexer
         {
             if (inv.Expression is not MemberAccessExpressionSyntax ma) return;
             if (ma.Name is not SimpleNameSyntax simple) return;
-            if (!DiLifetimes.TryGetValue(simple.Identifier.Text, out var lifetime)) return;
+
+            var name = simple.Identifier.Text;
+            var isDbContext = DbContextRegistrationMethods.Contains(name, StringComparer.Ordinal);
+            if (!isDbContext && !DiLifetimes.ContainsKey(name)) return;
+
+            string lifetime;
+            if (isDbContext)
+            {
+                // The receiver is the container, decided from the receiver expression's type rather
+                // than from the invocation symbol. The invocation does not always bind: the alias
+                // registration in DiRankingTests.An_alias_registration_produces_a_binding is an
+                // OverloadResolutionFailure in the indexer's compilation, so GetSymbolInfo returns no
+                // symbol while the receiver type still resolves. A same-named method on another
+                // receiver produces nothing. The built-in Add*/TryAdd* names keep name-only matching
+                // for that same reason: one of their overloads does not bind, so gating them is a
+                // separate change from recognising EF.
+                if (!IsServiceCollection(model.GetTypeInfo(ma.Expression).Type)) return;
+
+                // The factory is registered singleton and is the only thing registered; the context
+                // is what it produces and is not itself a service here. Otherwise the default is
+                // scoped, unless a constant contextLifetime argument says otherwise; reading that
+                // argument needs a bound symbol, and a null one leaves the default standing.
+                lifetime = "scoped";
+                if (name == "AddDbContextFactory") lifetime = "singleton";
+                else if (model.GetSymbolInfo(inv).Symbol is IMethodSymbol method
+                         && ConstantContextLifetime(method, inv, model) is { } overridden)
+                    lifetime = overridden;
+            }
+            else
+            {
+                lifetime = DiLifetimes[name];
+            }
 
             var args = inv.ArgumentList.Arguments;
 
+            // The type arguments come from the syntax, not from the invocation symbol: a call that
+            // fails overload resolution still names its generic arguments, and this is the path the
+            // whole matcher already uses for the non-symbol shapes.
             var types = simple is GenericNameSyntax gen
                 ? gen.TypeArgumentList.Arguments.ToList()
                 : args.Select(a => a.Expression).OfType<TypeOfExpressionSyntax>().Select(t => t.Type).ToList();
@@ -3311,6 +3353,22 @@ public static partial class Indexer
             if (lifetime == "hosted")
             {
                 if (Resolve(types[0]) is { } hosted) AddTag(g.ById(hosted.Id)!, "hosted");
+                return;
+            }
+
+            // AddDbContextFactory<TContext> registers IDbContextFactory<TContext>, not the context.
+            // Binding the context instead would answer "what is registered for this context" with
+            // something the container never returns directly, and would put a di: tag on a type that
+            // is not a service of its own.
+            if (name == "AddDbContextFactory")
+            {
+                if (Resolve(types[0]) is not { } context) return;
+                if (DbContextFactoryNode(model, inv) is not { } factory) return;
+
+                AddTag(g.ById(factory)!, "di:" + lifetime);
+                Link(factory, context.Id, EdgeKind.DiBinding, lifetime,
+                     context.Semantic ? 1.0 : 0.65,
+                     context.Semantic ? "semantic-registration" : "short-name-match", inv);
                 return;
             }
 
@@ -3378,6 +3436,85 @@ public static partial class Indexer
                 // and in a trace; a name-matched guess should not outrank the real registration.
                 if (confidence >= Edge.TrustThreshold) _diBoundPairs.Add((service, impl));
             }
+        }
+
+        /// <summary>
+        /// True when the receiver is the container. The real IServiceCollection lives in a package
+        /// the index does not compile in, so it is recognised by its resolved name, not by assembly;
+        /// a concrete collection type passes through the interface it implements.
+        /// </summary>
+        private static bool IsServiceCollection(ITypeSymbol? type) =>
+            type != null
+            && (IsServiceCollectionInterface(type) || type.AllInterfaces.Any(IsServiceCollectionInterface));
+
+        private static bool IsServiceCollectionInterface(ITypeSymbol type) =>
+            type.TypeKind == TypeKind.Interface && type.Name == "IServiceCollection";
+
+        /// <summary>
+        /// The contextLifetime argument of an AddDbContext/AddDbContextPool call, when it is written
+        /// as a constant. ServiceLifetime.Singleton/Scoped/Transient are 0/1/2. A non-constant -- a
+        /// field, a variable -- could be anything at runtime, so the default stands rather than a
+        /// guess being recorded as fact.
+        /// </summary>
+        private static string? ConstantContextLifetime(IMethodSymbol method, InvocationExpressionSyntax inv,
+                                                       SemanticModel model)
+        {
+            var parameter = method.Parameters.FirstOrDefault(p => p.Name == "contextLifetime");
+            if (parameter == null) return null;
+
+            ArgumentSyntax? argument = null;
+            foreach (var a in inv.ArgumentList.Arguments)
+            {
+                if (a.NameColon?.Name.Identifier.Text == "contextLifetime") { argument = a; break; }
+            }
+
+            // A named argument may sit anywhere, so a positional fall-back is only safe when no
+            // argument is named at all.
+            if (argument == null
+                && !inv.ArgumentList.Arguments.Any(a => a.NameColon != null)
+                && parameter.Ordinal < inv.ArgumentList.Arguments.Count)
+            {
+                argument = inv.ArgumentList.Arguments[parameter.Ordinal];
+            }
+
+            if (argument == null) return null;
+
+            var constant = model.GetConstantValue(argument.Expression);
+            if (!constant.HasValue || constant.Value is not int value) return null;
+
+            return value switch
+            {
+                0 => "singleton",
+                1 => "scoped",
+                2 => "transient",
+                _ => null
+            };
+        }
+
+        /// <summary>
+        /// The graph node for IDbContextFactory&lt;T&gt;, the service AddDbContextFactory registers.
+        /// Only a factory declared in the indexed source can be a node; the package's own factory is
+        /// recorded as unresolved rather than dropped, so an absent binding reads as "outside the
+        /// index" rather than "no registration".
+        /// </summary>
+        private int? DbContextFactoryNode(SemanticModel model, SyntaxNode at)
+        {
+            var definition = model.Compilation
+                .GetTypeByMetadataName("Microsoft.EntityFrameworkCore.IDbContextFactory`1");
+
+            if (definition == null)
+            {
+                RecordUnresolved("di", at, "IDbContextFactory<T>", "type-not-found");
+                return null;
+            }
+
+            if (!definition.OriginalDefinition.Locations.Any(l => l.IsInSource))
+            {
+                RecordUnresolved("di", at, "IDbContextFactory<T>", "type-outside-index");
+                return null;
+            }
+
+            return NodeFor(definition.OriginalDefinition, "interface");
         }
 
         /// <summary>Provider methods whose type argument names the type that will come back.</summary>
