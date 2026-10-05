@@ -261,7 +261,7 @@ public static partial class Queries
 
             if (!w.Add($"  {to.Short}{mark}{Loc(to)}{site}{StaleTag(to, dirty)}", row))
             {
-                w.AddMarker(IncompleteMarker(w, "raise --budget, or query a narrower type", shown, impls.Count));
+                w.AddMarker(IncompleteMarker(w, "raise --budget, or query a narrower type", shown, impls.Count, "implementation(s)"));
                 return Exit.OverBudget;
             }
 
@@ -328,9 +328,6 @@ public static partial class Queries
         var tests = reached.Where(r => IsTest(r.Node)).ToList();
         var weakest = reached.Select(r => r.Score).DefaultIfEmpty(1.0).Min();
 
-        w.Force($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}", Row(target, 0, "root", null, dirty));
-        w.Force($"reached by {reached.Count} member(s), {entrypoints.Count} entrypoint(s), {tests.Count} test(s)");
-
         // How far the change spreads across assemblies says more about its size than forty type
         // names do, and costs one line.
         var projects = reached
@@ -339,44 +336,11 @@ public static partial class Queries
             .OrderByDescending(x => x.Count())
             .ToList();
 
-        if (projects.Count > 1)
-        {
-            w.Force("across " + projects.Count + " project(s): " +
-                    string.Join("  ", projects.Take(6).Select(p => $"{p.Key} ({p.Count()})")));
-        }
-
-        if (entrypoints.Count > 0)
-        {
-            w.Force("entrypoints:");
-            foreach (var ep in entrypoints.Take(30))
-            {
-                if (!Write(ep, "entrypoint", TagSuffix(ep.Node))) return Overflow(w, reached.Count);
-            }
-        }
-
         // Production callers first. A test calling a member is a real caller, but it is not the
         // thing that breaks in production, and mixing the two buries the answer.
         var direct = reached.Where(r => r.Level == 1).ToList();
         var directProduction = direct.Where(r => !IsTest(r.Node)).ToList();
         var directTests = direct.Where(r => IsTest(r.Node)).ToList();
-
-        if (directProduction.Count > 0)
-        {
-            w.Force("direct callers:");
-            foreach (var d in directProduction)
-            {
-                if (!Write(d, "direct-caller", "")) return Overflow(w, reached.Count);
-            }
-        }
-
-        if (directTests.Count > 0)
-        {
-            w.Force("direct callers (tests):");
-            foreach (var d in directTests)
-            {
-                if (!Write(d, "direct-caller-test", "")) return Overflow(w, reached.Count);
-            }
-        }
 
         // Group by the owning type id, not by a string: two types with the same simple name in
         // different namespaces are two types.
@@ -385,20 +349,73 @@ public static partial class Queries
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
+        // Every line is built before any is written, so an overflow can price the rows it never
+        // reached. The old marker measured only the first refusal, so "raise --budget to N" named a
+        // budget that still overflowed: N was a lower bound, not the size of the answer. The
+        // forced headers are in this list too, because they spend content room exactly as the rows do.
+        var lines = new List<(string Text, QueryRow? Row, bool Forced, int NodeId)>();
+        lines.Add(($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}",
+                   Row(target, 0, "root", null, dirty), true, -1));
+        lines.Add(($"reached by {reached.Count} member(s), {entrypoints.Count} entrypoint(s), {tests.Count} test(s)",
+                   null, true, -1));
+
+        if (projects.Count > 1)
+        {
+            lines.Add(("across " + projects.Count + " project(s): " +
+                       string.Join("  ", projects.Take(6).Select(p => $"{p.Key} ({p.Count()})")), null, true, -1));
+        }
+
+        if (entrypoints.Count > 0)
+        {
+            lines.Add(("entrypoints:", null, true, -1));
+            foreach (var ep in entrypoints.Take(30)) AddReach(ep, "entrypoint", TagSuffix(ep.Node));
+        }
+
+        if (directProduction.Count > 0)
+        {
+            lines.Add(("direct callers:", null, true, -1));
+            foreach (var d in directProduction) AddReach(d, "direct-caller", "");
+        }
+
+        if (directTests.Count > 0)
+        {
+            lines.Add(("direct callers (tests):", null, true, -1));
+            foreach (var d in directTests) AddReach(d, "direct-caller-test", "");
+        }
+
         if (indirect.Count > 0)
         {
-            var line = "indirect (types): " + string.Join(", ", indirect.Take(25));
-            if (!w.Add(line)) return Overflow(w, reached.Count);
+            lines.Add(("indirect (types): " + string.Join(", ", indirect.Take(25)), null, false, -1));
         }
 
         if (weakest < Edge.TrustThreshold)
         {
-            w.Force($"weakest path into this set: {weakest:0.00}. Rows marked ?score are inferred, not read off a symbol.");
+            lines.Add(($"weakest path into this set: {weakest:0.00}. Rows marked ?score are inferred, not read off a symbol.",
+                       null, true, -1));
+        }
+
+        var shown = new HashSet<int>();
+        foreach (var (text, row, forced, nodeId) in lines)
+        {
+            if (forced)
+            {
+                w.Force(text, row);
+                continue;
+            }
+
+            if (!w.Add(text, row))
+            {
+                var fit = FittingBudget(w, lines.Select(l => l.Text));
+                w.AddMarker(IncompleteMarker(w, null, shown.Count, reached.Count, "reached member(s)", fit));
+                return Exit.OverBudget;
+            }
+
+            if (nodeId >= 0) shown.Add(nodeId);
         }
 
         return Exit.Ok;
 
-        bool Write(Reach r, string relation, string tags)
+        void AddReach(Reach r, string relation, string tags)
         {
             var mark = r.Score < 1.0
                 ? $"  [?{r.Score:0.00}{(r.Source != null ? " " + r.Source : "")}]"
@@ -411,7 +428,7 @@ public static partial class Queries
                 row.Source = r.Source;
             }
 
-            return w.Add($"  {r.Node.Short}{mark}{tags}{Loc(r.Node)}{StaleTag(r.Node, dirty)}", row);
+            lines.Add(($"  {r.Node.Short}{mark}{tags}{Loc(r.Node)}{StaleTag(r.Node, dirty)}", row, false, r.Node.Id));
         }
     }
 
@@ -468,8 +485,13 @@ public static partial class Queries
             .Select(group => group.Key)
             .ToHashSet(StringComparer.Ordinal);
 
-        w.Force($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}", Row(target, 0, "root", null, dirty));
-        w.Force($"written by {writers.Count} writer(s)");
+        // Built first, like the ordinary blast radius, so an overflow can price the rows it never
+        // reached and name a budget that seats them all.
+        var lines = new List<(string Text, QueryRow? Row, bool Forced, int NodeId)>
+        {
+            ($"{target.Short}{Loc(target)}{StaleTag(target, dirty)}", Row(target, 0, "root", null, dirty), true, -1),
+            ($"written by {writers.Count} writer(s)", null, true, -1)
+        };
 
         foreach (var (node, via) in writers
             .OrderBy(x => IsTest(x.Node) ? 1 : 0)
@@ -478,8 +500,26 @@ public static partial class Queries
             var display = ambiguous.Contains(node.Short) ? node.Name : node.Short;
             var marker = via ? "  [via-interface]" : "";
             var row = Row(node, 1, "writer", via ? "via-interface" : null, dirty);
-            if (!w.Add($"  {display}{marker}{Loc(node)}{StaleTag(node, dirty)}", row))
-                return Overflow(w, writers.Count);
+            lines.Add(($"  {display}{marker}{Loc(node)}{StaleTag(node, dirty)}", row, false, node.Id));
+        }
+
+        var shown = new HashSet<int>();
+        foreach (var (text, row, forced, nodeId) in lines)
+        {
+            if (forced)
+            {
+                w.Force(text, row);
+                continue;
+            }
+
+            if (!w.Add(text, row))
+            {
+                var fit = FittingBudget(w, lines.Select(l => l.Text));
+                w.AddMarker(IncompleteMarker(w, null, shown.Count, writers.Count, "writer(s)", fit));
+                return Exit.OverBudget;
+            }
+
+            shown.Add(nodeId);
         }
 
         return Exit.Ok;
@@ -603,32 +643,57 @@ public static partial class Queries
     }
 
     /// <summary>
-    /// The line a truncated answer ends with, emitted through <see cref="BudgetWriter.AddMarker"/>
-    /// so it lands inside the budget it reports on. A near-complete answer says how near it is and
-    /// names the exact re-run; anything much larger points at narrowing instead. Bounded to the
-    /// completion reserve, so it always fits.
+    /// Above this a fitting budget is not offered. A budget that seats the whole answer is only
+    /// useful while the answer is something a reader will scan; past this the right move is to
+    /// narrow the question (--depth/--under), which is also what the installed skill says instead of
+    /// raising --budget to a huge number.
     /// </summary>
-    internal static string IncompleteMarker(BudgetWriter w, string? remedy = null, int shown = 0, int total = 0)
-    {
-        remedy ??= $"raise --budget to {w.SuggestedBudget}";
+    private const int BudgetSuggestionCeiling = 4000;
 
-        var over = w.OverBudgetBy;
-        var text = over == 0
-            ? $"INCOMPLETE: nearly complete -- wanted ~{w.WouldBeTokens}; the completion marker needed the room. {remedy}"
-            : over <= 60
-                ? $"INCOMPLETE: nearly complete -- {over} token(s) over ({w.Tokens} of ~{w.WouldBeTokens}). {remedy}"
-                : $"INCOMPLETE: much larger than {w.Budget}"
-                  + (shown > 0 ? $" ({shown} of {total} shown)" : "")
-                  + $". {remedy}";
+    /// <summary>
+    /// The line a truncated answer ends with, emitted through <see cref="BudgetWriter.AddMarker"/>
+    /// so it lands inside the budget it reports on.
+    ///
+    /// "nearly complete" is reserved for the one case where it was ever true: no content row was
+    /// refused, so the answer itself fit and only the closing line lacked room. Once a content row
+    /// was refused against the content cap, saying "nearly complete" hid the fact that the answer
+    /// stopped early -- it printed while dozens of rows were missing -- so the marker states how many
+    /// rows of a known total were shown instead. The suggested budget is <paramref name="fitBudget"/>,
+    /// measured by the caller from every pending row, and is printed only when it fits the whole
+    /// answer and sits under <see cref="BudgetSuggestionCeiling"/>; otherwise the caller's remedy
+    /// stands, or the default is to narrow rather than to spend more. Bounded to 150 characters, so
+    /// it always fits the completion reserve.
+    /// </summary>
+    internal static string IncompleteMarker(
+        BudgetWriter w,
+        string? remedy = null,
+        int shown = -1,
+        int total = 0,
+        string? unit = null,
+        int? fitBudget = null)
+    {
+        var advice = remedy
+            ?? (fitBudget is int fit && fit <= BudgetSuggestionCeiling
+                ? $"raise --budget to {fit}"
+                : "narrow with --depth 1 or --under <path>");
+
+        var text = !w.Overflowed
+            ? $"INCOMPLETE: nearly complete -- the answer fit; the completion marker needed more room. {advice}"
+            : total > 0 && shown >= 0
+                ? $"INCOMPLETE: {shown} of {total} {unit ?? "row(s)"} shown. {advice}"
+                : $"INCOMPLETE: much larger than {w.Budget}. {advice}";
 
         return text.Length <= 150 ? text : text[..147] + "...";
     }
 
-    private static int Overflow(BudgetWriter w, int total)
-    {
-        w.AddMarker(IncompleteMarker(w, null, 0, total));
-        return Exit.OverBudget;
-    }
+    /// <summary>
+    /// The budget that seats every line a query is about to emit, completion marker and opening
+    /// notes included. A caller that has built all its rows passes them here so the overflow marker
+    /// can name a re-run that actually completes, instead of the lower bound a first refusal
+    /// measures -- the "raise --budget to N" that still overflowed at N.
+    /// </summary>
+    private static int FittingBudget(BudgetWriter w, IEnumerable<string> lines) =>
+        lines.Sum(BudgetWriter.Estimate) + w.OpeningReserve + w.MarkerReserve + 10;
 
     private static bool IsEntrypoint(Node n) =>
         n.Tags.Any(t => t.StartsWith("http:") || t.StartsWith("endpoint:") || t is "handler" or "consumer" or "hosted" or "action");
@@ -654,7 +719,7 @@ public static partial class Queries
             if (!w.Add($"  {ep.Short}{TagSuffix(ep)}{Loc(ep)}{StaleTag(ep, dirty)}",
                        Row(ep, 0, "entrypoint", null, dirty)))
             {
-                w.AddMarker(IncompleteMarker(w, "filter with a substring argument", shown, eps.Count));
+                w.AddMarker(IncompleteMarker(w, "filter with a substring argument", shown, eps.Count, "entrypoint(s)"));
                 return Exit.OverBudget;
             }
 

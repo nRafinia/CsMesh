@@ -61,9 +61,9 @@ public static partial class Queries
             index++;
             var cycle = ShortestCycle(adjacency, component);
 
-            if (!w.Add("")) return Truncate(w, components.Count);
+            if (!w.Add("")) return Truncate(w, components.Count, index - 1);
             if (!w.Add($"cycle #{index}  shortest loop of a {component.Count}-member group"))
-                return Truncate(w, components.Count);
+                return Truncate(w, components.Count, index - 1);
 
             foreach (var member in cycle)
             {
@@ -72,22 +72,22 @@ public static partial class Queries
                 var stale = node != null ? StaleTag(node, dirty) : "";
                 var row = node != null ? Row(node, 1, "cycle", $"#{index}", dirty) : null;
 
-                if (!w.Add($"  -> {member}{location}{stale}", row)) return Truncate(w, components.Count);
+                if (!w.Add($"  -> {member}{location}{stale}", row)) return Truncate(w, components.Count, index - 1);
             }
 
             var rest = component.Where(m => !cycle.Contains(m)).Take(8).ToList();
             if (rest.Count > 0 && !w.Add("  also entangled: " + string.Join(", ", rest)))
             {
-                return Truncate(w, components.Count);
+                return Truncate(w, components.Count, index - 1);
             }
         }
 
         return Exit.Ok;
     }
 
-    private static int Truncate(BudgetWriter w, int total)
+    private static int Truncate(BudgetWriter w, int total, int shown)
     {
-        w.AddMarker(IncompleteMarker(w, "use --namespace for a coarser view", 0, total));
+        w.AddMarker(IncompleteMarker(w, "use --namespace for a coarser view", shown, total, "cycle group(s)"));
         return Exit.OverBudget;
     }
 

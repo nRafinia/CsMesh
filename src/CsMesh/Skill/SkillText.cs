@@ -246,10 +246,17 @@ public static class SkillText
           the code you are about to change.
         """;
 
-    public const string Rules =
+    private const string RulesTitle =
         """
         # csmesh: C# structural code intelligence
+        """;
 
+    /// <summary>
+    /// The "prefer csmesh over grep" directive. The MCP instructions reference it directly, so it
+    /// lives here once rather than as a second copy that can drift.
+    /// </summary>
+    public const string RulesGrepDirective =
+        """
         ## MANDATORY DIRECTIVE: ALWAYS PREFER CSMESH OVER GREP / FILE SEARCH
         In ANY repository with `.cs`, `.csproj`, `.sln` or `.slnx` files, you are STRICTLY FORBIDDEN from using
         `grep`, `ripgrep`, glob, or reading files in sequence to discover C# symbols, trace callers, find
@@ -264,7 +271,14 @@ public static class SkillText
         - To orient in a repo: `csmesh map`
 
         Grep is ONLY permitted for exact string literals inside quotes, error messages, and non-C# files.
+        """;
 
+    /// <summary>
+    /// The reach-for-the-right-command table. Shared with the MCP instructions for the same reason
+    /// as <see cref="RulesGrepDirective"/>: one source, no copy to drift.
+    /// </summary>
+    public const string RulesMatchTable =
+        """
         ## Match the thing you are about to do
 
         | you are about to | run instead |
@@ -286,7 +300,10 @@ public static class SkillText
 
         A subagent is for what csmesh cannot know: intent, naming, business rules, why a decision was made.
         Not for where things are and what connects to what.
+        """;
 
+    private const string RulesWords =
+        """
         ## When you have words, not a symbol name
 
         Every other command takes a symbol. `csmesh where <term>` is the one that finds it. Do not grep
@@ -297,7 +314,10 @@ public static class SkillText
         csmesh where discount        # -> CheckoutService.ApplyDiscount, then trace it
         csmesh where "POST /orders"
         ```
+        """;
 
+    private const string RulesEmpty =
+        """
         ## When something comes back empty
 
         - **Exit 2**: the answer was too large, not absent. In order: the depth the message names, then
@@ -313,7 +333,10 @@ public static class SkillText
           heal could not run; the note says why. Run `csmesh index`.
 
         Keep using grep for string literals, config values, TODOs, error messages, and non-`.cs` files.
+        """;
 
+    private const string RulesOutput =
+        """
         ## Reading the output
 
         - `[impl, di-bound]` -- registered in the container; this is the one that runs.
@@ -323,14 +346,20 @@ public static class SkillText
         - `{test}` -- test code: a real caller, but not what breaks in production.
         - `?0.70 short-name-match` / `?0.75 assembly-scan` -- inferred, not read off a compiler symbol.
           **Below 0.80 is a lead, not a fact.** No `?score` means exact.
+        """;
 
+    private const string RulesExitCodes =
+        """
         ## Exit codes
 
         `0` ok, `1` nothing found, `2` over budget, `3` ambiguous, `4` no index (or, for `review`, an
         index behind HEAD), `5` `review` only: unaccepted structural change, `64` bad command line
         (including `review --accept` behind HEAD), `70` internal error, `75` index write contended.
         Branch on these; do not parse the text.
+        """;
 
+    private const string RulesPractice =
+        """
         ## Practice
 
         - **Nested types**: keys use the immediate containing type, not the outermost class. `Inner`
@@ -346,6 +375,18 @@ public static class SkillText
         - csmesh tells you which files matter. Open those files. It replaces hunting for code, not reading
           the code you are about to change.
         """;
+
+    /// <summary>
+    /// The line ending the source was checked out with, detected from the section literals. Joining
+    /// with it keeps the composed body byte-identical to the single raw literal it replaced, on both
+    /// a CRLF and an LF checkout, so the rendered install block does not change.
+    /// </summary>
+    private static readonly string RulesNewLine =
+        RulesGrepDirective.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+
+    public static readonly string Rules = string.Join(
+        RulesNewLine + RulesNewLine,
+        new[] { RulesTitle, RulesGrepDirective, RulesMatchTable, RulesWords, RulesEmpty, RulesOutput, RulesExitCodes, RulesPractice });
 
     public const string CursorMdc =
         """

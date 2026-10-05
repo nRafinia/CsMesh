@@ -16,8 +16,14 @@ public sealed class Graph
     /// v14 added <see cref="Edge.Role"/>: a member-access edge now carries Read/Write/Subscribe.
     /// A v13 graph would answer a --writes query as if every member access were a read, which is
     /// the bug the version guards against, so v13 is rejected rather than half-read.
+    ///
+    /// v15 added <see cref="FileStamp.Hash"/>: every stamp carries the SHA-256 of the bytes it was
+    /// built from, and a freshness check whose timestamp sits inside the mtime tolerance reads the
+    /// file and compares that digest. A v14 graph has no digest, so a same-size edit in the band
+    /// would be called clean and answered from pre-edit symbols -- the silent staleness v15 exists
+    /// to end. v14 is rejected on load rather than half-read with an empty hash.
     /// </summary>
-    public const int CurrentFormatVersion = 14;
+    public const int CurrentFormatVersion = 15;
 
     public string Root { get; set; } = string.Empty;
     public DateTimeOffset BuiltAt { get; set; }

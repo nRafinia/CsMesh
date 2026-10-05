@@ -78,8 +78,13 @@ public static partial class Indexer
     public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, Action<string>? progress = null) =>
         BuildIncrementalWithScope(previous, dirty, out _, progress);
 
+    public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, out string? declineReason, Action<string>? progress = null) =>
+        BuildIncrementalWithScope(previous, dirty, out declineReason, progress, ReadSource);
+
     /// <summary>
-    /// As the pass above, but naming why it declined through <paramref name="declineReason"/>.
+    /// As the pass above, but naming why it declined through <paramref name="declineReason"/>, and
+    /// reading sources through <paramref name="readSource"/>. The reader defaults to the real file
+    /// read; a test substitutes one to interleave a write between the stat and the read.
     ///
     /// A caller that would otherwise fall back to a full index does not need the reason, but one
     /// that has chosen to answer from the stale graph anyway does: the note it prints has to say
@@ -87,7 +92,7 @@ public static partial class Indexer
     /// incremental path will never take. Silence at the point of decline is how a default heal
     /// becomes indistinguishable from no heal at all.
     /// </summary>
-    public static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, out string? declineReason, Action<string>? progress = null)
+    internal static IndexBuild? BuildIncrementalWithScope(Graph previous, IReadOnlyList<string> dirty, out string? declineReason, Action<string>? progress, Func<string, SourceRead> readSource)
     {
         declineReason = null;
         var root = previous.Root;
@@ -182,27 +187,50 @@ public static partial class Indexer
         // tool exists to prevent. The caller falls back to a full index.
         var unreadable = new System.Collections.Concurrent.ConcurrentBag<string>();
 
+        // A file this pass rebinds is rehashed from the bytes it reads; a file it leaves alone must
+        // not be rehashed, so it keeps the digest the last pass stored. Every file is still parsed
+        // (a semantic model needs all declarations), so the digest is taken on the read path only
+        // for the handful this pass was actually called for.
+        var dirtySet = dirty
+            .Select(d => d.Replace('\\', '/'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var storedHashes = previous.Files
+            .Where(f => f.Hash.Length > 0)
+            .ToDictionary(f => f.Path.Replace('\\', '/'), f => f.Hash, StringComparer.OrdinalIgnoreCase);
+
         // Parsing is embarrassingly parallel and is now the largest remaining cost, since binding
         // has been cut down to the edited files.
         Parallel.For(0, files.Count, i =>
         {
             var file = files[i];
-            string text;
-            try { text = File.ReadAllText(file); }
+            SourceRead read;
+            try
+            {
+                // The reader stats before it reads; see ReadSource. A writer between the two yields a
+                // nonzero delta the next freshness check can act on, rather than a stamp that matches
+                // the writer's time while the parsed text is the revision before it.
+                read = readSource(file);
+            }
             catch (Exception ex)
             {
                 unreadable.Add($"{Path.GetRelativePath(root, file)} ({ex.Message})");
                 return;
             }
 
-            trees[i] = CSharpSyntaxTree.ParseText(text, parseOptions, path: file);
+            trees[i] = CSharpSyntaxTree.ParseText(read.Text, parseOptions, path: file);
 
-            var info = new FileInfo(file);
+            var relative = Path.GetRelativePath(root, file);
+            var normalized = relative.Replace('\\', '/');
+            var hash = dirtySet.Contains(normalized)
+                ? FileStamp.HashOf(read.Bytes)
+                : storedHashes.TryGetValue(normalized, out var stored) ? stored : FileStamp.HashOf(read.Bytes);
+
             stamps[i] = new FileStamp
             {
-                Path = Path.GetRelativePath(root, file),
-                Ticks = info.LastWriteTimeUtc.Ticks,
-                Size = info.Length
+                Path = relative,
+                Ticks = read.Ticks,
+                Size = read.Size,
+                Hash = hash
             };
         });
 
@@ -247,10 +275,6 @@ public static partial class Indexer
         var references = ReferenceSet(root, root, scope, out _);
 
         var compilations = CreateCompilations(root, scope, ownedTrees, references);
-
-        var dirtySet = dirty
-            .Select(d => d.Replace('\\', '/'))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Retire the nodes declared in edited files, remembering their ids. Anything still declared
         // after the edit comes back under the same id; anything deleted or renamed does not, and

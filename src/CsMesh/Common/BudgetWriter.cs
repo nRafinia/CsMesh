@@ -71,9 +71,6 @@ public sealed class BudgetWriter(int budgetTokens, int markerReserve = 0)
     /// </summary>
     public int OverBudgetBy => Overflowed ? Math.Max(0, _wouldBeTokens - budgetTokens) : 0;
 
-    /// <summary>The budget that would have fit this answer, completion marker included.</summary>
-    public int SuggestedBudget => Overflowed ? _wouldBeTokens + markerReserve + 10 : budgetTokens;
-
     /// <summary>Rows emitted so far, excluding headers and warnings.</summary>
     public IReadOnlyList<QueryRow> Rows => _rows;
     public IReadOnlyList<string> Lines => _lines;

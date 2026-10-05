@@ -19,7 +19,16 @@ public sealed class ReleasePublishGateTests
     private const string Gate =
         "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.tag_name != '' }}";
 
-    /// <summary>Commands and actions that write outside the run.</summary>
+    /// <summary>
+    /// Commands and actions that write outside the run.
+    ///
+    /// A publisher that writes outside the repository through an action, not a CLI command, names
+    /// no command text: its job contains only `uses:` and inputs and matches none of the markers
+    /// below, so it reads as an ordinary build job and is invisible to this list until it is named.
+    /// `winget-releaser` was added for exactly that reason -- it opens a pull request against
+    /// winget-pkgs from `publish-winget`, and before it was listed the gating test passed while a
+    /// fourth publisher went unchecked.
+    /// </summary>
     private static readonly string[] PublishMarkers =
     {
         "dotnet nuget push",
@@ -29,10 +38,12 @@ public sealed class ReleasePublishGateTests
         "git push",
         "docker push",
         "cargo publish",
-        "twine upload"
+        "twine upload",
+        "winget-releaser"
     };
 
-    private static readonly string[] PublishingJobs = { "publish-nuget", "publish-release", "publish-npm" };
+    private static readonly string[] PublishingJobs =
+        { "publish-nuget", "publish-release", "publish-npm", "publish-winget" };
 
     [Fact]
     public void Every_publishing_job_and_step_is_gated_on_a_valid_dispatch()

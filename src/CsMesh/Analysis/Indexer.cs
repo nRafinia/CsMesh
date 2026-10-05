@@ -1,3 +1,4 @@
+using System.Text;
 using CsMesh.Common;
 using CsMesh.Models;
 using CsMesh.Storage;
@@ -547,7 +548,11 @@ public static partial class Indexer
     /// compiles from source and must not also load as references.
     /// </summary>
     public static IndexBuild BuildWithScope(string root, Action<string>? progress = null, bool includeAllProjects = false,
-                                            string? referenceRoot = null)
+                                            string? referenceRoot = null) =>
+        BuildWithScope(root, progress, includeAllProjects, referenceRoot, ReadSource);
+
+    internal static IndexBuild BuildWithScope(string root, Action<string>? progress, bool includeAllProjects,
+                                              string? referenceRoot, Func<string, SourceRead> readSource)
     {
         var scope = includeAllProjects ? ProjectScope.Everything(root) : ProjectScope.Discover(root);
 
@@ -578,22 +583,33 @@ public static partial class Indexer
             for (var i = 0; i < files.Count; i++)
             {
                 var file = files[i];
-                string text;
-                try { text = File.ReadAllText(file); } catch { continue; }
+
+                // The reader takes the stat before the bytes; see ReadSource. A writer landing between
+                // the two leaves a nonzero delta the freshness check can act on, where a stamp taken
+                // after the read would record the writer's new time against pre-read text and hide it.
+                SourceRead read;
+                try
+                {
+                    read = readSource(file);
+                }
+                catch
+                {
+                    continue;
+                }
 
                 owned.Add(new OwnedTree(
-                    CSharpSyntaxTree.ParseText(text, parseOptions, path: file),
+                    CSharpSyntaxTree.ParseText(read.Text, parseOptions, path: file),
                     owners[i]));
 
-                var fileInfo = new FileInfo(file);
                 stamps.Add(new FileStamp
                 {
                     Path = Path.GetRelativePath(root, file),
-                    Ticks = fileInfo.LastWriteTimeUtc.Ticks,
-                    Size = fileInfo.Length
+                    Ticks = read.Ticks,
+                    Size = read.Size,
+                    Hash = FileStamp.HashOf(read.Bytes)
                 });
 
-                var dir = fileInfo.DirectoryName;
+                var dir = Path.GetDirectoryName(file);
                 if (dir == null) continue;
                 var relDir = Path.GetRelativePath(root, dir);
                 if (!dirs.ContainsKey(relDir))
@@ -628,7 +644,8 @@ public static partial class Indexer
                 {
                     Path = Path.GetRelativePath(root, razorPath),
                     Ticks = razorInfo.LastWriteTimeUtc.Ticks,
-                    Size = razorInfo.Length
+                    Size = razorInfo.Length,
+                    Hash = HashFileOrEmpty(razorPath)
                 });
             }
         }
@@ -654,7 +671,8 @@ public static partial class Indexer
                 {
                     Path = Path.GetRelativePath(root, generated),
                     Ticks = generatedInfo.LastWriteTimeUtc.Ticks,
-                    Size = generatedInfo.Length
+                    Size = generatedInfo.Length,
+                    Hash = HashFileOrEmpty(generated)
                 });
             }
         }
@@ -673,7 +691,8 @@ public static partial class Indexer
             {
                 Path = Path.GetRelativePath(root, assets),
                 Ticks = assetsInfo.LastWriteTimeUtc.Ticks,
-                Size = assetsInfo.Length
+                Size = assetsInfo.Length,
+                Hash = HashFileOrEmpty(assets)
             });
         }
 
@@ -773,6 +792,59 @@ public static partial class Indexer
     public static Graph Build(string root, Action<string>? progress = null, bool includeAllProjects = false,
                               string? referenceRoot = null) =>
         BuildWithScope(root, progress, includeAllProjects, referenceRoot).Graph;
+
+    /// <summary>
+    /// One source file's freshness inputs and its content, taken as a unit: the write time and length
+    /// first, then the bytes and the decoded text. Keeping them together is what makes the ordering
+    /// the reader's, and lets a test substitute a reader that interleaves a write.
+    /// </summary>
+    internal readonly record struct SourceRead(long Ticks, long Size, byte[] Bytes, string Text);
+
+    /// <summary>
+    /// The production read: stat first, then the bytes, then decode. A writer that lands between the
+    /// stat and the read leaves the stamp describing the pre-write revision while the digest
+    /// describes the writer's bytes, so the next freshness check sees a nonzero delta and hashes the
+    /// file instead of trusting a timestamp it cannot reconcile.
+    /// </summary>
+    internal static SourceRead ReadSource(string path)
+    {
+        var info = new FileInfo(path);
+        var ticks = info.LastWriteTimeUtc.Ticks;
+        var size = info.Length;
+        var bytes = File.ReadAllBytes(path);
+        return new SourceRead(ticks, size, bytes, Decode(bytes));
+    }
+
+    /// <summary>
+    /// Decodes file bytes to text with the same BOM detection and UTF-8 default that
+    /// <c>File.ReadAllText</c> uses, so reading bytes instead of text does not change what Roslyn
+    /// parses or what the digest covers.
+    /// </summary>
+    private static string Decode(byte[] bytes)
+    {
+        using var stream = new MemoryStream(bytes);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>
+    /// The stored hash of a file the indexer tracks but does not parse as source -- a generated
+    /// file, the Razor source a generated tree points at, or an assets file. It is read separately
+    /// because the bytes hashed are the ones at the stamped path, which for a Razor node is the
+    /// .razor file and not the generated C# parsed for it. An unreadable file stamps an empty hash,
+    /// which <c>DirtyFiles</c> treats as changed rather than clean.
+    /// </summary>
+    private static string HashFileOrEmpty(string path)
+    {
+        try
+        {
+            return FileStamp.HashOf(File.ReadAllBytes(path));
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 
     /// <summary>
     /// How many .cs files sit outside every project while the repository has projects. Counted
