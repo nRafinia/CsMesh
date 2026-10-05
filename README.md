@@ -237,6 +237,10 @@ curl -fsSL https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.sh | s
 irm https://raw.githubusercontent.com/nRafinia/CsMesh/main/install.ps1 | iex
 ```
 
+```powershell
+winget install nRafinia.CsMesh
+```
+
 The install scripts download the prebuilt Native AOT binary for your OS and architecture — `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-arm64`, `osx-x64` — and fall back to the .NET global tool when no asset matches.
 
 ---
