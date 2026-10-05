@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CsMesh.Common;
+using CsMesh.Skill;
 
 namespace CsMesh.Mcp;
 
@@ -288,6 +289,45 @@ public static class McpServer
         return null;
     }
 
+    /// <summary>
+    /// The MCP-specific paragraphs: what the transport adds over the shared rules. The grep directive
+    /// and the command table are appended by reference from <see cref="SkillText"/>, never copied, so
+    /// a rule changed for a file-reading agent reaches an MCP-only session too.
+    /// </summary>
+    private const string McpPreamble =
+        "csmesh answers structural questions about a C# codebase from a Roslyn symbol graph: "
+        + "call paths through interfaces and mediator dispatch, which implementation a DI "
+        + "container binds, and what a change would reach.\n\n"
+        + "Every tool reads an index on disk. Run 'index' once in a fresh checkout, and again "
+        + "when an answer says it is stale. 'doctor' says whether the index is usable.\n\n"
+        + "In standalone desktop or multi-repo environments where workspace detection is not available, "
+        + "specify the 'repo' argument on tool calls to point to the repository.\n\n"
+        + "Not in the graph: string literals, config keys, log messages, and anything outside "
+        + "a .cs file. Use ordinary text search for those.\n\n"
+        + "Answers end with a suggested next step written as a shell command, e.g. "
+        + "'next: csmesh entrypoints orders'. Each maps to the tool of the same name, so call "
+        + "'entrypoints' with filter='orders' rather than reaching for a terminal.\n\n"
+        + "When a name is declared in more than one project, the answer exits 3 and lists each "
+        + "candidate with its project. Re-run the tool with 'project' set to one of them rather "
+        + "than guessing. Two overloads of one member in one project are separated by the "
+        + "parameter list instead: pass 'Type.Member(int, string)', as the candidate list prints it.";
+
+    /// <summary>
+    /// The token ceiling the assembled instructions must stay under, measured with
+    /// <see cref="BudgetWriter.Estimate"/> on LF-normalized text so a CRLF checkout and an LF one
+    /// agree. This text sits in the context of every MCP session for the whole session, paid for on
+    /// every turn whichever tool is called; the schema batch that follows is its payback, not licence
+    /// to grow this further.
+    /// </summary>
+    public const int InstructionsTokenCeiling = 900;
+
+    /// <summary>
+    /// The text sent in the <c>initialize</c> result: the MCP-specific paragraphs plus the shared
+    /// "prefer csmesh over grep" directive and command table, by reference.
+    /// </summary>
+    public static readonly string InstructionText =
+        McpPreamble + "\n\n" + SkillText.RulesGrepDirective + "\n\n" + SkillText.RulesMatchTable;
+
     private static InitializeResult Initialize(RpcRequest request)
     {
         var asked = request.Params?.TryGetProperty("protocolVersion", out var v) == true ? v.GetString() : null;
@@ -296,23 +336,7 @@ public static class McpServer
         {
             ProtocolVersion = asked != null && Supported.Contains(asked) ? asked : Supported[0],
             ServerInfo = new ServerInfo { Version = AppVersion.Get() },
-            Instructions =
-                "csmesh answers structural questions about a C# codebase from a Roslyn symbol graph: "
-                + "call paths through interfaces and mediator dispatch, which implementation a DI "
-                + "container binds, and what a change would reach.\n\n"
-                + "Every tool reads an index on disk. Run 'index' once in a fresh checkout, and again "
-                + "when an answer says it is stale. 'doctor' says whether the index is usable.\n\n"
-                + "In standalone desktop or multi-repo environments where workspace detection is not available, "
-                + "specify the 'repo' argument on tool calls to point to the repository.\n\n"
-                + "Not in the graph: string literals, config keys, log messages, and anything outside "
-                + "a .cs file. Use ordinary text search for those.\n\n"
-                + "Answers end with a suggested next step written as a shell command, e.g. "
-                + "'next: csmesh entrypoints orders'. Each maps to the tool of the same name, so call "
-                + "'entrypoints' with filter='orders' rather than reaching for a terminal.\n\n"
-                + "When a name is declared in more than one project, the answer exits 3 and lists each "
-                + "candidate with its project. Re-run the tool with 'project' set to one of them rather "
-                + "than guessing. Two overloads of one member in one project are separated by the "
-                + "parameter list instead: pass 'Type.Member(int, string)', as the candidate list prints it."
+            Instructions = InstructionText
         };
     }
 
